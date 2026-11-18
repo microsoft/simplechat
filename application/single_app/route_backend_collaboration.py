@@ -4,15 +4,23 @@ import json
 import threading
 import time
 import uuid
+from copy import deepcopy
 
 from content_screening.access import build_available_document_response, public_history_messages
 from content_screening.contracts import ScreeningError
 import app_settings_cache
 from azure.core.exceptions import AzureError
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosAccessConditionFailedError
 from flask import Response, current_app, jsonify, redirect, request, session, stream_with_context
 
 from config import *
-from collaboration_models import COLLABORATION_KIND, MEMBERSHIP_STATUS_PENDING, MESSAGE_KIND_AI_REQUEST, add_seconds_to_iso, normalize_collaboration_user, utc_now_iso
+from collaboration_models import (
+    COLLABORATION_KIND, MEMBERSHIP_STATUS_PENDING, MESSAGE_KIND_AI_REQUEST,
+    add_seconds_to_iso, build_collaboration_message_doc_from_legacy,
+    normalize_collaboration_user, utc_now_iso,
+)
+from cosmos_document_utils import normalize_cosmos_document
 from functions_appinsights import log_event
 from functions_chat_content_checks import (
     CHECK_CONTEXT_KEY, CHECK_METADATA, blocked_chat_payload, check_chat_content,
@@ -130,6 +138,9 @@ from functions_assist_submissions import (
     SubmissionIdError,
     classify_submission,
     normalize_submission_id,
+)
+from functions_chat_retry import (
+    ChatAttemptStore, ChatRetryError, publish_chat_attempt_message, reconcile_chat_attempts,
 )
 from functions_image_api_route import ImageGenerationError
 from functions_image_generation import image_generation_error_response
@@ -522,6 +533,145 @@ def _normalize_participant_payload(raw_payload):
     return normalized_participants
 
 
+def _read_matching_collaboration_chat_submission(conversation_id, source_id, user_id, data, content):
+    submission_id = normalize_submission_id(data.get('submission_id'))
+    if not submission_id:
+        return None
+
+    def authorize():
+        current = get_collaboration_conversation(conversation_id)
+        assert_user_can_participate_in_collaboration_conversation(user_id, current)
+        if current.get('source_conversation_id') != source_id:
+            raise PermissionError('This shared response is unavailable.')
+
+    record = ChatAttemptStore(
+        cosmos_conversation_handoffs_container, cosmos_messages_container,
+        actor_id=user_id, conversation_id=source_id, destination_id=conversation_id,
+        submission_id=submission_id, authorize=authorize,
+    ).read()
+    if not record or not record.get('admitted'):
+        return None
+    if record.get('dispatched') and record.get('state') != 'interrupted':
+        raise ChatRetryError('This response was already submitted. Reload its saved state.', code='retry_already_submitted')
+    question_id = record.get('destination_user_message_id')
+    if not question_id:
+        raise ChatRetryError('This shared question is unavailable.', code='chat_result_unavailable', status_code=503)
+    question = normalize_cosmos_document(cosmos_collaboration_messages_container.read_item(
+        item=question_id, partition_key=conversation_id,
+    ))
+    if is_soft_deleted_message(question):
+        raise ChatRetryError('This shared question is no longer available.', code='message_not_found', status_code=404)
+    if (
+        question.get('conversation_id') != conversation_id or question.get('role') != 'user'
+        or question.get('content') != content
+        or ((question.get('metadata') or {}).get('sender') or {}).get('user_id') != user_id
+        or (question.get('metadata') or {}).get('source_conversation_id') != source_id
+    ):
+        raise ChatRetryError('This shared submission changed.', code='submission_conflict')
+    return question
+
+
+def _recover_collaboration_chat_attempts(conversation_doc, viewer_id):
+    """Materialize committed output, never execute/cancel a different actor's work."""
+    destination_id = conversation_doc['id']
+    source_id = str(conversation_doc.get('source_conversation_id') or '').strip()
+    if not source_id:
+        return
+
+    def authorize():
+        current = get_collaboration_conversation(destination_id)
+        assert_user_can_view_collaboration_conversation(
+            viewer_id, current, allow_pending=True, read_only=True,
+        )
+        source = cosmos_conversations_container.read_item(item=source_id, partition_key=source_id)
+        if (
+            current.get('source_conversation_id') != source_id
+            or source.get('collaboration_conversation_id') != destination_id
+            or source.get('id') != source_id
+        ):
+            raise PermissionError('This shared response is unavailable.')
+        return current
+
+    def publish_destination(store, source_message):
+        record = store.read()
+        question_id = record.get('destination_user_message_id')
+        if not question_id:
+            raise ChatRetryError(
+                'The saved shared response has no question binding.',
+                code='chat_result_unavailable', status_code=503,
+            )
+        for _ in range(12):
+            authorize()
+            try:
+                question = normalize_cosmos_document(cosmos_collaboration_messages_container.read_item(
+                    item=question_id, partition_key=destination_id,
+                ))
+            except CosmosResourceNotFoundError:
+                store._acknowledge(
+                    destination_question_state=record['state'], destination_materialized=True,
+                )
+                return
+            if (
+                question.get('conversation_id') != destination_id or question.get('role') != 'user'
+                or (question.get('metadata') or {}).get('source_conversation_id') != source_id
+                or ((question.get('metadata') or {}).get('sender') or {}).get('user_id') != record['user_id']
+            ):
+                raise PermissionError('This shared question is unavailable.')
+            if is_soft_deleted_message(question):
+                store._acknowledge(
+                    destination_question_state=record['state'], destination_materialized=True,
+                )
+                return
+            metadata = question.setdefault('metadata', {})
+            previous = metadata.get('response_attempt') or {}
+            if previous.get('submission_id') not in (None, record['submission_id']):
+                raise ChatRetryError('This shared submission changed.', code='submission_conflict')
+            metadata['response_attempt'] = {
+                **previous, 'kind': 'chat', 'submission_id': record['submission_id'],
+                'state': record['state'], 'user_message_id': question_id,
+            }
+            metadata.setdefault('thread_info', deepcopy(record.get('thread_info') or {}))
+            try:
+                cosmos_collaboration_messages_container.replace_item(
+                    item=question_id, body=question, etag=question['_etag'],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+                break
+            except CosmosAccessConditionFailedError:
+                continue
+        else:
+            raise ChatRetryError('This shared question changed. Reload it.', code='retry_attempt_changed')
+        if source_message is not None:
+            # Reuse the canonical/source message IDs; no parallel generation identity.
+            candidate = build_collaboration_message_doc_from_legacy(
+                destination_id, source_message, {'user_id': record['user_id']},
+            )
+            if candidate is None:
+                raise ChatRetryError('This shared response is unavailable.', code='chat_result_unavailable', status_code=503)
+            candidate['id'] = f"{destination_id}_chat_{source_message['id']}"
+            candidate['reply_to_message_id'] = question_id
+            metadata = candidate.setdefault('metadata', {})
+            metadata.update(source_conversation_id=source_id, source_thought_user_id=record['user_id'])
+            metadata['response_attempt'] = {
+                **metadata['response_attempt'], 'user_message_id': question_id,
+            }
+            metadata['stopped_user_message_id'] = question_id
+            publish_chat_attempt_message(
+                cosmos_collaboration_messages_container, candidate, authorize=authorize,
+            )
+        store._acknowledge(
+            destination_question_state=record['state'],
+            **({'destination_materialized': True} if record.get('message_id') else {}),
+        )
+
+    authorize()
+    reconcile_chat_attempts(
+        cosmos_conversation_handoffs_container, cosmos_messages_container,
+        actor_id=None, conversation_id=source_id, destination_id=destination_id,
+        authorize=authorize, publish_destination=publish_destination,
+    )
+
+
 def _read_source_message_doc(source_conversation_id, source_message_id):
     normalized_conversation_id = str(source_conversation_id or '').strip()
     normalized_message_id = str(source_message_id or '').strip()
@@ -599,6 +749,7 @@ def _build_collaboration_stream_request_payload(data, source_conversation_id, me
         'reasoning_effort': data.get('reasoning_effort'),
         'm365_request_id': data.get('m365_request_id'),
         'retry_user_message_id': data.get('retry_user_message_id'),
+        'submission_id': data.get('submission_id'),
     }
 
 
@@ -1805,6 +1956,7 @@ def register_route_backend_collaboration(bp):
                 conversation_doc,
                 allow_pending=True,
             )
+            _recover_collaboration_chat_attempts(conversation_doc, current_user['user_id'])
             event_cursor = COLLABORATION_EVENT_REGISTRY.get_session(conversation_id).get_event_cursor()
             messages = [serialize_collaboration_message(doc) for doc in list_collaboration_messages(conversation_id)]
             messages = refresh_azure_maps_message_citations(messages)
@@ -1813,8 +1965,15 @@ def register_route_backend_collaboration(bp):
             messages = hydrate_m365_pending_action_cards(messages, current_user['user_id'], conversation_id)
             messages = public_history_messages(messages, current_user['user_id'])
             return jsonify({'messages': messages, 'event_cursor': event_cursor}), 200
+        except ChatRetryError as error:
+            return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404
+        except (AzureError, TypeError):
+            return jsonify({
+                'error': 'Saved shared response state could not be confirmed. Please reload.',
+                'code': 'chat_attempt_storage_unavailable',
+            }), 503
         except PermissionError as exc:
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
@@ -2844,18 +3003,23 @@ def register_route_backend_collaboration(bp):
                 updated_conversation_doc = conversation_doc
                 data['retry_user_message_id'] = pending_request.get('user_message_id')
             else:
-                user_message_doc, updated_conversation_doc = persist_collaboration_message(
-                    conversation_doc,
-                    current_user,
-                    message_content,
-                    reply_to_message_id=reply_to_message_id,
-                    mentioned_participants=mentioned_participants,
-                    message_kind=MESSAGE_KIND_AI_REQUEST,
-                    extra_metadata=extra_metadata,
+                user_message_doc = _read_matching_collaboration_chat_submission(
+                    conversation_id, source_conversation_id, current_user['user_id'], data, message_content,
                 )
-                user_message_doc.setdefault('metadata', {})['source_conversation_id'] = source_conversation_id
-                cosmos_collaboration_messages_container.upsert_item(user_message_doc)
-                create_collaboration_message_notifications(updated_conversation_doc, user_message_doc)
+                updated_conversation_doc = conversation_doc
+                if user_message_doc is None:
+                    user_message_doc, updated_conversation_doc = persist_collaboration_message(
+                        conversation_doc,
+                        current_user,
+                        message_content,
+                        reply_to_message_id=reply_to_message_id,
+                        mentioned_participants=mentioned_participants,
+                        message_kind=MESSAGE_KIND_AI_REQUEST,
+                        extra_metadata=extra_metadata,
+                    )
+                    user_message_doc.setdefault('metadata', {})['source_conversation_id'] = source_conversation_id
+                    cosmos_collaboration_messages_container.upsert_item(user_message_doc)
+                    create_collaboration_message_notifications(updated_conversation_doc, user_message_doc)
             serialized_user_message = serialize_collaboration_message(user_message_doc)
             serialized_user_conversation = serialize_collaboration_conversation(
                 updated_conversation_doc,
@@ -2940,6 +3104,9 @@ def register_route_backend_collaboration(bp):
 
                     buffer = ''
                     with current_app.test_request_context('/api/chat/stream', method='POST', json=stream_request_payload):
+                        # Server-only canonical destination: a stop can precede creation
+                        # of the hidden source conversation, without trusting a client owner/id.
+                        request.environ['simplechat.chat_control_destination_id'] = conversation_id
                         if content_check_context is not None:
                             request.environ[CHECK_CONTEXT_KEY] = content_check_context
                         session.clear()
@@ -3115,16 +3282,26 @@ def register_route_backend_collaboration(bp):
                             except Exception:
                                 source_conversation_doc = None
 
-                            mirrored_message_doc, final_conversation_doc, _ = mirror_source_message_to_collaboration(
-                                collaboration_conversation_doc,
-                                source_message_doc,
-                                source_owner_user,
-                                reply_to_message_id=serialized_user_message.get('id'),
-                                extra_metadata={
-                                    'source_conversation_id': source_conversation_id,
-                                    'source_thought_user_id': current_user['user_id'],
-                                },
-                            )
+                            if ((source_message_doc.get('metadata') or {}).get('response_attempt') or {}).get('submission_id'):
+                                _recover_collaboration_chat_attempts(
+                                    collaboration_conversation_doc, current_user['user_id'],
+                                )
+                                mirrored_message_doc = cosmos_collaboration_messages_container.read_item(
+                                    item=f"{conversation_id}_chat_{source_message_id}",
+                                    partition_key=conversation_id,
+                                )
+                                final_conversation_doc = get_collaboration_conversation(conversation_id)
+                            else:
+                                mirrored_message_doc, final_conversation_doc, _ = mirror_source_message_to_collaboration(
+                                    collaboration_conversation_doc,
+                                    source_message_doc,
+                                    source_owner_user,
+                                    reply_to_message_id=serialized_user_message.get('id'),
+                                    extra_metadata={
+                                        'source_conversation_id': source_conversation_id,
+                                        'source_thought_user_id': current_user['user_id'],
+                                    },
+                                )
                             if not mirrored_message_doc:
                                 return collaboration_stream_error(
                                     'Failed to mirror the assistant response into the collaboration conversation',
@@ -3216,6 +3393,10 @@ def register_route_backend_collaboration(bp):
                     ai_activity.finished()
 
             return Response(stream_with_context(generate_stream()), mimetype='text/event-stream')
+        except ChatRetryError as error:
+            return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+        except SubmissionIdError:
+            return jsonify({'error': 'Invalid response submission.', 'code': 'invalid_submission'}), 400
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404
         except PermissionError as exc:
@@ -3243,13 +3424,36 @@ def register_route_backend_collaboration(bp):
             assert_user_can_participate_in_collaboration_conversation(current_user['user_id'], conversation_doc)
 
             source_conversation_id = str((conversation_doc or {}).get('source_conversation_id') or '').strip()
-            if not source_conversation_id:
-                return jsonify({'error': 'No active AI stream is available for this collaboration'}), 404
-
             data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                return jsonify({'error': 'Invalid stop request.', 'outcome': 'unconfirmed'}), 400
+            if not source_conversation_id and not data.get('submission_id'):
+                return jsonify({'error': 'No active AI stream is available for this collaboration'}), 404
             cancel_reason = str(data.get('reason') or 'user_requested').strip() or 'user_requested'
 
             from route_backend_chats import CHAT_STREAM_REGISTRY
+
+            if data.get('submission_id'):
+                def authorize_attempt():
+                    current = get_collaboration_conversation(conversation_id)
+                    assert_user_can_participate_in_collaboration_conversation(current_user['user_id'], current)
+
+                attempt_store = ChatAttemptStore(
+                    cosmos_conversation_handoffs_container, cosmos_messages_container,
+                    actor_id=current_user['user_id'], conversation_id=None, destination_id=conversation_id,
+                    submission_id=data.get('submission_id'), authorize=authorize_attempt,
+                )
+                result = attempt_store.cancel()
+                try:
+                    stream_session = CHAT_STREAM_REGISTRY.get_session(
+                        current_user['user_id'], attempt_store.conversation_id,
+                        active_only=True, submission_id=attempt_store.submission_id,
+                    )
+                    if stream_session:
+                        stream_session.request_cancel(reason='user_requested')
+                except (AzureError, RuntimeError, TypeError):
+                    log_event('[COLLABORATION] Stop accepted; worker notification was unavailable.', level=logging.WARNING)
+                return jsonify({'success': True, **result}), 200
 
             stream_session = CHAT_STREAM_REGISTRY.get_session(
                 current_user['user_id'],
@@ -3258,6 +3462,8 @@ def register_route_backend_collaboration(bp):
             )
             if not stream_session:
                 return jsonify({'error': 'No active AI stream is available for this collaboration'}), 404
+            if getattr(stream_session, 'submission_id', None):
+                return jsonify({'error': 'The response submission identity is required.', 'outcome': 'unconfirmed'}), 400
 
             stream_status = stream_session.request_cancel(reason=cancel_reason) or {}
             return jsonify({
@@ -3265,7 +3471,15 @@ def register_route_backend_collaboration(bp):
                 'cancel_requested': True,
                 'source_conversation_id': source_conversation_id,
                 **stream_status,
+                'outcome': 'accepted',
             }), 200
+        except (ChatRetryError, SubmissionIdError) as error:
+            return jsonify({
+                'error': error.public_message if isinstance(error, ChatRetryError) else 'Invalid response submission.',
+                'outcome': 'unconfirmed',
+            }), error.status_code if isinstance(error, ChatRetryError) else 400
+        except AzureError:
+            return jsonify({'error': 'Stopping could not be confirmed. Please retry.', 'outcome': 'unconfirmed'}), 503
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404
         except PermissionError as exc:

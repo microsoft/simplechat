@@ -19,6 +19,7 @@ export interface RetryPresentation {
 }
 
 export interface ResponseAttempt {
+    submission_id?: string;
     kind?: string;
     state?: string;
     error?: string;
@@ -50,6 +51,7 @@ export function savedResponseAttempt(message: ChatMessage | undefined): Response
     const value = message?.metadata?.response_attempt;
     if (!isRecord(value)) return {};
     return {
+        submission_id: typeof value.submission_id === 'string' ? value.submission_id : undefined,
         kind: typeof value.kind === 'string' ? value.kind : undefined,
         state: typeof value.state === 'string' ? value.state : undefined,
         error: typeof value.error === 'string' ? value.error : undefined,

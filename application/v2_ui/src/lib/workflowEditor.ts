@@ -642,7 +642,21 @@ export interface WorkflowDefinition {
     [key: string]: unknown;
 }
 
-export interface WorkflowRuntimeGate {
+export interface WorkflowFailureSummary {
+    error?: string;
+    error_code?: string;
+    failure_phase?: string;
+    effect_certainty?: 'none' | 'possible' | 'committed';
+    correlation_reference?: string;
+    provider_status?: number;
+    provider_error_type?: string;
+    model_protocol?: string;
+    request_stage?: string;
+    missing_capability?: string;
+    request_outcome?: string;
+}
+
+export interface WorkflowRuntimeGate extends WorkflowFailureSummary {
     id: string;
     kind: WorkflowRuntimeGateKind;
     unit_id?: string;
@@ -835,10 +849,13 @@ export interface WorkflowRunStartResponse {
     durable_execution?: boolean;
 }
 
-export interface WorkflowRunItem {
+export interface WorkflowRunItem extends WorkflowFailureSummary {
     id?: string;
     item_type?: string;
     task_id?: string;
+    execution_id?: string;
+    attempt?: number;
+    result_availability?: { available: boolean; reason: string };
     label?: string;
     task_name?: string;
     status?: string;

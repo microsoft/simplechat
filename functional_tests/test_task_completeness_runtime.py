@@ -1,8 +1,9 @@
 # test_task_completeness_runtime.py
 """Real-module verification, correction, result eligibility and durable storage.
 
-Version: 0.261.418
+Version: 0.261.430
 Implemented in: 0.261.382; 0.261.384; 0.261.416; 0.261.418
+Same-route capability-aware JSON verification added in: 0.261.430
 """
 
 import importlib
@@ -38,6 +39,52 @@ def report(status, quote="Evaluation", refs=None):
 
 def stored_steps(harness):
     return harness.run_store.list_run_steps(harness.run_id, "owner", "conversation-1")
+
+
+@pytest.mark.parametrize("native_json", [True, False])
+@pytest.mark.parametrize("malformed", [True, False])
+def test_real_workflow_verifier_selects_supported_json_without_replaying_producer(
+    initialized_application, monkeypatch, native_json, malformed,
+):
+    from model_endpoint_clients import bind_model_endpoint_request_policy
+
+    runner = importlib.import_module("functions_workflow_runner")
+    results = importlib.import_module("functions_workflow_results")
+    calls = []
+
+    def completion(**kwargs):
+        calls.append(kwargs)
+        content = '{"requirements":[],"unexpected":true}' if malformed else report("satisfied")
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))], usage=None)
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=completion)))
+    route = {
+        "request_model": "claude",
+        "operation_url": "https://offline.invalid/shared-foundry;rev=2/anthropic",
+        "capabilities": {"processesText": True, "generatesText": True, "structuredOutput": native_json},
+    }
+    bind_model_endpoint_request_policy(client, route)
+    monkeypatch.setattr(runner, "_resolve_model_workflow_client", lambda *args: (client, "claude", "anthropic"))
+    monkeypatch.setattr(runner, "_raise_if_workflow_run_cancelled", lambda *args: None)
+    monkeypatch.setattr(runner, "_execute_workflow_dispatch", lambda *args, **kwargs: pytest.fail("Do not replay the producer"))
+    workflow = {"id": "wf", "user_id": "owner", "definition_version": 2}
+    task = {"id": "task", "type": "instructions", "instructions": "Include the evaluation facts.", "output_contract": {"kind": "text"}}
+    result = {"reply": "Evaluation: proposal deadline and response days retained."}
+    envelope = results.build_workflow_task_result(result, workflow=workflow, run_id="run", task=task)
+    updated, checked = runner._check_workflow_completeness(
+        result, envelope, workflow=workflow, task=task, settings={},
+        run_id="run", durable=None, unit_key="task",
+    )
+    assert updated["reply"] == result["reply"]
+    if malformed:
+        assert checked["task_completeness"]["status"] in ("incomplete", "verification_unavailable")
+        assert 1 <= len(calls) <= 2
+    else:
+        assert checked["task_completeness"]["status"] == "complete"
+        assert len(calls) == 1
+    assert all(call["model"] == "claude" and "tools" not in call for call in calls)
+    assert all(("response_format" in call) is native_json for call in calls)
+    assert client._simplechat_route_policy["operation_url"] == route["operation_url"]
 
 
 def test_default_on_composition_corrects_twice_with_persisted_final_assessment(harness):

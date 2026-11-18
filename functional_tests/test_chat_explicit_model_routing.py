@@ -1,8 +1,9 @@
 # test_chat_explicit_model_routing.py
 """
 Regression tests for chat bootstrap with explicit per-model routing.
-Version: 0.261.053
+Version: 0.261.429
 Implemented in: 0.261.053
+Shared catalog delegation coverage updated in: 0.261.429
 
 Execute the chat route and catalog functions with the real model-identifier
 resolver, without initializing cloud clients.
@@ -13,6 +14,7 @@ import copy
 import logging
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from flask import Flask, jsonify, request
@@ -23,14 +25,12 @@ APP_DIR = ROOT / "application" / "single_app"
 sys.path.insert(0, str(APP_DIR))
 
 from functions_model_endpoint_types import resolve_model_endpoint_request_model  # noqa: E402
+from functions_chat_model_catalog import build_chat_model_catalog  # noqa: E402
+import functions_chat_model_catalog as chat_catalog  # noqa: E402
 
 
 def load_chat_functions(settings, personal_endpoints=None, group_endpoints=None):
     source = ast.parse((APP_DIR / "route_frontend_chats.py").read_text(encoding="utf-8"))
-    catalog = next(
-        node for node in source.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_build_chat_model_catalog"
-    )
     registrar = next(
         node for node in source.body
         if isinstance(node, ast.FunctionDef) and node.name == "register_route_frontend_chats"
@@ -46,6 +46,9 @@ def load_chat_functions(settings, personal_endpoints=None, group_endpoints=None)
         "display_name": "Test User",
     }
     namespace = {
+        "_build_chat_model_catalog": lambda **kwargs: build_chat_model_catalog_for_test(
+            group_endpoints=group_endpoints, **kwargs,
+        ),
         "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "sanitize_model_endpoints_for_frontend": copy.deepcopy,
         "normalize_model_endpoints": lambda endpoints: (endpoints, False),
@@ -53,6 +56,7 @@ def load_chat_functions(settings, personal_endpoints=None, group_endpoints=None)
         "get_group_model_endpoints": lambda group_id: group_endpoints or [],
         "get_current_user_id": lambda: "user-one",
         "get_current_user_info": lambda: {"email": "test@example.com"},
+        "get_optional_active_group": lambda *args, **kwargs: None,
         "get_settings": lambda: settings,
         "get_user_settings": lambda user_id: user_settings,
         "_ensure_public_chat_workspace_visible": lambda *args: None,
@@ -84,9 +88,23 @@ def load_chat_functions(settings, personal_endpoints=None, group_endpoints=None)
             "catalog": context["chat_model_options"],
         }),
     }
-    module = ast.Module(body=[catalog, chats], type_ignores=[])
+    module = ast.Module(body=[chats], type_ignores=[])
     exec(compile(ast.fix_missing_locations(module), "route_frontend_chats.py", "exec"), namespace)
     return namespace, user_settings, groups
+
+
+def build_chat_model_catalog_for_test(*, group_endpoints=None, **kwargs):
+    with (
+        patch.object(
+            chat_catalog,
+            "filter_chat_model_endpoints_by_governance",
+            side_effect=lambda user_id, endpoints, feature_key: endpoints,
+        ),
+        patch.object(chat_catalog, "_normalize_model_endpoints", side_effect=lambda endpoints: (endpoints, False)),
+        patch.object(chat_catalog, "_sanitize_model_endpoints_for_frontend", side_effect=lambda endpoints, **_kwargs: endpoints),
+        patch.object(chat_catalog, "_get_group_model_endpoints", side_effect=lambda group_id: group_endpoints or []),
+    ):
+        return build_chat_model_catalog(**kwargs)
 
 
 def endpoint_for(api_type, identifier_field, identifier, *, enabled=True):

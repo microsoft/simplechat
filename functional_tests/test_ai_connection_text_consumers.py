@@ -1,10 +1,11 @@
 # test_ai_connection_text_consumers.py
 """Behavioral regression tests for shared AI Connection text-consumer guards.
 
-Version: 0.261.163
+Version: 0.261.429
 Implemented in: 0.261.105
 Canonical endpoint protocol and strict credential regressions: 0.261.106
 Custom request identity and strict hydration merge coverage: 0.261.113
+Post-merge shared chat-catalog coverage updated in: 0.261.429
 
 Execute the real consumer function bodies with the real import-safe capability
 module. SDK, credential, settings-store, and authorization seams stay in memory;
@@ -31,6 +32,7 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 # Only the pure capability modules are imported after establishing the app path.
 import functions_ai_connections as connections
+from functions_chat_model_catalog import build_chat_model_catalog
 from functions_model_capabilities import (
     REASONING_IDENTIFIER_FIELDS,
     is_vision_capable_model,
@@ -157,26 +159,35 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         shared = endpoint(records)
         original = deepcopy(shared)
         governance_checks = []
-        helpers = load_boundaries("route_frontend_chats.py", {
-            "_build_chat_model_catalog", "_chat_model_reasoning_metadata",
-        }, {
-            "_filter_chat_model_endpoints_by_governance": lambda user, values, feature: (
-                governance_checks.append((user, feature)) or values
+        with (
+            patch(
+                "functions_chat_model_catalog.filter_chat_model_endpoints_by_governance",
+                side_effect=lambda user, values, feature: (
+                    governance_checks.append((user, feature)) or values
+                ),
             ),
-            "get_group_model_endpoints": lambda group: [shared],
-        })
-        catalog = helpers["_build_chat_model_catalog"](
-            user_id="reader",
-            settings={
-                "enable_multi_model_endpoints": True,
-                "model_endpoints": [shared],
-                "allow_user_custom_endpoints": True,
-                "enable_group_workspaces": True,
-                "allow_group_custom_endpoints": True,
-            },
-            user_settings_dict={"personal_model_endpoints": [shared]},
-            user_groups_raw=[{"id": "group-one", "name": "Group"}],
-        )
+            patch("functions_chat_model_catalog._get_group_model_endpoints", return_value=[shared]),
+            patch(
+                "functions_chat_model_catalog._normalize_model_endpoints",
+                side_effect=lambda values: (values, False),
+            ),
+            patch(
+                "functions_chat_model_catalog._sanitize_model_endpoints_for_frontend",
+                side_effect=lambda values, **kwargs: values,
+            ),
+        ):
+            catalog = build_chat_model_catalog(
+                user_id="reader",
+                settings={
+                    "enable_multi_model_endpoints": True,
+                    "model_endpoints": [shared],
+                    "allow_user_custom_endpoints": True,
+                    "enable_group_workspaces": True,
+                    "allow_group_custom_endpoints": True,
+                },
+                user_settings_dict={"personal_model_endpoints": [shared]},
+                user_groups_raw=[{"id": "group-one", "name": "Group"}],
+            )
         self.assertEqual(len(catalog), 6)
         self.assertEqual({item["model_id"] for item in catalog}, {"selected-model", "legacy"})
         self.assertEqual(len({item["selection_key"] for item in catalog}), 6)

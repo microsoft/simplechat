@@ -1,7 +1,7 @@
 # test_v2_workflow_control_runtime.py
 """
 UI tests for V2 workflow control-runtime run inspection.
-Version: 0.261.271
+Version: 0.261.430
 Implemented in: 0.261.116
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
@@ -49,6 +49,38 @@ def expand_run_history(page, workflow_name):
 
 def result_requests(ui):
     return [request for request in ui.requests if request.path.endswith("/result")]
+
+
+def test_v3_failed_execution_and_attempt_show_safe_diagnostics_without_result_fetch(workflow_control_ui):
+    ui, page = workflow_control_ui, workflow_control_ui.page
+    key = ("user", V3_WORKFLOW_ID, V3_RUN_ID)
+    eid = execution_id(V3_WORKFLOW_ID, V3_RUN_ID, "evaluate")
+    diagnostic = {
+        "state": "failed", "error": '<img src=x onerror="window.workflowXss=true"> Safe failure text.',
+        "error_code": "model_provider_request_failed", "provider_status": 404,
+        "provider_error_type": "NotFoundError", "request_stage": "request",
+        "effect_certainty": "none", "correlation_reference": "abc12345",
+    }
+    execution = ui.execution_pages[key][""]["items"][0]
+    execution.update(copy.deepcopy(diagnostic), attempt=1)
+    execution.pop("workflow_result", None)
+    execution.pop("workflow_validation", None)
+    ui.attempt_pages[(*key, eid)][""]["items"] = [{
+        "execution_id": eid, "node_id": "evaluate", "task_id": "evaluate", "attempt": 1,
+        **copy.deepcopy(diagnostic),
+    }]
+    ui.open("/workspace/workflows")
+    expand_run_history(page, "Structured branch workflow")
+    details = page.get_by_label("Failure details")
+    expect(details.first).to_contain_text(diagnostic["error"])
+    expect(details.first).to_contain_text("Provider HTTP status: 404")
+    page.get_by_role("button", name=f"Show execution attempts for {eid}", exact=True).click()
+    attempts = page.get_by_role("list", name=f"Attempts for execution {eid}", exact=True)
+    expect(attempts.get_by_label("Failure details")).to_contain_text("NotFoundError")
+    expect(attempts.get_by_role("button", name="Load authoritative output excerpt", exact=True)).to_have_count(0)
+    assert result_requests(ui) == []
+    assert page.locator("img[src=x]").count() == 0
+    assert page.evaluate("() => window.workflowXss === true") is False
 
 
 def test_v3_execution_history_uses_exact_attempt_result_endpoint(workflow_control_ui):

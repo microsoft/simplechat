@@ -953,6 +953,7 @@ let streamingConversationId: string | null = null;
  */
 let streamingConversationKind: ConversationKind = 'personal';
 let activeStreamCancellation: (() => Promise<void>) | null = null;
+let activeStreamSubmissionId: string | null = null;
 
 /**
  * Conversations whose orchestration turn currently holds the streaming surface, and in which phase.
@@ -985,6 +986,82 @@ export function currentConversationEpoch(): number {
     return conversationEpoch;
 }
 
+function stoppedReplyId(
+    conversationId: string,
+    userMessageId: string,
+    presentation: RetryPresentation | null,
+): string {
+    const attempt = presentation?.admitted ? `-${presentation.attempt}` : '';
+    return `cancelled-${conversationId}-${userMessageId || 'turn'}${attempt}`;
+}
+
+function messageActorId(message: ChatMessage): string | undefined {
+    for (const value of [message.metadata?.user_info, message.metadata?.sender]) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            const id = (value as Json).user_id;
+            if (typeof id === 'string' && id) return id;
+        }
+    }
+    return undefined;
+}
+
+function insertStoppedReply(
+    messages: ChatMessage[],
+    conversationId: string,
+    userMessageId: string,
+    content: string,
+    thoughts: ThoughtEntry[],
+    presentation: RetryPresentation | null,
+    metadata: Json = {},
+): ChatMessage[] {
+    const confirmed = metadata.stream_status !== 'stop_unconfirmed';
+    const interrupted = metadata.stream_status === 'interrupted';
+    const stateMessages = presentation?.admitted
+        ? updateRetryState(messages, presentation, 'interrupted')
+        : messages.map((message) => (
+            message.id === userMessageId && message.role === 'user'
+                ? {
+                    ...message,
+                    metadata: {
+                        ...message.metadata,
+                        response_attempt: {
+                            ...savedResponseAttempt(message),
+                            state: 'interrupted',
+                            error: !confirmed ? 'Stopping is not confirmed. Refresh to check saved work.'
+                                : interrupted ? 'This response was interrupted. Refresh to check saved work.' : 'This response was stopped.',
+                        },
+                    },
+                }
+                : message
+        ));
+    if (!content) {
+        return stateMessages;
+    }
+    const reply: ChatMessage = {
+        id: typeof metadata.submission_id === 'string'
+            ? `cancelled-${conversationId}-${metadata.submission_id}`
+            : stoppedReplyId(conversationId, userMessageId, presentation),
+        conversation_id: conversationId,
+        role: 'assistant',
+        content,
+        timestamp: new Date().toISOString(),
+        metadata: retryReplyMetadata({
+            stream_status: !confirmed ? 'stop_unconfirmed' : interrupted ? 'interrupted' : 'stopped',
+            complete: false,
+            stop_reason: !confirmed ? 'cancellation_unconfirmed' : interrupted ? 'provider_interrupted' : 'user_cancelled',
+            stopped_user_message_id: userMessageId,
+            stopped_actor_id: useBootstrapStore.getState().data?.user?.id,
+            ...metadata,
+        }, presentation),
+        ...(thoughts.length > 0 ? { thoughts: [...thoughts] } : {}),
+    };
+    return insertRetryReply(
+        stateMessages,
+        reply,
+        presentation,
+    );
+}
+
 /**
  * Stop reading the in-flight stream without asking the server to stop producing it.
  *
@@ -1009,6 +1086,7 @@ function detachActiveStream(): void {
     activeStreamController.abort();
     activeStreamController = null;
     activeStreamCancellation = null;
+    activeStreamSubmissionId = null;
     streamingConversationId = null;
     // The reply is no longer being read, so its turn stops being a streaming one. Left
     // registered, the next send in this conversation would take the old turn for a renamed
@@ -1527,27 +1605,27 @@ function buildStreamHandlers(
             if (!isCurrent()) {
                 return;
             }
-            // Partial output is kept: discarding what was already generated is more
-            // annoying than useful when someone stops a long answer.
             const finalContent = resolveStreamContent(_event, accumulated);
-            if (finalContent) {
-                set((state) => ({
-                    messages: insertRetryReply(
-                        updateRetryState(state.messages, streamRetry(), 'interrupted'),
-                        {
-                            id: `cancelled-${Date.now()}`,
-                            conversation_id: conversationId,
-                            role: 'assistant',
-                            content: finalContent,
-                            timestamp: new Date().toISOString(),
-                            metadata: retryReplyMetadata(completionMetadata(_event) ?? {}, streamRetry()),
-                            thoughts:
-                                state.thoughts.length > 0 ? [...state.thoughts] : undefined,
-                        }, streamRetry(),
-                    ),
-                }));
-            }
-            set({ streaming: false, streamingContent: '', streamingReasoningAdjustments: [], reconnectPhase: null });
+            const presentation = streamRetry();
+            set((state) => ({
+                messages: insertStoppedReply(
+                    state.messages,
+                    conversationId,
+                    streamUserMessageId,
+                    finalContent,
+                    state.thoughts,
+                    presentation,
+                    completionMetadata(_event) ?? {},
+                ),
+                streaming: false,
+                streamingContent: '',
+                streamingReasoningAdjustments: [],
+                reconnectPhase: null,
+                thoughts: [],
+                retryPresentation: presentation?.admitted
+                    ? { ...presentation, error: undefined }
+                    : state.retryPresentation,
+            }));
         },
         onError: (message, event) => {
             if (!isCurrent()) {
@@ -1560,13 +1638,30 @@ function buildStreamHandlers(
             const failure = refusal?.message ?? message;
             const presentation = streamRetry();
             set((state) => ({
+                messages: state.streamingContent || !event ? insertStoppedReply(
+                    presentation?.admitted
+                        ? updateRetryState(state.messages, presentation, event ? 'failed' : 'unknown', failure)
+                        : state.messages,
+                    conversationId, streamUserMessageId,
+                    event ? resolveStreamContent(event, state.streamingContent) : state.streamingContent,
+                    state.thoughts, presentation,
+                    {
+                        ...(event ? completionMetadata(event) ?? {} : {}),
+                        stream_status: 'interrupted', complete: false,
+                        stop_reason: event ? 'provider_interrupted' : 'transport_unconfirmed',
+                        submission_id: savedResponseAttempt(
+                            state.messages.find((item) => item.id === streamUserMessageId),
+                        ).submission_id,
+                    },
+                ) : presentation?.admitted
+                    ? updateRetryState(state.messages, presentation, event ? 'failed' : 'unknown', failure)
+                    : state.messages,
                 streaming: false,
                 streamingContent: '',
                 completedReply: null,
                 streamingReasoningAdjustments: [],
                 reconnectPhase: null,
                 ...(presentation?.admitted ? {
-                    messages: updateRetryState(state.messages, presentation, event ? 'failed' : 'unknown', failure),
                     retryPresentation: { ...presentation, error: failure, authUrl: foundryAuthUrl(event) },
                     streamError: null, streamAuthUrl: null,
                 } : { streamError: failure, streamAuthUrl: foundryAuthUrl(event) }),
@@ -1638,10 +1733,14 @@ async function runChatStream(
     };
 
     const controller = new AbortController();
+    if (requestBody && !requestBody.image_generation && !requestBody.analysis_result_context && !requestBody.workflow_result_context) {
+        requestBody = { ...requestBody, submission_id: requestBody.submission_id || crypto.randomUUID() };
+    }
     activeStreamController = controller;
     streamingConversationId = conversationId;
     streamingConversationKind = options.kind ?? 'personal';
     activeStreamCancellation = options.cancel ?? null;
+    activeStreamSubmissionId = requestBody?.submission_id ?? null;
 
     // Two different questions, and conflating them breaks one case each way.
     //
@@ -1663,6 +1762,21 @@ async function runChatStream(
     // switching conversations clears it.
     const liveUserMessageId =
         String(options.pendingUserMessageId ?? '').trim() || latestUserMessageId(getState().messages);
+    if (requestBody?.submission_id && liveUserMessageId) {
+        const submissionId = requestBody.submission_id;
+        set((state) => ({
+            messages: state.messages.map((message) => message.id === liveUserMessageId ? {
+                ...message,
+                metadata: {
+                    ...message.metadata,
+                    response_attempt: {
+                        ...savedResponseAttempt(message), kind: 'chat',
+                        submission_id: submissionId, state: 'running',
+                    },
+                },
+            } : message),
+        }));
+    }
     if (liveUserMessageId && isCurrent()) {
         chatPendingActionsStore
             .getState()
@@ -1679,6 +1793,7 @@ async function runChatStream(
             requestBody?.message,
         );
     let preflightRejected = false;
+    let reloadAfterInterruption = false;
     if (options.transport) {
         await options.transport(handlers, controller.signal);
     } else if (requestBody) {
@@ -1686,6 +1801,7 @@ async function runChatStream(
             ...requestBody, action_recovery_client_message_id: options.pendingUserMessageId ?? null,
         }, handlers, controller.signal, options.stream);
         preflightRejected = result.preflightRejected === true;
+        reloadAfterInterruption = result.errored && !preflightRejected;
     }
 
     // Only tear down if this stream is still the active one; a newer send may already have
@@ -1695,6 +1811,7 @@ async function runChatStream(
     if (ownsController()) {
         activeStreamController = null;
         activeStreamCancellation = null;
+        activeStreamSubmissionId = null;
         streamingConversationId = null;
         chatPendingActionsStore.getState().setLiveStream(null);
         set({ streaming: false, reconnectPhase: null });
@@ -1705,7 +1822,7 @@ async function runChatStream(
     // has to be re-read rather than patched locally. Skipped when the reader is elsewhere,
     // since reloadMessages reads whatever is on screen and would refetch a thread this
     // stream never touched.
-    if (options.reloadOnDone && wasCurrent) {
+    if ((options.reloadOnDone || reloadAfterInterruption) && wasCurrent) {
         await getState().reloadMessages();
     }
 
@@ -1860,6 +1977,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
         conversationId,
         buildStreamHandlers(conversationId, isCurrent, set, getState, reattachedUserMessageId),
         controller.signal,
+        typeof status.submission_id === 'string' ? status.submission_id : undefined,
     );
 
     if (isCurrent()) {
@@ -3718,19 +3836,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // actually belongs to, which may no longer be the one on screen, through whichever
         // cancel route that conversation uses.
         const stoppedConversationId = streamingConversationId;
+        const stoppedSubmissionId = activeStreamSubmissionId;
+        const customCancellation = activeStreamCancellation;
         const presentation = get().retryPresentation;
-        if (presentation?.admitted && presentation.conversationId === stoppedConversationId) {
-            const partial = get().streamingContent;
+        const state = get();
+        if (
+            stoppedConversationId
+            && state.activeConversationId === stoppedConversationId
+            && (!presentation || (
+                presentation.admitted && presentation.conversationId === stoppedConversationId
+            ))
+        ) {
             set((state) => {
-                const messages = updateRetryState(state.messages, presentation, 'interrupted');
                 return {
-                    messages: partial ? insertRetryReply(messages, {
-                        id: `cancelled-${Date.now()}`, conversation_id: presentation.conversationId,
-                        role: 'assistant', content: partial, timestamp: new Date().toISOString(),
-                        metadata: retryReplyMetadata({}, presentation),
-                        thoughts: state.thoughts.length ? [...state.thoughts] : undefined,
-                    }, presentation) : messages,
-                    streaming: false, streamingContent: '', retryPresentation: { ...presentation, error: undefined },
+                    messages: insertStoppedReply(
+                        state.messages,
+                        stoppedConversationId,
+                        state.messages.find((message) => message.role === 'user'
+                            && stoppedSubmissionId
+                            && savedResponseAttempt(message).submission_id === stoppedSubmissionId)?.id
+                            || latestUserMessageId(state.messages),
+                        state.streamingContent,
+                        state.thoughts,
+                        presentation,
+                        {
+                            stream_status: 'stop_unconfirmed',
+                            submission_id: stoppedSubmissionId,
+                            response_attempt: { submission_id: stoppedSubmissionId },
+                        },
+                    ),
+                    streaming: false,
+                    streamingContent: '',
+                    streamingReasoningAdjustments: [],
+                    thoughts: [],
+                    retryPresentation: presentation?.admitted
+                        ? { ...presentation, error: undefined }
+                        : null,
                 };
             });
         }
@@ -3738,13 +3879,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // The reply is detached below, so its ending is never seen here. Read the list
             // once the server has the request instead. An action the reply was still saving
             // is picked up by the next read: window focus, Refresh, or a collaboration event.
-            const cancellation = activeStreamCancellation ? activeStreamCancellation() : cancelStream(
+            const cancellation = customCancellation ? customCancellation() : cancelStream(
                 stoppedConversationId,
                 streamingConversationKind === 'collaborative'
                     ? cancelCollaborationStreamUrl(stoppedConversationId)
                     : undefined,
+                stoppedSubmissionId ?? undefined,
             );
-            void cancellation.then(() => refreshPendingActionsAfterReply(stoppedConversationId)).catch(() => {
+            void cancellation.then((result) => {
+                if (get().activeConversationId === stoppedConversationId) {
+                    const completed = result?.outcome === 'already_completed';
+                    set((state) => ({
+                        messages: state.messages.filter((message) => !(
+                            completed && message.id.startsWith('cancelled-')
+                            && message.metadata?.submission_id === stoppedSubmissionId
+                        )).map((message) => (
+                            message.role === 'user' && stoppedSubmissionId
+                            && savedResponseAttempt(message).submission_id === stoppedSubmissionId
+                                ? {
+                                    ...message, metadata: { ...message.metadata, response_attempt: {
+                                        ...savedResponseAttempt(message), state: completed ? 'completed' : 'interrupted',
+                                        error: completed ? undefined : 'This response was stopped.',
+                                    } },
+                                }
+                                :
+                            message.id.startsWith('cancelled-')
+                            && message.metadata?.submission_id === stoppedSubmissionId
+                                ? { ...message, metadata: { ...message.metadata, stream_status: 'stopped', stop_reason: 'user_cancelled' } }
+                                : message
+                        )),
+                    }));
+                }
+                refreshPendingActionsAfterReply(stoppedConversationId);
+                window.setTimeout(() => {
+                    if (get().activeConversationId === stoppedConversationId) {
+                        void get().reloadMessages({ onlyIfUnchanged: true });
+                    }
+                }, 250);
+            }).catch(() => {
                 if (get().activeConversationId === stoppedConversationId) {
                     set({ streamError: 'Stopping could not be confirmed. Refresh the conversation to check saved work.' });
                 }
@@ -4204,6 +4376,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // A message deleted while archiving was enabled is never shown, not even as a
             // masked one; see deletedMessages.ts.
             const messages = withoutDeletedMessages(loadedMessages);
+            for (const stopped of shownBefore.filter((message) =>
+                message.role === 'assistant' && message.id.startsWith('cancelled-')
+                && ['stopped', 'stop_unconfirmed', 'interrupted'].includes(String(message.metadata?.stream_status))
+            )) {
+                const originId = String(stopped.metadata?.stopped_user_message_id ?? '');
+                const localThread = messageThreadId(stopped);
+                const localAttempt = currentAttempt(stopped);
+                const submissionId = stopped.metadata?.submission_id
+                    || savedResponseAttempt(stopped).submission_id;
+                const actorId = stopped.metadata?.stopped_actor_id;
+                const sameActor = (message: ChatMessage) =>
+                    get().activeConversationKind !== 'collaborative' || !actorId || messageActorId(message) === actorId;
+                const originIndex = messages.findIndex((message) => message.role === 'user' && (
+                    message.id === originId
+                    || (submissionId && sameActor(message) && savedResponseAttempt(message).submission_id === submissionId)
+                ));
+                const storedReply = messages.some((message) => (
+                    message.role === 'assistant'
+                    && sameActor(message)
+                    && (
+                        (submissionId && savedResponseAttempt(message).submission_id === submissionId)
+                        || (!submissionId && localThread && (
+                            messageThreadId(message) === localThread
+                            && currentAttempt(message) === localAttempt
+                        ))
+                    )
+                ));
+                if (!storedReply && !messages.some((message) => message.id === stopped.id)) {
+                    messages.splice(originIndex >= 0 ? originIndex + 1 : messages.length, 0, stopped);
+                }
+            }
             set({ messages });
             const selected = get().analysisResultContext;
             if (selected && get().analysisContextRevision === analysisRevision && !messages.some((message) =>

@@ -1225,6 +1225,17 @@ function MessageBubbleInner({
                                 )}
                             </p>
                         )}
+                        {(message.metadata?.stream_status === 'stopped' || message.metadata?.stream_status === 'stop_unconfirmed'
+                            || message.metadata?.stream_status === 'interrupted' || message.metadata?.incomplete === true
+                            || message.metadata?.canceled === true || message.metadata?.complete === false) && (
+                            <p role="status" className="mt-2 text-xs text-text-3">
+                                {message.metadata?.stream_status === 'stop_unconfirmed'
+                                    ? 'Stopping is not confirmed. Refresh to check saved work.'
+                                    : message.metadata?.stop_reason === 'user_cancelled' || message.metadata?.cancel_reason === 'user_requested'
+                                        ? 'Stopped by you. Response may be incomplete.'
+                                        : 'This response was interrupted. Response may be incomplete.'}
+                            </p>
+                        )}
                         <ReasoningAdjustmentNotice adjustments={message.metadata?.reasoning_adjustments} />
                         <OrchestrationMessageRecovery
                             conversationId={message.conversation_id}

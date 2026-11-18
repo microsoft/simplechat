@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.429)**
+
+#### Bug Fixes
+
+*   **Post-Merge Routing, Streaming, Workflow, And Tabular Stabilization**
+    *   Uses one capability-filtered chat model catalog for V1 and V2, preventing explicit embedding-only models from appearing as chat choices.
+    *   Retains V2 partial assistant output and reasoning when Stop is used, including early cancellation and later message reconciliation.
+    *   Gives deterministic model-provider workflow failures durable safe diagnostics while preserving recovery for uncertain external effects and retrying transient HTTP failures.
+    *   Makes CSV tabular tools omit Excel-only selectors, caps invocation retries across the complete request, and deduplicates Responses function calls before execution.
+    *   (Ref: `functions_chat_model_catalog.py`, `chatStore.ts`, `functions_workflow_policy_errors.py`, `tabular_processing_plugin.py`, `model_responses_chat.py`, `POST_MERGE_STABILIZATION_FIX.md`)
+
 ### **(v0.261.428)**
 
 #### New Features

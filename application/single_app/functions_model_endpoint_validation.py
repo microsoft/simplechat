@@ -59,9 +59,11 @@ CUSTOM_ENDPOINT_PRIVATE_NETWORKS = tuple(
 class ModelEndpointValidationError(ValueError):
     """A stable, user-safe configuration or outbound-policy error."""
 
-    def __init__(self, public_message):
+    def __init__(self, public_message, *, missing_capability=None, request_stage=None):
         super().__init__(public_message)
         self.public_message = public_message
+        self.missing_capability = missing_capability
+        self.request_stage = request_stage
 
 
 class ModelEndpointUnresolvableError(ModelEndpointValidationError):

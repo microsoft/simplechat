@@ -1,20 +1,40 @@
 # functions_chat_model_catalog.py
 """The authorized model catalog shared by chat selection and request replay."""
 
-from functions_ai_connections import filter_model_endpoints_by_capability
-from functions_governance import ensure_governance_access
-from functions_group import get_group_model_endpoints
+from functions_ai_connections import (
+    filter_model_endpoints_by_capability,
+    supports_model_capability,
+)
 from functions_model_capabilities import REASONING_IDENTIFIER_FIELDS, resolve_model_reasoning_policy
 from functions_model_catalog import get_effective_model_profiles, model_profile_projection
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
-from functions_settings import normalize_model_endpoints, sanitize_model_endpoints_for_frontend
 
 
 def normalize_chat_model_value(value):
     return str(value or '').strip()
 
 
+def _normalize_model_endpoints(endpoints):
+    from functions_settings import normalize_model_endpoints
+
+    return normalize_model_endpoints(endpoints)
+
+
+def _sanitize_model_endpoints_for_frontend(endpoints, *, catalog_settings):
+    from functions_settings import sanitize_model_endpoints_for_frontend
+
+    return sanitize_model_endpoints_for_frontend(endpoints, catalog_settings=catalog_settings)
+
+
+def _get_group_model_endpoints(group_id):
+    from functions_group import get_group_model_endpoints
+
+    return get_group_model_endpoints(group_id)
+
+
 def filter_chat_model_endpoints_by_governance(user_id, endpoints, feature_key):
+    from functions_governance import ensure_governance_access
+
     try:
         ensure_governance_access(feature_key, user_id)
     except PermissionError:
@@ -62,8 +82,12 @@ def build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_grou
         else:
             models = (settings.get('gpt_model') or {}).get('selected', [])
         catalog = []
+        provider = 'custom' if settings.get('enable_gpt_apim', False) else 'aoai'
         for model in models:
-            if not isinstance(model, dict):
+            if (
+                not isinstance(model, dict)
+                or not supports_model_capability(model, provider=provider)
+            ):
                 continue
             deployment = normalize_chat_model_value(model.get('deploymentName'))
             if deployment:
@@ -80,8 +104,10 @@ def build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_grou
     catalog = []
 
     def append_models(endpoints, scope_type, scope_id=None, scope_name=None):
-        sanitized_endpoints = sanitize_model_endpoints_for_frontend(endpoints, catalog_settings=settings)
-        normalized_endpoints, _ = normalize_model_endpoints(sanitized_endpoints)
+        sanitized_endpoints = _sanitize_model_endpoints_for_frontend(
+            endpoints, catalog_settings=settings,
+        )
+        normalized_endpoints, _ = _normalize_model_endpoints(sanitized_endpoints)
 
         for endpoint in filter_model_endpoints_by_capability(normalized_endpoints):
             if not endpoint.get('enabled', True):
@@ -134,7 +160,7 @@ def build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_grou
             if group_id:
                 append_models(
                     filter_chat_model_endpoints_by_governance(
-                        user_id, get_group_model_endpoints(group_id), 'governance_group_endpoints',
+                        user_id, _get_group_model_endpoints(group_id), 'governance_group_endpoints',
                     ),
                     'group', group_id, group_doc.get('name', 'Unnamed Group'),
                 )

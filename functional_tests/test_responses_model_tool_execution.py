@@ -1,7 +1,7 @@
 # test_responses_model_tool_execution.py
 """Functional tests for Responses reasoning in the real authorized SDK tool loop.
 
-Version: 0.261.428
+Version: 0.261.429
 Implemented in: 0.261.388
 
 The real SDK and Semantic Kernel execute against a mock HTTP transport. Reasoning
@@ -10,6 +10,7 @@ continuation is request-owned and never appears in public message serialization.
 
 import asyncio
 import ast
+import copy
 import json
 from pathlib import Path
 import subprocess
@@ -173,6 +174,160 @@ def test_a_callers_json_cannot_inject_private_reasoning_continuation():
 def test_unsupported_options_are_not_silently_discarded():
     with pytest.raises(ModelEndpointValidationError):
         responses_request({"model": "selected", "messages": [], "frequency_penalty": 1})
+
+
+def test_duplicate_provider_tool_call_is_executed_once():
+    requests, executions = [], []
+
+    class Tools:
+        @kernel_function
+        def lookup(self, query: str) -> str:
+            executions.append(query)
+            return query
+
+    def respond(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) == 1:
+            tool_call = {
+                "type": "function_call",
+                "id": "function-1",
+                "call_id": "call-local",
+                "name": "local-lookup",
+                "arguments": '{"query":"42"}',
+                "status": "completed",
+            }
+            output = [tool_call, copy.deepcopy(tool_call)]
+        else:
+            output = [{
+                "type": "message",
+                "id": "answer-1",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "42", "annotations": []}],
+            }]
+        return httpx.Response(200, json={
+            "id": f"response-{len(requests)}",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.6-sol",
+            "status": "completed",
+            "output": output,
+            "usage": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+        })
+
+    async def execute():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            client = AsyncOpenAI(
+                api_key="offline",
+                base_url="https://offline.invalid/openai/v1/",
+                http_client=http,
+            )
+            service = OpenAIToolChatCompletion(
+                ai_model_id="gpt-5.6-sol",
+                async_client=client,
+                inference_api="responses",
+            )
+            kernel = Kernel()
+            kernel.add_plugin(Tools(), plugin_name="local")
+            history = ChatHistory()
+            history.add_user_message("Look up the total.")
+            settings = OpenAIChatPromptExecutionSettings(
+                function_choice_behavior=FunctionChoiceBehavior.Auto(
+                    maximum_auto_invoke_attempts=3,
+                ),
+            )
+            result = await service.get_chat_message_contents(
+                history,
+                settings,
+                kernel=kernel,
+            )
+            await client.close()
+            return result
+
+    result = asyncio.run(execute())
+    assert result[0].content == "42"
+    assert executions == ["42"]
+    assert len(requests) == 2
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("local-lookup", '{"query":'),
+        ("local-denied", '{"query":"42"}'),
+    ],
+)
+def test_malformed_or_unregistered_tool_never_executes(tool_name, arguments):
+    executions, requests = [], []
+
+    class Tools:
+        @kernel_function
+        def lookup(self, query: str) -> str:
+            executions.append(query)
+            return query
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        output = (
+            [{
+                "type": "function_call",
+                "id": "function-1",
+                "call_id": "call-local",
+                "name": tool_name,
+                "arguments": arguments,
+                "status": "completed",
+            }]
+            if len(requests) == 1
+            else [{
+                "type": "message",
+                "id": "answer-1",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "No action executed.", "annotations": []}],
+            }]
+        )
+        return httpx.Response(200, json={
+            "id": f"response-{len(requests)}",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.6-sol",
+            "status": "completed",
+            "output": output,
+            "usage": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+        })
+
+    async def execute():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            client = AsyncOpenAI(
+                api_key="offline",
+                base_url="https://offline.invalid/openai/v1/",
+                http_client=http,
+            )
+            service = OpenAIToolChatCompletion(
+                ai_model_id="gpt-5.6-sol",
+                async_client=client,
+                inference_api="responses",
+            )
+            kernel = Kernel()
+            kernel.add_plugin(Tools(), plugin_name="local")
+            history = ChatHistory()
+            history.add_user_message("Use an allowed action only.")
+            settings = OpenAIChatPromptExecutionSettings(
+                function_choice_behavior=FunctionChoiceBehavior.Auto(
+                    maximum_auto_invoke_attempts=2,
+                ),
+            )
+            try:
+                await service.get_chat_message_contents(history, settings, kernel=kernel)
+            finally:
+                await client.close()
+
+    asyncio.run(execute())
+    assert executions == []
+    assert len(requests) == 2
+    continuation = requests[1]["input"]
+    assert any(item.get("type") == "function_call_output" for item in continuation)
 
 
 def test_v1_responses_construction_is_observed_and_protocol_mutation_is_refused():

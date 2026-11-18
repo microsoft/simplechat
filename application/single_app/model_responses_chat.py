@@ -178,19 +178,32 @@ def responses_completion(response):
             "The model did not complete its response. Review Response Length and the request before retrying.",
         )
     output = [item.model_dump(exclude_none=True) for item in response.output]
-    texts, calls = [], []
+    texts, calls, normalized_output = [], [], []
+    seen_calls = set()
     for item in output:
         if item["type"] == "function_call":
+            signature = (
+                str(item.get("call_id") or ""),
+                str(item.get("name") or ""),
+                str(item.get("arguments") or ""),
+            )
+            if signature in seen_calls:
+                continue
+            seen_calls.add(signature)
+            normalized_output.append(item)
             calls.append({
                 "id": item["call_id"], "type": "function",
                 "function": {"name": item["name"], "arguments": item["arguments"]},
             })
         elif item["type"] == "message":
+            normalized_output.append(item)
             texts.extend(
                 block.get("text") or block.get("refusal", "")
                 for block in item.get("content") or []
                 if block.get("type") in {"output_text", "refusal"}
             )
+        else:
+            normalized_output.append(item)
     if not texts and not calls:
         raise ModelEndpointValidationError("The Responses endpoint returned no answer or function calls.")
     usage = None
@@ -208,5 +221,5 @@ def responses_completion(response):
         }],
         usage=usage,
     )
-    completion._responses_items = output
+    completion._responses_items = normalized_output
     return completion

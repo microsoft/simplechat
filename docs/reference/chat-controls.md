@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.424"
+version: "0.261.430"
 ---
 
 ## How to use this reference
@@ -1031,6 +1031,17 @@ preparation restores the previous answer without adding an attempt. After
 preparation succeeds, a failure belongs to the new attempt: returning to an older
 successful answer hides that failure, and returning to the failed attempt shows
 it again. **Stop** retains available partial text.
+
+Updated in version: **0.261.430** (`application/single_app/config.py`).
+For ordinary chat and Responses, Stop addresses the exact submitted attempt,
+including before generation starts. An accepted stop prevents that attempt from
+later publishing a successful completion; stopping upstream computation after
+dispatch remains best effort. A completion committed first stays complete.
+An unconfirmed stop preserves visible text and asks you to check saved work
+instead of claiming success. Saved partial replies retain their interruption
+status after reload. Provider or transport interruptions are not labelled
+“Stopped by you.” Leaving a conversation still detaches the V2 reader rather
+than canceling generation.
 
 Retry still works from a surviving question after deleting its answer. Retrying
 an earlier question does not delete or regenerate later messages, and those later

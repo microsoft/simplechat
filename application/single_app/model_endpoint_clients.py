@@ -124,7 +124,8 @@ def validate_model_endpoint_request(route, request):
     def require(capability):
         if capabilities.get(capability) is not True:
             raise ModelEndpointValidationError(
-                "The selected model does not support this request capability."
+                f"The selected model does not support the required capability: {capability}.",
+                missing_capability=capability, request_stage="capability_validation",
             )
 
     require("processesText")
@@ -134,8 +135,8 @@ def validate_model_endpoint_request(route, request):
     if (
         payload.get("tools")
         or payload.get("functions")
-        or payload.get("tool_choice") not in (None, "none", "")
-        or payload.get("function_call") not in (None, "none", "")
+        or payload.get("tool_choice") not in (None, "none", "", "auto")
+        or payload.get("function_call") not in (None, "none", "", "auto")
     ):
         require("toolCalling")
     response_format = payload.get("response_format")
@@ -197,6 +198,7 @@ def _guard_resource_create(resource, method_name, route, *, async_only=False):
         def guarded_create(**kwargs):
             validate_model_endpoint_request(route, kwargs)
             return original_create(**kwargs)
+    guarded_create._simplechat_route_policy = deepcopy(route)
     setattr(resource, method_name, guarded_create)
 
 
@@ -207,6 +209,7 @@ def bind_model_endpoint_request_policy(client, route):
     if getattr(client, "_simplechat_route_policy_bound", False):
         return client
     policy = deepcopy(route)
+    client._simplechat_route_policy = policy
     chat = getattr(client, "chat", None)
     completions = getattr(chat, "completions", None) if chat else None
     if completions is not None:
@@ -543,12 +546,25 @@ def is_response_format_rejection(error: Exception) -> bool:
     )
 
 
-def create_completion_with_response_format(create_callable, parameters, *, response_format=None, on_adjustment=None):
+def create_completion_with_response_format(create_callable, parameters, *, response_format=None, on_adjustment=None,
+                                           capabilities=None):
     """Downgrade only an explicitly rejected response-format option, at most twice."""
     if response_format is None:
         return create_callable(**parameters)
     if type(response_format) is not dict or response_format.get("type") not in ("json_schema", "json_object"):
         raise ValueError("Unsupported response format.")
+    if capabilities is None:
+        policy = getattr(create_callable, "_simplechat_route_policy", None)
+        capabilities = policy.get("capabilities") if isinstance(policy, dict) else None
+    if isinstance(capabilities, Mapping) and capabilities.get("structuredOutput") is not True:
+        # The candidate/checker prompts already carry the closed assessment schema.
+        # Select its supported representation *before* local request validation.
+        if on_adjustment is not None:
+            on_adjustment({
+                "requested_format": response_format["type"], "next_format": "prompt_only",
+                "reason": "capability_policy",
+            })
+        return create_callable(**parameters)
     formats = [response_format]
     if response_format["type"] == "json_schema":
         formats.append({"type": "json_object"})
@@ -571,8 +587,10 @@ def is_transient_model_error(error):
     """Recognize provider availability failures, never refusals or authorization failures."""
     seen = set()
     while isinstance(error, SanitizedModelEndpointError):
+        if type(error.status_code) is int:
+            return error.status_code == 429 or 500 <= error.status_code <= 599
         if id(error) in seen or error.__cause__ is None:
-            return False
+            return error.error_type in ("APIConnectionError", "APITimeoutError", "ConnectTimeout", "ReadTimeout", "ConnectError")
         seen.add(id(error))
         error = error.__cause__
     if isinstance(error, (
@@ -1142,12 +1160,15 @@ CUSTOM_ENDPOINT_REQUEST_ERRORS = (APIError, httpx.HTTPError, ModelEndpointValida
 
 
 def _sanitized_custom_request_error(exc, *, api_type="", protocol="", request_url="", streaming=False):
+    if isinstance(exc, ModelEndpointValidationError):
+        return exc
     descriptor = get_model_endpoint_provider(api_type)
     error = build_sanitized_model_endpoint_error(
         "Custom model stream failed." if streaming else "Custom model request failed.",
         exc, api_type=api_type, request_url=request_url,
         protocol=protocol or (descriptor.protocol if descriptor else ""),
         status_code=getattr(exc, "status_code", None),
+        request_stage="stream" if streaming else "request",
     )
     error.reasoning_parameter_rejected = is_reasoning_parameter_rejection(exc)
     error.response_format_rejected = is_response_format_rejection(exc)
@@ -1548,14 +1569,21 @@ class AnthropicChatCompletionClient:
         if self.direct_custom:
             return self._create_direct_custom(payload, stream=stream, timeout_override=effective_timeout)
 
-        response = requests.post(
-            self.endpoint,
-            headers=self._build_headers(stream=stream),
-            json=payload,
-            timeout=(min(30.0, effective_timeout), effective_timeout),
-            stream=stream,
-            allow_redirects=not self.direct_custom,
-        )
+        try:
+            response = requests.post(
+                self.endpoint,
+                headers=self._build_headers(stream=stream),
+                json=payload,
+                timeout=(min(30.0, effective_timeout), effective_timeout),
+                stream=stream,
+                allow_redirects=not self.direct_custom,
+            )
+        except requests.RequestException as error:
+            raise build_sanitized_model_endpoint_error(
+                "The Anthropic model request could not be confirmed.", error,
+                api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+                protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC, request_stage="request",
+            ) from None
         if response.status_code >= 400:
             self._raise_response_error(response)
 
@@ -1974,23 +2002,12 @@ class AnthropicChatCompletionClient:
             )
 
     def _raise_response_error(self, response: requests.Response) -> None:
-        try:
-            payload = response.json()
-        except ValueError:
-            payload = {"error": response.text[:500]}
-
-        error_payload = payload.get("error") if isinstance(payload, dict) else None
-        if isinstance(error_payload, dict):
-            error_message = error_payload.get("message") or error_payload.get("type") or str(error_payload)
-        else:
-            error_message = str(error_payload or payload)
-
-        if self.direct_custom:
-            raise RuntimeError(
-                f"Custom Anthropic model request failed with status {response.status_code}."
-            )
-        raise RuntimeError(
-            f"Anthropic model request failed with status {response.status_code}: {error_message}"
+        # Status is observed; no body, URL or provider text is needed for classification.
+        raise build_sanitized_model_endpoint_error(
+            "The Anthropic model provider rejected the request.",
+            api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+            protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+            status_code=response.status_code, request_stage="request",
         )
 
 
@@ -2479,6 +2496,8 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
                 self._copy_setting(source_settings, request_kwargs, "extra_body")
 
         validate_model_endpoint_request(self.resolved_route, request_kwargs)
+        if not request_kwargs.get("tools") and request_kwargs.get("tool_choice") == "auto":
+            request_kwargs.pop("tool_choice")
         return request_kwargs
 
     def _copy_setting(self, settings, request_kwargs: Dict[str, Any], field_name: str) -> None:

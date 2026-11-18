@@ -5944,6 +5944,24 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     });
   }
 
+function renderMessageInterruptionStatus(messageElement, message, isUser = false) {
+  const metadata = message?.metadata || {};
+  const interrupted = isUser
+    ? metadata.response_attempt?.state === 'interrupted'
+    : metadata.incomplete || metadata.canceled || metadata.complete === false
+      || ['stopped', 'interrupted', 'stop_unconfirmed'].includes(metadata.stream_status);
+  if (!interrupted || messageElement.querySelector('.stream-stopped-banner, .message-interruption-status')) return;
+  const notice = document.createElement('p');
+  notice.className = isUser ? 'message-interruption-status small text-muted' : 'stream-stopped-banner alert alert-info mt-2 mb-0';
+  notice.setAttribute('role', 'status');
+  const userCanceled = metadata.stop_reason === 'user_cancelled' || metadata.cancel_reason === 'user_requested';
+  notice.textContent = metadata.stream_status === 'stop_unconfirmed'
+    ? 'Stopping is not confirmed. Refresh to check saved work.'
+    : userCanceled ? 'Stopped by you. Response may be incomplete.'
+      : 'This response was interrupted. Response may be incomplete.';
+  (messageElement.querySelector('.message-text') || messageElement).appendChild(notice);
+}
+
 export function appendMessage(
   sender,
   messageContent,
@@ -6207,6 +6225,7 @@ export function appendMessage(
       messageDiv.dataset.messageComplete = 'false';
     }
     chatbox.appendChild(messageDiv); // Append AI message
+    renderMessageInterruptionStatus(messageDiv, fullMessageObject);
     window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     renderMessageReasoningAdjustments(messageDiv, getMessageReasoningAdjustments(fullMessageObject));
     renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
@@ -6716,6 +6735,7 @@ export function appendMessage(
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
+    renderMessageInterruptionStatus(messageDiv, fullMessageObject, sender === 'You' || sender === 'Collaborator');
     window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     hydrateChatWorkspaceAttachmentProgress(messageDiv);
 

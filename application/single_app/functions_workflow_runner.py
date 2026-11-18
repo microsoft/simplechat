@@ -253,7 +253,10 @@ from functions_workflow_context import (
     wrap_workflow_model_client,
 )
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError, WorkflowResultTooLargeError
-from functions_workflow_policy_errors import WorkflowTaskPolicyError, workflow_policy_failure
+from functions_workflow_policy_errors import (
+    WORKFLOW_FAILURE_FIELDS, WorkflowTaskPolicyError,
+    safe_workflow_failure_summary, workflow_policy_failure,
+)
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_bindings import (
     WorkflowInputError,
@@ -7489,6 +7492,7 @@ def _check_workflow_completeness(result, envelope, *, workflow, task, settings, 
                 client.chat.completions.create,
                 {"model": deployment, "messages": messages, "timeout": 120},
                 response_format=response_format,
+                capabilities=(getattr(client, '_simplechat_route_policy', None) or {}).get('capabilities'),
                 on_adjustment=lambda details: log_event(
                     '[WORKFLOW_RUNNER] Retrying answer checking with a compatible response format.',
                     level=logging.INFO, extra={'run_id': run_id, 'task_id': task['id'], 'stage': stage, **details},
@@ -11724,6 +11728,10 @@ def _save_workflow_task_run_item(
     workflow_validation=None,
     plan_replay=None,
     error_code=None,
+    failure_phase=None,
+    effect_certainty=None,
+    correlation_reference=None,
+    failure_summary=None,
 ):
     task = task if isinstance(task, dict) else {}
     task_id = str(task.get('id') or '').strip()
@@ -11777,6 +11785,10 @@ def _save_workflow_task_run_item(
         'attempt_count': int(attempt_count or 0),
         'error': str(error or '')[:2000],
         **({'error_code': error_code} if error_code else {}),
+        **({'failure_phase': failure_phase} if failure_phase else {}),
+        **({'effect_certainty': effect_certainty} if effect_certainty else {}),
+        **({'correlation_reference': correlation_reference} if correlation_reference else {}),
+        **safe_workflow_failure_summary(failure_summary),
         'output_summary': output_preview,
         'output_preview': output_preview,
         'runner': safe_runner_audit,
@@ -12060,6 +12072,11 @@ def _merge_workflow_task_execution_results(task_results):
             'status': item.get('status'),
             'attempt_count': int(item.get('attempt_count') or 0),
             'error': str(item.get('error') or ''),
+            **({
+                key: item[key]
+                for key in WORKFLOW_FAILURE_FIELDS
+                if item.get(key)
+            }),
             'response_preview': _build_response_preview((item.get('result') or {}).get('reply')),
             'runner': dict(item.get('runner') or {}),
             'token_usage': _merge_token_usage_summaries([item.get('result') or {}]),
@@ -12635,7 +12652,13 @@ def _execute_workflow_task_sequence(
                         'publication': 'The existing artifact could not be published. Review its saved result, format, destination and approval state.',
                     }[task_stage]
                 )
-                if task_policy_failure or isinstance(safe_error, (WorkflowResultNotReadyError, WorkflowInputError, AnalysisResultUnavailable)):
+                if (
+                    task_policy_failure
+                    and task_policy_failure.get("terminal_failure") is not False
+                ) or isinstance(
+                    safe_error,
+                    (WorkflowResultNotReadyError, WorkflowInputError, AnalysisResultUnavailable),
+                ):
                     break
                 if attempt_index >= retry_count:
                     break
@@ -12946,6 +12969,10 @@ def _execute_workflow_task_sequence(
             attempt_count=attempt_count,
             error=task_error,
             error_code=(task_policy_failure or {}).get('error_code'),
+            failure_phase=(task_policy_failure or {}).get('failure_phase'),
+            effect_certainty=(task_policy_failure or {}).get('effect_certainty'),
+            correlation_reference=(task_policy_failure or {}).get('correlation_reference'),
+            failure_summary=task_policy_failure,
             created_at=created_at,
             runner_audit=runner_audit,
             context_budget=(attempt_workflow or {}).get('context_budget'),
@@ -12989,7 +13016,15 @@ def _execute_workflow_task_sequence(
                 durable.finish_node(state='failed', attempt=max(1, attempt_count), reason_code='task_failed',
                                     consumed_inputs=(attempt_workflow or {}).get('consumed_inputs') or [])
             if task_policy_failure:
-                raise WorkflowTaskPolicyError(task_policy_failure['error_code'], task_policy_failure['error'])
+                raise WorkflowTaskPolicyError(
+                    task_policy_failure['error_code'],
+                    task_policy_failure['error'],
+                    **{
+                        key: task_policy_failure[key]
+                        for key in WORKFLOW_FAILURE_FIELDS
+                        if key in task_policy_failure and key not in ('error', 'error_code')
+                    },
+                )
             raise RuntimeError(
                 f"Workflow task '{task.get('name') or task_id}' failed after {attempt_count} attempt(s): {task_error}"
             )

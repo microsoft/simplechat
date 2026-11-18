@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.261.428
+Version: 0.261.430
 Implemented in: 0.241.179; schema-v2 resolver in 0.261.041; live route adapters in 0.261.044
 Capability, async transport, and cancellation coverage added in: 0.261.046
 APIM revision path coverage added in: 0.261.056
@@ -73,6 +73,80 @@ from semantic_kernel.contents.chat_history import ChatHistory  # noqa: E402
 from semantic_kernel.contents.chat_message_content import ChatMessageContent  # noqa: E402
 from semantic_kernel.contents.utils.author_role import AuthorRole  # noqa: E402
 from semantic_kernel.contents.utils.finish_reason import FinishReason  # noqa: E402
+
+
+def test_required_tool_capability_names_the_exact_pre_dispatch_failure():
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+        create=lambda **kwargs: pytest.fail("A required unsupported tool must not dispatch"),
+    )))
+    bind_model_endpoint_request_policy(client, {
+        "request_model": "claude",
+        "capabilities": {"processesText": True, "generatesText": True, "toolCalling": False},
+    })
+    with pytest.raises(ModelEndpointValidationError) as failure:
+        client.chat.completions.create(
+            model="claude", messages=[{"role": "user", "content": "Use the required tool."}],
+            tools=[{"type": "function", "function": {"name": "required"}}], tool_choice="auto",
+        )
+    assert failure.value.missing_capability == "toolCalling"
+    assert failure.value.request_stage == "capability_validation"
+    assert "toolCalling" in failure.value.public_message
+
+
+def test_empty_auto_function_choice_does_not_invent_a_tool_requirement():
+    calls = []
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: calls.append(kwargs))))
+    bind_model_endpoint_request_policy(client, {
+        "request_model": "claude",
+        "capabilities": {"processesText": True, "generatesText": True, "toolCalling": False},
+    })
+    client.chat.completions.create(
+        model="claude", messages=[{"role": "user", "content": "Reply directly."}], tool_choice="auto",
+    )
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("native_capability", [False, None])
+def test_known_unsupported_native_json_is_selected_before_dispatch_on_same_route(native_capability):
+    from model_endpoint_clients import create_completion_with_response_format
+
+    calls = []
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+        create=lambda **kwargs: calls.append(kwargs) or '{"satisfied":true}',
+    )))
+    bind_model_endpoint_request_policy(client, {
+        "request_model": "claude",
+        "capabilities": {"processesText": True, "generatesText": True, "structuredOutput": native_capability},
+    })
+    content = create_completion_with_response_format(
+        client.chat.completions.create,
+        {"model": "claude", "messages": [{"role": "user", "content": 'Return only JSON: {"satisfied": boolean}.'}]},
+        response_format={"type": "json_schema", "json_schema": {
+            "name": "assessment", "strict": True,
+            "schema": {"type": "object", "properties": {"satisfied": {"type": "boolean"}},
+                       "required": ["satisfied"], "additionalProperties": False},
+        }},
+    )
+    assert json.loads(content) == {"satisfied": True}
+    assert len(calls) == 1 and calls[0]["model"] == "claude"
+    assert "response_format" not in calls[0]
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 429, 503])
+def test_legacy_anthropic_http_failure_preserves_observed_status_without_reading_body(monkeypatch, status):
+    from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
+
+    def private_body():
+        pytest.fail("Failure normalization must not read an upstream response body")
+
+    response = SimpleNamespace(status_code=status, json=private_body, headers={})
+    monkeypatch.setattr("model_endpoint_clients.requests.post", lambda *args, **kwargs: response)
+    client = AnthropicChatCompletionClient(endpoint="https://offline.invalid/shared-foundry;rev=2/anthropic", api_key="test-only")
+    with pytest.raises(SanitizedModelEndpointError) as failure:
+        client.create(model="claude", messages=[{"role": "user", "content": "Answer."}])
+    assert failure.value.status_code == status
+    assert failure.value.protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
+    assert failure.value.request_stage == "request"
 
 
 def assert_equal(actual, expected, description):
