@@ -45,7 +45,7 @@ Files modified:
   - `CAPABILITY_DOCUMENT_SEARCH` imported from the registry.
   - `step_shape_invalid` diagnostics now record the number of unknown step fields, the
     capability, and any unknown field that is one of that capability's own argument names
-    (`misplaced_arguments`). Names the planner invented are counted, not recorded.
+    (`misplaced_argument`, with a count). Names the planner invented are counted, not recorded.
 - `application/single_app/functions_orchestration_execution.py`
   - A run-level failure log now carries the exception class and application code location
     (`exception_log_fields`). The overnight `recovery_changed` failure recorded neither a rule

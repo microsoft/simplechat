@@ -26,6 +26,7 @@ from functions_orchestration_result_contracts import (
     InputBinding, PartialInputNotAcceptedError, NARRATIVE_READY_CHECK, ResultContractError, ResultNotReadyError,
     ResultRef, TaskResult, canonical_bytes, canonical_digest, narrative_result_ready, output_name,
 )
+from functions_orchestration_progress import partial_input_accepted
 from functions_orchestration_results import (
     MAX_LINEAGE_RESULTS, MAX_VALUE_BYTES, NamedOutput, OrchestrationResults, ResultUnavailableError, _reference,
 )
@@ -89,6 +90,9 @@ def resolve_step_inputs(step, context):
                 if context.result_aliases.get(alias) != reference:
                     raise ResultContractError('result_attempt_mismatch')
                 spec = replace(spec, binding=InputBinding(existing_result=alias))
+        if not spec.allow_partial and partial_input_accepted(context, step['step_id'], producer_step_id):
+            # A recorded recovery: the step reads the partial result and discloses its limits.
+            spec = replace(spec, allow_partial=True)
         try:
             reader = service.resolve_input(
                 spec, consumer=consumer, task_results=context.task_results,

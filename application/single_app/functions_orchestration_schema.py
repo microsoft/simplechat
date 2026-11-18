@@ -292,7 +292,8 @@ def _misplaced_step_fields(raw, fields):
     return {
         'unknown_field_count': len(unknown),
         **({'capability_id': capability['id']} if capability else {}),
-        **({'misplaced_arguments': ','.join(misplaced)[:200]} if misplaced else {}),
+        # One name per key: telemetry keeps a closed code token, not a list.
+        **({'misplaced_argument': misplaced[0], 'misplaced_argument_count': len(misplaced)} if misplaced else {}),
     }
 
 
@@ -2420,7 +2421,80 @@ def validate_generated_plan_tabular_admission(plan):
             raise PlanValidationError(
                 'Multi-file calculation must bind complete preparation before authoring a program.',
                 code='plan_arguments_invalid', rule='prepared_calculation_required',
+                feedback=PREPARED_CALCULATION_SHAPE,
             )
+    steps = [step for step in (plan or {}).get('steps') or [] if isinstance(step, dict)]
+    by_id = {step.get('step_id'): step for step in steps if isinstance(step.get('step_id'), str)}
+    for step in steps:
+        arguments = step.get('arguments') if isinstance(step.get('arguments'), dict) else {}
+        if (
+            step.get('capability_id') != CAPABILITY_TABULAR_ANALYZE or step.get('enabled', True) is not True
+            or arguments.get('native_operation') != 'relate'
+            or arguments.get('calculation_mode') != 'prepared-v1'
+        ):
+            continue
+        problem = _prepared_calculation_binding_problem(step, arguments, by_id)
+        if problem:
+            # The run refuses this shape before any work, when the planner can no longer correct it.
+            raise PlanValidationError(
+                'A prepared calculation must bind, as its only input named "preparation", the context '
+                'output of a tabular_analyze step with native_operation="prepare" over the same '
+                'document_ids in the same order.',
+                code='plan_arguments_invalid', rule='prepared_calculation_binding_required',
+                diagnostics={'binding_problem': problem},
+                feedback={**PREPARED_CALCULATION_SHAPE, 'problem': problem},
+            )
+
+
+# Server vocabulary only: safe to return to the planner and to log.
+PREPARED_CALCULATION_SHAPE = {
+    'required_steps': [
+        {
+            'capability_id': CAPABILITY_TABULAR_ANALYZE, 'native_operation': 'prepare',
+            'arguments': ['question', 'document_ids', 'preparation_request'],
+            'outputs': ['context', 'coverage'],
+        },
+        {
+            'capability_id': CAPABILITY_TABULAR_ANALYZE, 'native_operation': 'relate',
+            'arguments': ['question', 'document_ids', 'calculation_mode'],
+            'calculation_mode': 'prepared-v1',
+            'inputs': {'preparation': {'output_name': 'context', 'allow_partial': False}},
+            'outputs': ['records', 'lineage', 'coverage'],
+        },
+    ],
+}
+
+
+def _prepared_calculation_binding_problem(step, arguments, by_id):
+    """Name the first way a prepared calculation fails the contract its run enforces."""
+    inputs = step.get('inputs') if isinstance(step.get('inputs'), dict) else {}
+    if set(inputs) != {'preparation'}:
+        return 'preparation_input_missing' if 'preparation' not in inputs else 'other_inputs_bound'
+    declared = inputs['preparation'] if isinstance(inputs['preparation'], dict) else {}
+    binding = declared.get('binding') if isinstance(declared.get('binding'), dict) else {}
+    producer = by_id.get(binding.get('step_id'))
+    producer_arguments = (producer or {}).get('arguments')
+    producer_arguments = producer_arguments if isinstance(producer_arguments, dict) else {}
+    if (
+        producer is None or producer is step or producer.get('enabled', True) is not True
+        or producer.get('capability_id') != CAPABILITY_TABULAR_ANALYZE
+        or producer_arguments.get('native_operation') != 'prepare'
+    ):
+        return 'preparation_producer_invalid'
+    if binding.get('output_name') != 'context':
+        return 'preparation_output_invalid'
+    if declared.get('allow_partial') is True:
+        return 'preparation_partial_not_allowed'
+    request = producer_arguments.get('preparation_request')
+    datasets = request.get('datasets') if isinstance(request, dict) else None
+    if (
+        producer_arguments.get('document_ids') != arguments.get('document_ids')
+        or type(datasets) is not list
+        or [item.get('document_id') if isinstance(item, dict) else None for item in datasets]
+        != arguments.get('document_ids')
+    ):
+        return 'preparation_sources_differ'
+    return None
 
 
 def normalize_plan(

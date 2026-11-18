@@ -175,12 +175,12 @@ def test_prompt_sections_follow_the_offered_capabilities(planner):
 
     compose_only = planner.planner_system_prompt(['compose'])
     assert len(compose_only) < len(planner.PLANNER_SYSTEM_PROMPT)
-    for absent in ('Research depth.', 'tabular-relate-v1', 'Agents and actions.', 'Images. Generate each image'):
+    for absent in ('Research depth.', 'tabular-context-request-v1', 'Agents and actions.', 'Images. Generate each image'):
         assert absent not in compose_only
     for present in ('Plan bounded work', 'Answer basis.', 'Deliverables.', 'Clarifications.'):
         assert present in compose_only
     assert 'Research depth.' in planner.planner_system_prompt(['compose', 'web_search'])
-    assert 'tabular-relate-v1' in planner.planner_system_prompt(['compose', 'tabular_analyze'])
+    assert 'tabular-context-request-v1' in planner.planner_system_prompt(['compose', 'tabular_analyze'])
 
     (_, _), calls, _ = _plan(planner, [{'kind': 'plan', 'steps': [compose()]}])
     assert 'Research depth.' not in calls[0]['messages'][0]['content']

@@ -64,6 +64,7 @@ from functions_orchestration_context import (
     resolve_elicitation_references,
 )
 from functions_orchestration_deliverables import explicit_image_shortfalls
+from functions_orchestration_progress import ProgressLedger
 from functions_orchestration_registry import (
     CAPABILITY_DOCUMENT_MERGE, CAPABILITY_TABULAR_ANALYZE, CAPABILITY_TABULAR_INSPECT, CAPABILITY_TABULAR_MERGE,
     CAPABILITY_WORKFLOW_HANDOFF, CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN,
@@ -1130,9 +1131,13 @@ def _run_dependency_step(
                 **_partial_input_log_fields(exc),
             },
         )
-        return build_step_result(
+        failed = build_step_result(
             status=STEP_STATUS_FAILED, failure=failure, summary=failure['message'], error=failure['message'],
         )
+        if isinstance(exc, PartialInputNotAcceptedError):
+            # What the progress ledger needs to decide a recovery; server identifiers only.
+            failed['observation'] = {'producer_step_id': exc.producer_step_id}
+        return failed
 
 
 def _dependency_adapter(capability_id):
@@ -1505,6 +1510,8 @@ def _execute_dependency_plan(
     })
     records, statuses, hints = [], {}, []
     hint_limit = _replan_hint_limit(settings)
+    context.accepted_partial_inputs = set()
+    ledger = ProgressLedger(settings, context)
     context._completed_result_step_ids = set()
     context._failed_result_step_ids = set()
     context.artifacts = []
@@ -1693,6 +1700,22 @@ def _execute_dependency_plan(
                                 input_fingerprint=input_fingerprint, finished_stop=finished_stop,
                                 execution_control=execution_control,
                             )
+                    # A typed failure is an observation: apply the one recovery the server
+                    # defines for it and run the step again, bounded by the progress ledger.
+                    while result.get('status') == STEP_STATUS_FAILED and not step_cancel():
+                        recovery = ledger.recover(step, result, context)
+                        if recovery is None:
+                            break
+                        _emit(emit, {
+                            'type': 'step', 'phase': STEP_STATUS_RUNNING, **running,
+                            'summary': recovery['summary'], 'completed': index, 'total': len(steps),
+                        })
+                        result = _run_dependency_step(
+                            step, context, settings, user_id, emit, step_cancel, resolver,
+                            input_fingerprint=input_fingerprint, finished_stop=finished_stop,
+                            execution_control=execution_control,
+                        )
+                        ledger.settle(recovery, result)
                     if (
                         settings.get('enable_chat_orchestration_completeness_check', True)
                         and step_id == context.completeness_final_step
@@ -1943,6 +1966,8 @@ def _execute_dependency_plan(
         'delivery_facts': {'files': file_outputs},
         'answer_qualified': answer_qualified,
     }
+    if ledger.entries:
+        run_result['progress_ledger'] = ledger.to_list()
     _persist(persist, 'run', run_result)
     _emit(emit, {
         'type': 'run', 'phase': status, 'run_id': context.run_id, 'outcome': outcome, 'outputs': file_outputs,

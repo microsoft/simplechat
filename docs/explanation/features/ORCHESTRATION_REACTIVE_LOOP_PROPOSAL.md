@@ -1,6 +1,6 @@
 # Orchestration Harness Review and Reactive Loop Proposal
 
-**Version: 0.261.454** (review of the code at 0.261.446)
+**Version: 0.261.457** (review of the code at 0.261.446)
 
 Versions below were renumbered after Development was merged, because Development had used
 0.261.448 to 0.261.450 for other work. Deployed builds keep the number they ran under in
@@ -15,6 +15,14 @@ Implemented so far:
 - Phase 0 (0.261.451): crash diagnostics and the telemetry scorecard. The live-model scenario suite is not built.
 - Phase 1 (0.261.452): correction feedback for the prepared tabular calculation path only. See `../fixes/ORCHESTRATION_PROGRAM_CORRECTION_FEEDBACK_FIX.md`.
 - Phase 2 (0.261.453): intent patterns and scenario wording removed, prompt sections sent by capability, three plan fields derived, corrections named. Strict structured output moved to Phase 3. See `../fixes/ORCHESTRATION_PLANNER_HEURISTICS_AND_DERIVATION_FIX.md`.
+
+- Fix (0.261.456): a multi-file calculation planned without its preparation step is rejected in planning; the prompt now matches the capability. See `../fixes/ORCHESTRATION_PREPARED_CALCULATION_BINDING_FIX.md`.
+- Phase 3, first part (0.261.457, off by default): progress ledger and one typed step recovery inside a run. Plan revision during a run, model-chosen recoveries, strict structured output and server-derived bindings are not built. See `ORCHESTRATION_PROGRESS_LEDGER.md`.
+
+Second test run, 17-18 November 2026 (deployed as 0.261.450, 90 requests): no planning
+crashes; 2 requests could not be planned (25 of 181 in the baseline); 1 second-round
+correction (15 of 64); 50 of 86 runs completed, 58% against 59%. Failures moved from planning
+to execution: 19 at the calculation step, 7 where the answer step refused a partial analysis.
 
 Status: proposal for discussion.
 

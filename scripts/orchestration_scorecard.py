@@ -39,7 +39,10 @@ CORRECTION = '[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected p
 NOT_PLANNED = '[ORCHESTRATION_PLANNER] The request could not be planned.'
 PLANNING_CRASH = '[ORCHESTRATION] Planning failed.'
 OUTCOME = '[CHAT_EXECUTION] Execution outcome recorded.'
-MESSAGES = (REQUEST, CORRECTION, NOT_PLANNED, PLANNING_CRASH, OUTCOME)
+PROGRESS = '[ORCHESTRATION_PROGRESS] Progress recorded.'
+MESSAGES = (REQUEST, CORRECTION, NOT_PLANNED, PLANNING_CRASH, OUTCOME, PROGRESS)
+# A recovery is logged when applied and again when its step finishes; count the second.
+PROGRESS_APPLIED = 'applied'
 UNKNOWN_VERSION = 'unknown'
 
 
@@ -56,7 +59,9 @@ def build_query(days):
         "capability = tostring(customDimensions.sc_capability_id), "
         "rule = tostring(customDimensions.sc_validation_rule), "
         "error_type = tostring(customDimensions.sc_error_type), "
-        "error_site = tostring(customDimensions.sc_error_site) "
+        "error_site = tostring(customDimensions.sc_error_site), "
+        "recovery = tostring(customDimensions.sc_recovery), "
+        "progress_outcome = tostring(customDimensions.sc_progress_outcome) "
         "| order by timestamp asc"
     )
 
@@ -103,6 +108,7 @@ def summarize(rows):
         'first_seen': None, 'requests': 0, 'not_planned': 0, 'planning_crashes': 0,
         'corrections': 0, 'runs': 0, 'completed': 0, 'waiting': 0,
         'rejection_rules': Counter(), 'run_failures': Counter(), 'crash_sites': Counter(),
+        'recoveries': Counter(),
     })
     for row in rows:
         version = row['version'] if row['m'] == OUTCOME and row['version'] else version_at(row['timestamp'])
@@ -121,6 +127,13 @@ def summarize(rows):
             record['crash_sites'][
                 f"{row['error_type'] or 'unrecorded'} at {row['error_site'] or 'unrecorded'}"
             ] += 1
+        elif message == PROGRESS:
+            outcome = row.get('progress_outcome') or 'unspecified'
+            if outcome != PROGRESS_APPLIED:
+                record['recoveries'][
+                    f"{row.get('failure_code') or 'unspecified'} -> "
+                    f"{row.get('recovery') or 'none'}: {outcome}"
+                ] += 1
         elif message == OUTCOME:
             if row['outcome'] == 'waiting':
                 record['waiting'] += 1
@@ -152,7 +165,7 @@ def render(summary):
         )
     for title, field in (
         ('Plan rejection rules', 'rejection_rules'), ('Run failures', 'run_failures'),
-        ('Planning crashes', 'crash_sites'),
+        ('Planning crashes', 'crash_sites'), ('Step recoveries', 'recoveries'),
     ):
         total = Counter()
         for record in summary.values():

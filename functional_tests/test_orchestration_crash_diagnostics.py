@@ -72,6 +72,23 @@ def test_logger_keeps_crash_identity_and_drops_other_text():
     assert unsafe["sc_exception_type_length"] == len("PRIVATE text, not a class")
 
 
+def test_logger_keeps_ledger_and_shape_codes_and_drops_other_text():
+    # The scorecard reads these; a code that is redacted to its length cannot be counted.
+    properties = telemetry._build_logger_extra("[ORCHESTRATION_PROGRESS] Progress recorded.", {
+        "recovery": "accept_partial_input", "progress_outcome": "recovered",
+        "failure_code": "input_partial_not_accepted", "binding_problem": "preparation_input_missing",
+        "misplaced_argument": "knowledge_basis",
+    })
+    assert properties["sc_recovery"] == "accept_partial_input"
+    assert properties["sc_progress_outcome"] == "recovered"
+    assert properties["sc_failure_code"] == "input_partial_not_accepted"
+    assert properties["sc_binding_problem"] == "preparation_input_missing"
+    assert properties["sc_misplaced_argument"] == "knowledge_basis"
+
+    unsafe = telemetry._build_logger_extra("message", {"recovery": "PRIVATE text, not a code"})
+    assert "sc_recovery" not in unsafe
+
+
 def test_planning_catch_all_reports_crash_identity_and_conversation():
     source = (APPLICATION / "route_backend_orchestration.py").read_text(encoding="utf-8")
     start = source.index("'[ORCHESTRATION] Planning failed.'")

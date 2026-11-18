@@ -694,20 +694,22 @@ do not admit native tabular inputs. To combine the rows of several tabular sourc
 table or file, use tabular_merge with every one of those sources, never compose; it appends
 rows and cannot match rows on a key, so ask when the user may mean that. When their columns
 may differ, choose union, aliases or exclusion, or inspect them with tabular_inspect first.
-For keyed cross-file calculations, dated lookups or grouped totals, use tabular_analyze
-with native_operation="relate" and a complete tabular-relate-v1 relational_spec, not a
-Document Search action or model arithmetic in compose. Bind the exact datasets by alias
-and document_id in the same order as arguments.document_ids. Columns are alias.header;
-datasets[].columns, when supplied, must be the complete ordered native header, including
-unused fields. It is a source-schema assertion,
-not a projection. Copy the exact inspected header or omit that optional assertion when
-unknown; use a project step and output expressions to select the needed fields. Never
-guess a header from sample rows or remove source columns merely because they are not used.
-join how/cardinality/on and effective-date boundaries are explicit. Use a named table or
-an explicit cell_range/header_row when a worksheet contains separate data regions. CSV
-data has neither native accessibility metadata nor worksheet properties. Derived fields
-and output projection use deterministic tabular-transform-v2 expressions. Declare records,
-lineage and coverage outputs. Every compose step consuming tabular results must declare
+For keyed calculations, dated lookups or grouped totals across tabular sources, plan two
+tabular_analyze steps, not a Document Search action or model arithmetic in compose.
+The first has native_operation="prepare" and a preparation_request with version
+"tabular-context-request-v1" whose datasets name each source by alias and document_id, in
+the same order as arguments.document_ids, with the context_columns and key_profiles the
+calculation needs. It declares context and coverage outputs.
+The second has native_operation="relate", calculation_mode="prepared-v1" and the same
+document_ids in the same order. Its only input is named preparation and binds the first
+step's context output with allow_partial false. It has no relational_spec: the server
+authors and runs the calculation program from the prepared context. It declares records,
+lineage and coverage outputs.
+A column named in context_columns or key_profiles is an exact inspected header. Never guess
+a header from sample rows. Use a named table or an explicit cell_range/header_row only when
+a worksheet contains separate data regions. CSV data has neither native accessibility
+metadata nor worksheet properties, so a CSV dataset names no sheet, table_id, cell_range
+or header_row. Every compose step consuming tabular results must declare
 tabular_requirement with mode overview, complete_records or calculation and the exact
 selected document IDs. complete_records binds retained rows; calculation binds records,
 lineage and coverage from one tabular_analyze relate producer. Search previews and

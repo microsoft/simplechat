@@ -158,6 +158,8 @@ LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "argumentkeyword", "argumentpath", "argumentbranch", "expectedtype",
     "nativecheck", "nativerole", "nativecategory", "nativestepop", "nativetransformcode",
     "nativeleftcategory", "nativerightcategory",
+    # Planning shape diagnostics and the progress ledger: registry and server codes only.
+    "bindingproblem", "misplacedargument", "recovery", "progressoutcome",
 })
 
 

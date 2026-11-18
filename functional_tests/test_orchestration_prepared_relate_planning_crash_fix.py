@@ -72,7 +72,8 @@ def test_a_misplaced_argument_is_recorded_and_an_invented_field_is_only_counted(
         assert error.rule == "step_shape_invalid"
         assert error.diagnostics["unknown_field_count"] == 2
         assert error.diagnostics["capability_id"] == "compose"
-        assert error.diagnostics["misplaced_arguments"] == "knowledge_basis"
+        assert error.diagnostics["misplaced_argument"] == "knowledge_basis"
+        assert error.diagnostics["misplaced_argument_count"] == 1
         assert "PRIVATE_FIELD" not in repr(error.diagnostics)
 
 
