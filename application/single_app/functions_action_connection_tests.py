@@ -15,6 +15,7 @@ import base64
 import logging
 import re
 from datetime import timedelta
+from time import monotonic
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -276,7 +277,7 @@ def test_openapi_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def test_azure_maps_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate an Azure Maps action by fetching a single base road tile."""
+    """Fetch a road tile, trying one alternate tile only after a no-content response."""
     auth = manifest.get("auth") if isinstance(manifest.get("auth"), dict) else {}
     subscription_key = str(auth.get("key") or "").strip()
     endpoint = str(manifest.get("endpoint") or AZURE_MAPS_DEFAULT_ENDPOINT).strip().rstrip("/")
@@ -285,23 +286,30 @@ def test_azure_maps_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
         return build_failure_result("An Azure Maps subscription key is required before testing this action.")
 
     try:
-        response = guarded_probe_request(
-            "GET",
-            f"{endpoint}/map/tile",
-            max_bytes=0,
-            params={
-                "api-version": AZURE_MAPS_TILE_API_VERSION,
-                "tilesetId": AZURE_MAPS_DEFAULT_TILESET_ID,
-                "zoom": 0,
-                "x": 0,
-                "y": 0,
-                "tileSize": "256",
-                "language": AZURE_MAPS_DEFAULT_LANGUAGE,
-                "view": AZURE_MAPS_DEFAULT_VIEW,
-                "subscription-key": subscription_key,
-            },
-            timeout=ACTION_CONNECTION_TEST_DEFAULT_TIMEOUT_SECONDS,
-        )
+        deadline = monotonic() + ACTION_CONNECTION_TEST_DEFAULT_TIMEOUT_SECONDS
+        for zoom, tile_x, tile_y in ((0, 0, 0), (2, 1, 1)):
+            remaining_timeout = deadline - monotonic()
+            if remaining_timeout <= 0:
+                raise requests.Timeout("The Azure Maps connection test timed out before requesting a tile.")
+            response = guarded_probe_request(
+                "GET",
+                f"{endpoint}/map/tile",
+                max_bytes=0,
+                params={
+                    "api-version": AZURE_MAPS_TILE_API_VERSION,
+                    "tilesetId": AZURE_MAPS_DEFAULT_TILESET_ID,
+                    "zoom": zoom,
+                    "x": tile_x,
+                    "y": tile_y,
+                    "tileSize": "256",
+                    "language": AZURE_MAPS_DEFAULT_LANGUAGE,
+                    "view": AZURE_MAPS_DEFAULT_VIEW,
+                    "subscription-key": subscription_key,
+                },
+                timeout=remaining_timeout,
+            )
+            if response.status_code != 204:
+                break
     except OutboundDestinationError as exc:
         result = build_failure_result(exc.public_message)
         _log_connection_test("azure_maps_openlayers", result, {"stage": "destination_policy"})
@@ -329,6 +337,16 @@ def test_azure_maps_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
             http_status=response.status_code,
         )
         _log_connection_test("azure_maps_openlayers", result)
+        return result
+
+    if response.status_code == 204:
+        result = build_failure_result(
+            "Azure Maps was reached but returned no tile content (HTTP 204) for both test tiles. "
+            "Map image retrieval could not be verified. This is not a subscription-key rejection; "
+            "try again and check Azure Maps service availability if it persists.",
+            http_status=204,
+        )
+        _log_connection_test("azure_maps_openlayers", result, {"http_status": 204})
         return result
 
     result = _http_status_failure(
