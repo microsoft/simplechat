@@ -36,6 +36,7 @@ from functions_generated_export_registry import (
     get_prepared_slide_deck_schema,
     resolve_generated_file_export_format,
 )
+from functions_request_intent import filter_requested_formats
 from functions_structured_file_renderers import _render_generated_file_source
 
 if TYPE_CHECKING:
@@ -396,7 +397,8 @@ def get_requested_artifact_formats(user_question: str) -> List[str]:
     for _, output_format in sorted(matches, key=lambda item: (item[0], REQUESTED_ARTIFACT_FORMATS.index(item[1]))):
         if output_format not in ordered_formats:
             ordered_formats.append(output_format)
-    return ordered_formats
+    # Keywords only nominate formats; the turn's request-intent decision has the final say.
+    return filter_requested_formats(user_question, ordered_formats)
 
 
 def get_requested_structured_artifact_formats(user_question: str) -> List[str]:

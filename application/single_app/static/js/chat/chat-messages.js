@@ -5422,6 +5422,42 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
+  function canAnswerInChatInsteadOfBackgroundRun(outputMetadata) {
+    const status = String(outputMetadata?.status || '').trim().toLowerCase();
+    return Boolean(outputMetadata?.background_export) && !['completed', 'succeeded'].includes(status);
+  }
+
+  async function answerInChatInsteadOfBackgroundRun(
+    outputMetadata, card, statusElements = {}, cancelButton = null, answerButton = null,
+  ) {
+    if (!(card instanceof HTMLElement) || !document.body.contains(card)) {
+      return;
+    }
+
+    let userMessage = card.closest('.message')?.previousElementSibling || null;
+    while (userMessage && !userMessage.classList.contains('user-message')) {
+      userMessage = userMessage.previousElementSibling;
+    }
+    const messageText = userMessage?.querySelector('.message-text');
+    const promptText = String(messageText?.innerText || messageText?.textContent || '').trim();
+    if (!promptText) {
+      showToast('Could not find the original request. Send it again and ask for the answer in chat.', 'warning');
+      return;
+    }
+
+    if (answerButton) {
+      answerButton.disabled = true;
+    }
+    if (canCancelBackgroundGeneratedOutput(outputMetadata)) {
+      await cancelBackgroundGeneratedOutputRun(outputMetadata, card, statusElements, cancelButton);
+    }
+    if (answerButton) {
+      answerButton.classList.add('d-none');
+    }
+    // Resend the same request with file creation and background runs withheld for that turn.
+    actuallySendMessage(promptText, { suppressSideEffects: true });
+  }
+
   function shouldPollBackgroundGeneratedOutput(outputMetadata) {
     if (!outputMetadata?.background_export) {
       return false;
@@ -5671,6 +5707,20 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       }
       updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
       actions.appendChild(cancelButton);
+
+      // The app, not the user, chose to start this run. Offer a one-click way back to a chat answer.
+      const answerInChatButton = document.createElement('button');
+      answerInChatButton.type = 'button';
+      answerInChatButton.className = 'btn btn-sm btn-outline-secondary generated-tabular-answer-in-chat-btn';
+      answerInChatButton.textContent = 'Answer in chat instead';
+      answerInChatButton.setAttribute('aria-label', 'Cancel the background run and answer in chat instead');
+      answerInChatButton.classList.toggle('d-none', !canAnswerInChatInsteadOfBackgroundRun(outputMetadata));
+      answerInChatButton.addEventListener('click', async () => {
+        await answerInChatInsteadOfBackgroundRun(
+          outputMetadata, card, backgroundStatusElements || {}, cancelButton, answerInChatButton,
+        );
+      });
+      actions.appendChild(answerInChatButton);
 
       card.appendChild(actions);
       scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, backgroundStatusElements || {});
@@ -7683,6 +7733,9 @@ export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
   const messageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
   messageData.input_modality = inputModality;
   messageData.response_modality = responseModality;
+  if (turnOptions.suppressSideEffects === true) {
+    messageData.suppress_side_effects = true;
+  }
   const actionType = String(messageData.document_action?.type || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
   const useDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
   const totalSelectedDocuments = actionType === DOCUMENT_ACTION_COMPARISON

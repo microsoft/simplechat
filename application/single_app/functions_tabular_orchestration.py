@@ -30,6 +30,7 @@ from functions_generated_file_exports import get_requested_artifact_formats
 from functions_generated_file_exports import get_requested_structured_artifact_format
 from functions_generated_file_exports import get_requested_structured_artifact_formats
 from functions_native_analysis_results import NativeTabularResultReader
+from functions_request_intent import ACTION_BACKGROUND_RUN, action_withheld
 
 
 TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION = "tabular-orchestration-v1"
@@ -239,6 +240,8 @@ def get_tabular_generated_output_formats(user_question):
 
 def question_requests_tabular_generated_output(user_question):
     """Return True when the prompt asks for a downloadable structured tabular export."""
+    if action_withheld(user_question, ACTION_BACKGROUND_RUN):
+        return False
     normalized_question = str(user_question or "").strip().lower()
     requested_format = get_tabular_generated_output_format(user_question)
     if not normalized_question or not requested_format:
@@ -282,6 +285,8 @@ def question_requests_tabular_generated_output(user_question):
 
 def question_requests_tabular_hierarchical_analysis(user_question):
     """Return True when the prompt asks for whole-dataset row-level synthesis."""
+    if action_withheld(user_question, ACTION_BACKGROUND_RUN):
+        return False
     normalized_question = str(user_question or "").strip().lower()
     if not normalized_question:
         return False
@@ -330,6 +335,8 @@ def question_requests_tabular_hierarchical_analysis(user_question):
 
 def question_requests_tabular_exhaustive_row_output(user_question):
     """Return True when the user requires one narrative result per source row."""
+    if action_withheld(user_question, ACTION_BACKGROUND_RUN):
+        return False
     normalized_question = str(user_question or "").strip().lower()
     if not normalized_question:
         return False

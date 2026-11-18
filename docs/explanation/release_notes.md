@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.453)**
+
+#### Bug Fixes
+
+*   **Exports No Longer Start When the Prompt Forbids Them**
+    *   A prompt that mentioned a format in order to rule it out, such as "JSON output is not permitted" or "Step 5D will generate the JSON", could still start a background export and replace the answer with a status message. Keywords now only suggest a file export or background run; a short model check confirms the user wants it before anything starts.
+    *   "Do not create files", "do not initiate background processing" and "in chat only" are honored directly, each for its own action. "No files" does not block a background analysis, and neither affects memory or charts.
+    *   If the check fails or is unsure, nothing is started and the reply says what was held back and how to ask for it. Background run submission and file publication also check the decision themselves.
+    *   Adds the backend setting `request_intent_check_mode` (`active` by default, `shadow` to log only, `off`).
+    *   (Ref: `functions_request_intent.py`, `functions_generated_file_exports.py`, `functions_tabular_orchestration.py`, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `functional_tests/test_request_intent_side_effect_gate.py`, `docs/explanation/fixes/TABULAR_EXPORT_NEGATED_REQUEST_FIX.md`, `docs/explanation/features/REQUEST_INTENT_CHECK.md`)
+
+#### User Interface Enhancements
+
+*   **Background Export Status and Answer in Chat Instead**
+    *   The message shown when a background export or analysis starts now reads as an application status ("The app started a background job to generate the complete JSON for all 826 rows") instead of the assistant agreeing to do it.
+    *   The background export card has an **Answer in chat instead** button that cancels the run and answers the same request in chat. Classic interface only.
+    *   (Ref: `route_backend_chats.py`, `chat-messages.js`, `ui_tests/test_chat_background_generated_export_status.py`)
+
 ### **(v0.261.452)**
 
 #### New Features

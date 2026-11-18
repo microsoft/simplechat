@@ -923,6 +923,10 @@ def test_chat_xsd_output_validates_before_publication():
     namespace = {
         "XsdSchemaError": xsd.XsdSchemaError,
         "get_tabular_generated_output_format": lambda question: "xml",
+        "ACTION_BACKGROUND_RUN": __import__("functions_request_intent").ACTION_BACKGROUND_RUN,
+        "ACTION_FILE_EXPORT": __import__("functions_request_intent").ACTION_FILE_EXPORT,
+        "RequestIntentWithheldError": __import__("functions_request_intent").RequestIntentWithheldError,
+        "action_withheld": __import__("functions_request_intent").action_withheld,
         "_has_generated_file_output": lambda outputs, output_format: False,
         "_assistant_content_disclaims_complete_file": lambda content: False,
         "normalize_json_artifact_payload": generated_exports.normalize_json_artifact_payload,
