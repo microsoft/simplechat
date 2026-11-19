@@ -1,9 +1,9 @@
 # test_source_review_security.py
 """
 Functional test for Source Review security and evidence extraction.
-Version: 0.241.083
+Version: 0.261.464
 Implemented in: 0.241.063
-Updated in: 0.241.072; 0.241.079; 0.241.081; 0.241.082; 0.241.083
+Updated in: 0.241.072; 0.241.079; 0.241.081; 0.241.082; 0.241.083; 0.261.464
 
 This test ensures that Source Review applies access controls, clamps admin limits,
 blocks unsafe URLs, extracts bounded HTML evidence and structured archive rows,
@@ -273,6 +273,60 @@ def test_source_review_runtime_capabilities_are_reported():
     assert isinstance(capabilities["max_render_concurrency"], int)
     assert 1 <= capabilities["max_render_concurrency"] <= 5
     assert isinstance(capabilities["message"], str)
+
+
+def test_source_review_runtime_check_cannot_hold_a_caller(monkeypatch):
+    """A browser driver that never answers must not hold the request that asked."""
+    import threading
+    import time
+
+    import functions_source_review as source_review
+
+    release = threading.Event()
+    launches = []
+
+    def never_answers():
+        launches.append(1)
+        release.wait(30)
+
+    monkeypatch.setattr(source_review, "_launch_chromium_for_runtime_probe", never_answers)
+    monkeypatch.setattr(source_review, "SOURCE_REVIEW_RUNTIME_PROBE_SECONDS", 0.5)
+    monkeypatch.setattr(source_review, "_SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE", None)
+    monkeypatch.setattr(source_review, "_SOURCE_REVIEW_RUNTIME_PROBE", None)
+    monkeypatch.setattr(source_review.importlib.util, "find_spec", lambda name: object())
+    try:
+        started = time.monotonic()
+        first = source_review.get_source_review_runtime_capabilities()
+        assert time.monotonic() - started < 5
+        assert first["playwright_available"] is True and first["js_rendering_available"] is False
+        assert "did not finish" in first["message"]
+        # Later callers do not wait again and do not start a second check.
+        started = time.monotonic()
+        second = source_review.get_source_review_runtime_capabilities()
+        assert time.monotonic() - started < 0.3 and second["js_rendering_available"] is False
+        assert source_review.get_source_review_runtime_capabilities(force_refresh=True)["js_rendering_available"] is False
+        assert len(launches) == 1
+    finally:
+        release.set()
+    source_review._SOURCE_REVIEW_RUNTIME_PROBE[0].join(5)
+    # A check that finishes late is what the next caller reads.
+    assert source_review.get_source_review_runtime_capabilities()["js_rendering_available"] is True
+
+
+def test_source_review_does_not_render_in_an_unverified_runtime(monkeypatch):
+    """A page fetch never starts a browser the runtime check could not launch."""
+    import asyncio
+
+    import functions_source_review as source_review
+
+    monkeypatch.setattr(
+        source_review, "get_source_review_runtime_capabilities",
+        lambda force_refresh=False: {"js_rendering_available": False},
+    )
+    result = asyncio.run(source_review._try_rendered_page_fetch(
+        "https://example.com/", "question", {"source_review_allow_js_rendering": True}, 0, None, None,
+    ))
+    assert "js_rendering_runtime_unavailable" in json.dumps(result)
 
 
 def test_source_review_js_rendering_requires_verified_runtime():
