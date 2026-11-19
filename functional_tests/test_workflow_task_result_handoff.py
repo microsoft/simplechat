@@ -1,7 +1,7 @@
 # test_workflow_task_result_handoff.py
 """
 Functional regression for workflow result production, persistence, and handoff.
-Version: 0.261.242
+Version: 0.261.454
 Implemented in: 0.261.106
 Harness dependencies restored in: 0.261.234
 
@@ -295,7 +295,7 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
 def test_analyze_artifact_content_reaches_next_task(record_count, note_size, blob):
     runner, workflow, records, requests, artifacts, items = build_inventory_run(record_count, note_size, blob=blob)
     result = runner["_execute_workflow_task_sequence"](
-        workflow, {}, "conversation-inventory", "run-inventory", None, {},
+        workflow, runner["get_settings"](), "conversation-inventory", "run-inventory", None, {},
     )
 
     assert artifacts, "The production Analyze path must produce an actual artifact."
@@ -338,7 +338,7 @@ def test_storage_failure_does_not_replay_the_completed_model_task():
     runner["persist_workflow_task_result"] = fail_persistence
     with pytest.raises(RuntimeError, match="full task result could not be saved") as caught:
         runner["_execute_workflow_task_sequence"](
-            workflow, {}, "conversation-inventory", "run-inventory", None, {},
+            workflow, runner["get_settings"](), "conversation-inventory", "run-inventory", None, {},
         )
     assert len(requests) == 1
     assert "PRIVATE-PROVIDER-DETAIL" not in str(caught.value)
@@ -369,7 +369,7 @@ def test_m365_resume_hands_off_complete_checkpoint_without_repeating_the_produce
     })
     with pytest.raises(runner["M365SignInRequired"]):
         runner["_execute_workflow_task_sequence"](
-            workflow, {}, "conversation-inventory", "run-inventory", None, {},
+            workflow, runner["get_settings"](), "conversation-inventory", "run-inventory", None, {},
         )
     assert len(requests) == 1
     assert set(checkpoints) == {"extract"}
@@ -379,7 +379,7 @@ def test_m365_resume_hands_off_complete_checkpoint_without_repeating_the_produce
         checkpoints["extract"].pop("consumed_inputs")
     awaiting_sign_in = False
     result = runner["_execute_workflow_task_sequence"](
-        workflow, {}, "conversation-inventory", "run-inventory", None, {},
+        workflow, runner["get_settings"](), "conversation-inventory", "run-inventory", None, {},
     )
     assert len(requests) == 2, "Resuming must not repeat the producer's external work."
     assert artifacts == original_artifacts
@@ -400,7 +400,7 @@ def test_preview_only_checkpoint_is_not_used_as_a_complete_result():
     }
     with pytest.raises(runner["WorkflowResultNotReadyError"], match="no complete task result"):
         runner["_execute_workflow_task_sequence"](
-            workflow, {}, "conversation-inventory", "run-inventory", None, {},
+            workflow, runner["get_settings"](), "conversation-inventory", "run-inventory", None, {},
         )
     assert requests == []
 
@@ -425,7 +425,7 @@ def test_smaller_downstream_model_blocks_without_losing_source_records():
     runner["_resolve_model_workflow_client"] = resolve
     with pytest.raises(RuntimeError, match="input budget"):
         runner["_execute_workflow_task_sequence"](
-            workflow, {}, "conversation-inventory", "run-inventory", None, {},
+            workflow, runner["get_settings"](), "conversation-inventory", "run-inventory", None, {},
         )
     assert len(requests) == 1
     producer = items[("run-inventory", runner["_workflow_task_run_item_id"]("run-inventory", "extract"))]
@@ -504,7 +504,7 @@ def test_cancellation_keeps_completed_results_and_does_not_start_next_task():
     runner["persist_workflow_task_result"] = persist_then_cancel
     with pytest.raises(runner["WorkflowRunCancelledError"]):
         runner["_execute_workflow_task_sequence"](
-            workflow, {}, "conversation-inventory", "run-inventory", None, {},
+            workflow, runner["get_settings"](), "conversation-inventory", "run-inventory", None, {},
         )
     assert len(requests) == 1
     assert not any(item.get("task_id") == "consume" for item in items.values())

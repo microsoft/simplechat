@@ -1,9 +1,10 @@
 # test_action_credentials_bootstrap.py
 """Fresh-process application bootstrap and actual chat SDK mapping ownership.
 
-Version: 0.261.341
+Version: 0.261.454
 Implemented in: 0.261.333
 Runtime catalog reference regression added in: 0.261.341
+Usage identity import-boundary regression added in: 0.261.454
 
 Normal/optimized Python imports real modules in both orders with network blocked.
 The initialized web app owns private state; backup/transfer inventories exclude it.
@@ -250,3 +251,54 @@ def test_credential_modules_have_no_transitive_import_cycle_including_local_impo
                 continue
             visited.add(dependency)
             pending.extend((item, [*chain, item]) for item in graph.get(dependency, ()))
+
+
+@pytest.mark.parametrize("optimized", [False, True])
+@pytest.mark.parametrize("order", [
+    ("agent_execution_context", "action_usage"),
+    ("action_usage", "agent_execution_context"),
+])
+def test_usage_identity_shares_state_without_importing_credential_owners(optimized, order):
+    run_probe(r'''
+import importlib
+import socket
+import sys
+from unittest.mock import patch
+sys.path[:0] = sys.argv[1:3]
+
+def no_network(*args, **kwargs):
+    raise AssertionError("Usage identity imports attempted external I/O")
+
+def check(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+with patch.object(socket.socket, "connect", no_network):
+    for name in sys.argv[3:]:
+        importlib.import_module(name)
+    import action_usage
+    import agent_execution_context as execution
+    check("config" not in sys.modules, "Usage identity initialized configuration")
+    check("functions_action_credentials" not in sys.modules, "Usage identity imported credential owners")
+    frame = execution.AgentExecutionFrame(
+        execution.ExecutionIdentity("actor", "conversation"), {}, execution.DelegationBudget(),
+    )
+    try:
+        with execution.agent_execution(frame):
+            bound = action_usage.current_action_usage_identity()
+            check(bound["user_id"] == "actor", "Execution and reporting have different identity stores")
+            bound["user_id"] = "modified-copy"
+            check(action_usage.current_action_usage_identity()["user_id"] == "actor", "Identity copies leak mutations")
+            with action_usage.action_usage_identity("actor", workflow_id="workflow"):
+                with execution.agent_execution(frame):
+                    check(action_usage.current_action_usage_identity()["workflow_id"] == "workflow",
+                          "Nested execution replaced explicitly authorized workflow identity")
+            check(action_usage.current_action_usage_identity()["conversation_id"] == "conversation",
+                  "Nested identity did not restore its parent")
+            raise RuntimeError("expected-probe-failure")
+    except RuntimeError as error:
+        check(str(error) == "expected-probe-failure", "Unexpected execution failure")
+    check(execution.current_agent_execution() is None, "Execution frame leaked after failure")
+    check(action_usage.current_action_usage_identity() == {}, "Usage identity leaked after failure")
+print("PASS: shared pure usage identity imports and exception cleanup")
+''', order, optimized)

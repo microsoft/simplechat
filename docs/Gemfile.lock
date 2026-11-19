@@ -46,7 +46,6 @@ GEM
       logger
     faraday-net_http (3.4.4)
       net-http (~> 0.5)
-    ffi (1.17.2)
     ffi (1.17.2-x64-mingw-ucrt)
     ffi (1.17.2-x86_64-linux-gnu)
     forwardable-extended (2.6.0)
@@ -283,20 +282,20 @@ PLATFORMS
   x86_64-linux
 
 DEPENDENCIES
-  addressable (>= 2.9.0)
-  github-pages
-  jekyll-feed
-  jekyll-livereload
-  jekyll-optional-front-matter
-  jekyll-readme-index
-  jekyll-redirect-from
-  jekyll-relative-links
-  jekyll-seo-tag
-  jekyll-sitemap
-  jekyll-titles-from-headings
-  json (>= 2.19.2)
-  nokogiri (>= 1.19.3)
-  webrick (~> 1.8)
+  addressable (= 2.9.0)
+  github-pages (= 232)
+  jekyll-feed (= 0.17.0)
+  jekyll-livereload (= 0.2.2)
+  jekyll-optional-front-matter (= 0.3.2)
+  jekyll-readme-index (= 0.3.0)
+  jekyll-redirect-from (= 0.16.0)
+  jekyll-relative-links (= 0.6.1)
+  jekyll-seo-tag (= 2.8.0)
+  jekyll-sitemap (= 1.4.0)
+  jekyll-titles-from-headings (= 0.5.3)
+  json (= 2.19.9)
+  nokogiri (= 1.19.4)
+  webrick (= 1.9.1)
 
 BUNDLED WITH
    2.7.2

@@ -1,0 +1,15 @@
+{
+  "selected_at": "2026-11-19T12:33:31.578298+00:00",
+  "minimum_age_days": 14,
+  "inputs": {
+    ".devcontainer/package.json": "76d5dda3a7216105e4dd22faa22ea13b827e7e0d8891bc64b08b14e4b3e55390"
+  },
+  "lock_sha256": "0e4e2699d48aa29b5b5793ee056ece50489ebd1a2eea5dff07258d28059fd140",
+  "packages": {
+    "@devcontainers/cli@0.80.1": {
+      "released_at": "2025-09-01T14:17:48Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@devcontainers%2Fcli"
+    }
+  }
+}

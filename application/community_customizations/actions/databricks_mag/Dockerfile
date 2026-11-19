@@ -1,10 +1,11 @@
 # Stage 1: System dependencies and ODBC driver install
 ARG PYTHON_VERSION_ARG="3.12"
-FROM python:3.12 AS builder
+FROM python:3.12.12-bookworm@sha256:c0abd0758831ad99b7a29e0c1a875da9c4abb9a2e3f21e2eeb585dbcadfb6cd0 AS builder
 
 ARG PYTHON_VERSION_ARG
 ARG DRIVER_MAJOR_VERSION="2.9.2"
 ARG DRIVER_MINOR_VERSION=1008
+ARG DRIVER_SHA256="57e07f0c8ca17784d6bb8217f65a6d500b822816473299dc2cb618e75066b4a0"
 ARG BUCKET_URI="https://databricks-bi-artifacts.s3.us-east-2.amazonaws.com/simbaspark-drivers/odbc"
 
 ENV PYTHONIOENCODING=utf-8
@@ -16,9 +17,15 @@ ENV ZIP_FILE_NAME=${FOLDER_NAME}.zip
 
 WORKDIR /deps
 
-RUN apt-get update && apt-get install -y unixodbc unixodbc-dev wget unzip libsasl2-modules-gssapi-mit 
+RUN sed -i \
+        -e 's|http://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/20261104T000000Z/|g' \
+        -e 's|http://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/20261104T000000Z/|g' \
+        -e '/^Signed-By:/a Check-Valid-Until: no' \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y unixodbc unixodbc-dev wget unzip libsasl2-modules-gssapi-mit
 # "https://databricks-bi-artifacts.s3.us-east-2.amazonaws.com/simbaspark-drivers/odbc/2.9.2/SimbaSparkODBC-2.9.2.1008-Debian-64bit.zip"
 RUN wget -O /tmp/simbaspark.zip ${BUCKET_URI}/${DRIVER_MAJOR_VERSION}/${ZIP_FILE_NAME} \
+    && echo "${DRIVER_SHA256}  /tmp/simbaspark.zip" | sha256sum -c - \
     && unzip /tmp/simbaspark.zip -d /tmp/simbaspark && rm /tmp/simbaspark.zip
 
 RUN dpkg -i /tmp/simbaspark/SimbaSparkODBC-2.9.2.1008-Debian-64bit/simbaspark_2.9.2.1008-2_amd64.deb
@@ -26,9 +33,12 @@ RUN dpkg -i /tmp/simbaspark/SimbaSparkODBC-2.9.2.1008-Debian-64bit/simbaspark_2.
 USER root
 RUN groupadd -g 65532 nonroot && useradd -m -u 65532 -g nonroot nonroot
 RUN python -m venv /app/venv
-RUN pip install pyodbc \
-    && pip install wheel \
-    && pip wheel pyodbc -w /tmp/pyodbc-wheel
+COPY requirements-build.lock.txt /build-assets/requirements-build.lock.txt
+ENV PIP_BUILD_CONSTRAINT=/build-assets/requirements-build.lock.txt
+RUN python -m pip install pip==26.0.1 \
+    && pip install pyodbc==5.3.0 \
+    && pip install wheel==0.45.1 \
+    && pip wheel pyodbc==5.3.0 -w /tmp/pyodbc-wheel
 
 #RUN find / -name "*odbc*" || true
 RUN find / -name "*python${PYTHON_VERSION_ARG}*" || true
@@ -36,9 +46,9 @@ RUN find / -name "*python${PYTHON_VERSION_ARG}*" || true
 WORKDIR /app
 # Copy requirements and install them into the virtualenv
 ENV PATH="/app/venv/bin:$PATH"
-COPY requirements.txt . 
+COPY requirements.txt requirements.lock.txt .
 RUN pip install /tmp/pyodbc-wheel/pyodbc-*.whl \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -c requirements.lock.txt -r requirements.txt
 
 # Fix permissions so nonroot can use everything
 RUN chown -R 65532:65532 /app
@@ -58,7 +68,7 @@ RUN cat /opt/simba/spark/Setup/odbcinst.ini
 USER 65532:65532
 
 #Stage 3: Final containter
-FROM gcr.io/distroless/python3:latest
+FROM gcr.io/distroless/python3-debian12@sha256:2fdb05402a2cf21cf78fdb3ba4c5db167241e9e498140f5bf689d7efb773731f
 ARG PYTHON_VERSION_ARG
 WORKDIR /app
 USER root
