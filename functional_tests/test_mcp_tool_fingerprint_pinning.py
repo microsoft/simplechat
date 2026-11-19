@@ -1,15 +1,22 @@
+# test_mcp_tool_fingerprint_pinning.py
 #!/usr/bin/env python3
 """
 Functional test for MCP tool fingerprint pinning.
-Version: 0.261.276
+Version: 0.261.459
 Implemented in: 0.261.276
+Numeric canonicalization fixed in: 0.261.459
 
 This test ensures MCP tool and prompt fingerprints are stable, drift is detected,
 and pinned runtime filtering only exposes approved unchanged tools.
 """
 
+from copy import deepcopy
+import hashlib
+import json
 import os
 import sys
+
+import pytest
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "application", "single_app"))
 
@@ -40,6 +47,141 @@ def test_tool_hash_is_canonical_and_stable():
     first = _tool()
     second = _tool(extra_schema_order=True)
     assert pinning.compute_mcp_tool_hash(first) == pinning.compute_mcp_tool_hash(second)
+
+
+def _legacy_tool_hash(tool):
+    encoded = json.dumps(
+        pinning._tool_payload(tool), sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+@pytest.mark.parametrize("number", [90.0, -90.0, 0.0, -0.0, 1e20])
+def test_whole_number_representation_is_stable_through_save_and_runtime(number):
+    tool = _tool()
+    tool["input_schema"]["properties"]["timeout"] = {
+        "type": "number", "default": number, "examples": [{"values": [number, 0.25]}],
+    }
+    tool["output_schema"]["properties"]["count"] = {"type": "number", "minimum": number}
+    tool["annotations"]["extension"] = {"values": [number]}
+    prompt = {"name": "wait", "arguments": [{"name": "timeout", "default": number}]}
+    original = deepcopy({"tools": [tool], "prompts": [prompt]})
+    approved = pinning.build_mcp_tool_fingerprints([tool], [prompt])
+    saved_tool = deepcopy(tool)
+    saved_tool["input_schema"]["properties"]["timeout"]["default"] = int(number)
+    saved_tool["input_schema"]["properties"]["timeout"]["examples"][0]["values"][0] = int(number)
+    saved_tool["output_schema"]["properties"]["count"]["minimum"] = int(number)
+    saved_tool["annotations"]["extension"]["values"][0] = int(number)
+    saved_prompt = {"name": "wait", "arguments": [{"name": "timeout", "default": int(number)}]}
+    action = {
+        "type": "mcp",
+        "additionalFields": {
+            "mcp_tools": [saved_tool], "mcp_prompts": [saved_prompt],
+            "mcp_tool_fingerprints": approved,
+        },
+    }
+
+    pinning.validate_mcp_tool_pinning_for_save(action)
+    current = pinning.build_mcp_tool_fingerprints([saved_tool], [saved_prompt])
+    filtered, drift = pinning.filter_pinned_mcp_tools([saved_tool], approved)
+    manifest_drift = pinning.compare_mcp_fingerprints(approved, current)
+    reverse_approved = pinning.build_mcp_tool_fingerprints([saved_tool], [saved_prompt])
+    reverse_filtered, reverse_drift = pinning.filter_pinned_mcp_tools([tool], reverse_approved)
+
+    assert [entry["original_name"] for entry in filtered] == ["search"]
+    assert [entry["original_name"] for entry in reverse_filtered] == ["search"]
+    assert filtered[0]["input_schema"] == saved_tool["input_schema"]
+    assert reverse_filtered[0]["input_schema"] == tool["input_schema"]
+    assert drift["has_drift"] is False
+    assert reverse_drift["has_drift"] is False
+    assert manifest_drift["has_drift"] is False
+    assert {"tools": [tool], "prompts": [prompt]} == original
+    assert type(tool["input_schema"]["properties"]["timeout"]["default"]) is float
+    assert type(tool["annotations"]["extension"]["values"][0]) is float
+    assert type(prompt["arguments"][0]["default"]) is float
+
+
+@pytest.mark.parametrize("before,after", [
+    (90.0, 91),
+    (90.25, 90),
+    (90.25, 90.5),
+    (True, 1),
+    (False, 0),
+    ("90", 90),
+    ([90, 91], [91, 90]),
+])
+def test_numeric_normalization_does_not_hide_real_metadata_changes(before, after):
+    tool = _tool()
+    tool["input_schema"]["properties"]["limit"]["default"] = before
+    changed = deepcopy(tool)
+    changed["input_schema"]["properties"]["limit"]["default"] = after
+    approved = pinning.build_mcp_tool_fingerprints([tool])
+    action = {
+        "type": "mcp",
+        "additionalFields": {"mcp_tools": [changed], "mcp_tool_fingerprints": approved},
+    }
+
+    with pytest.raises(ValueError, match="do not match"):
+        pinning.validate_mcp_tool_pinning_for_save(action)
+    filtered, drift = pinning.filter_pinned_mcp_tools([changed], approved)
+
+    assert filtered == []
+    assert drift["changed"] == ["search"]
+    assert drift["has_drift"] is True
+
+
+def test_numeric_schema_type_and_prompt_default_changes_still_require_approval():
+    tool = _tool()
+    changed = deepcopy(tool)
+    changed["input_schema"]["properties"]["limit"]["type"] = "number"
+    prompt = {"name": "wait", "arguments": [{"name": "timeout", "default": 90.0}]}
+    approved = pinning.build_mcp_tool_fingerprints([tool], [prompt])
+    changed_prompt = {"name": "wait", "arguments": [{"name": "timeout", "default": 91}]}
+    current = pinning.build_mcp_tool_fingerprints([changed], [changed_prompt])
+    drift = pinning.compare_mcp_fingerprints(approved, current)
+    action = {
+        "type": "mcp",
+        "additionalFields": {
+            "mcp_tools": [tool], "mcp_prompts": [changed_prompt],
+            "mcp_tool_fingerprints": approved,
+        },
+    }
+
+    with pytest.raises(ValueError, match="do not match"):
+        pinning.validate_mcp_tool_pinning_for_save(action)
+
+    assert drift["changed"] == ["search"]
+    assert drift["prompts_changed"] == ["wait"]
+    assert drift["has_drift"] is True
+
+
+def test_unaffected_hashes_remain_compatible_and_float_legacy_hash_requires_reapproval():
+    tool = _tool()
+    tool["input_schema"]["properties"]["fraction"] = {"type": "number", "default": 0.25}
+    legacy_hash = _legacy_tool_hash(tool)
+    current_hash = pinning.compute_mcp_tool_hash(tool)
+    assert current_hash == legacy_hash
+
+    tool["input_schema"]["properties"]["timeout"] = {"type": "number", "default": 90.0}
+    legacy_hash = _legacy_tool_hash(tool)
+    approved = pinning.build_mcp_tool_fingerprints([tool])
+    approved["tools"]["search"] = legacy_hash
+    approved["manifest_hash"] = hashlib.sha256(json.dumps(
+        {"tools": approved["tools"], "prompts": {}},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    action = {
+        "type": "mcp",
+        "additionalFields": {"mcp_tools": [tool], "mcp_tool_fingerprints": approved},
+    }
+
+    with pytest.raises(ValueError, match="do not match"):
+        pinning.validate_mcp_tool_pinning_for_save(action)
+    filtered, drift = pinning.filter_pinned_mcp_tools([tool], approved)
+
+    assert filtered == []
+    assert drift["changed"] == ["search"]
+    assert drift["has_drift"] is True
 
 
 def test_manifest_drift_detects_new_changed_and_removed_tools():
@@ -132,9 +274,4 @@ def test_drift_persistence_and_notification_failures_are_logged_not_raised():
 
 
 if __name__ == "__main__":
-    test_tool_hash_is_canonical_and_stable()
-    test_manifest_drift_detects_new_changed_and_removed_tools()
-    test_runtime_filtering_keeps_only_approved_unchanged_tools()
-    test_legacy_unpinned_action_is_not_blocked_by_normalized_defaults()
-    test_drift_persistence_and_notification_failures_are_logged_not_raised()
-    print("MCP tool fingerprint pinning tests passed.")
+    sys.exit(pytest.main([__file__]))
