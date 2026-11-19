@@ -48,6 +48,18 @@ unresolved. See [Review and edit orchestration plans]({{ '/guides/review-and-edi
 
 ## Conversation list
 
+### Sidebar color mode
+
+Implemented in version: **0.261.459** (`application/single_app/config.py`).
+
+The button above your account cycles **Light -> Dark -> Custom -> Light** when
+you have saved a custom palette and your administrator allows custom modes.
+Its label identifies the next mode: **Custom mode** uses the palette icon from
+Settings. Otherwise the button switches only between Light and Dark.
+Switching away retains your custom colors, so you can return to them without
+reopening Settings. The same action is available in collapsed and mobile
+navigation. **Match system** remains available in Settings.
+
 ### Account-menu interface switch
 
 Implemented in version: **0.261.449** (`application/single_app/config.py`).

@@ -31,6 +31,7 @@ import {
     MessageSquarePlus,
     MessagesSquare,
     Moon,
+    Palette,
     Settings,
     ShieldCheck,
     SlidersHorizontal,
@@ -39,6 +40,7 @@ import {
     Users,
 } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
+import { useCustomColorModesAllowed } from '../../lib/useColorSchemeRuntime';
 import { clearConversationModes } from '../../lib/conversationMode';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
@@ -382,7 +384,14 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
 }
 
 export function Sidebar({ mobile = false }: { mobile?: boolean }) {
-    const { railCollapsed, toggleRail, theme, toggleTheme, mobileNavOpen, setMobileNavOpen } = useUiStore();
+    const { railCollapsed, toggleRail, theme, colorMode, customColorMode, setColorMode, mobileNavOpen, setMobileNavOpen } = useUiStore();
+    const { customAllowed } = useCustomColorModesAllowed();
+    const customAvailable = customAllowed && customColorMode !== null;
+    const nextColorMode = colorMode === 'custom' && customAvailable
+        ? 'light'
+        : theme === 'light' ? 'dark' : customAvailable ? 'custom' : 'light';
+    const nextColorModeLabel = nextColorMode === 'custom' ? 'Custom' : nextColorMode === 'dark' ? 'Dark' : 'Light';
+    const NextColorModeIcon = nextColorMode === 'custom' ? Palette : nextColorMode === 'dark' ? Moon : Sun;
     const startNewConversation = useChatStore((state) => state.startNewConversation);
     const publicLabels = usePublicWorkspaceLabels();
     const activeConversationId = useChatStore((state) => state.activeConversationId);
@@ -624,21 +633,17 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
             <div className="shrink-0 space-y-1 border-t border-edge p-3">
                 <button
                     type="button"
-                    onClick={toggleTheme}
-                    title={collapsed ? 'Toggle theme' : undefined}
-                    aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+                    onClick={() => setColorMode(nextColorMode)}
+                    title={collapsed ? `Switch to ${nextColorMode} theme` : undefined}
+                    aria-label={`Switch to ${nextColorMode} theme`}
                     className={clsx(
                         'flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm',
                         'text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1',
                         collapsed && 'justify-center px-0',
                     )}
                 >
-                    {theme === 'dark' ? (
-                        <Sun size={17} className="shrink-0" />
-                    ) : (
-                        <Moon size={17} className="shrink-0" />
-                    )}
-                    {!collapsed && <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>}
+                    <NextColorModeIcon size={17} className="shrink-0" aria-hidden="true" />
+                    {!collapsed && <span>{nextColorModeLabel} mode</span>}
                 </button>
 
                 <UserMenu collapsed={collapsed} />

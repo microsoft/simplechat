@@ -4,6 +4,7 @@
 import hashlib
 import json
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -25,9 +26,25 @@ MCP_DRIFT_NOTIFICATION_IDEMPOTENCY_KEY_MAX_LENGTH = 512
 MCP_PLUGIN_TYPE = "mcp"
 
 
+def _normalize_fingerprint_numbers(value: Any) -> Any:
+    """Keep whole-number floats stable across browser JSON round-trips."""
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    if isinstance(value, dict):
+        return {key: _normalize_fingerprint_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_fingerprint_numbers(item) for item in value]
+    return value
+
+
 def _canonical_hash(value: Any) -> str:
     """Return the SHA-256 hash for stable canonical JSON."""
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    encoded = json.dumps(
+        _normalize_fingerprint_numbers(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 

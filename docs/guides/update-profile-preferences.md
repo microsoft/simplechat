@@ -81,6 +81,24 @@ lists them, so you can jump straight to a card. Preferences are grouped under
 **Appearance**, **Chat**, **Voice and audio**, **Notifications and alerts**, **Help and
 guidance**, **Memory and data**, **Connected accounts**, and **Diagrams and charts**. Most changes save as soon as you make them.
 
+### Return to your custom colors
+
+Implemented in version: **0.261.459** (`application/single_app/config.py`).
+
+In **Preferences > Color mode**, choose **Custom**, adjust your colors, and select
+**Save my color mode**. Once a palette is saved, the button above your account in
+the sidebar cycles **Light -> Dark -> Custom -> Light**. Its label and icon show
+the next mode; **Custom mode** has the same palette icon as Custom in Settings.
+Switching to Light or Dark keeps your saved colors, so you can return to them
+without reopening Settings.
+
+Custom is skipped when no valid palette is saved or your administrator disables
+custom modes. The button then switches between Light and Dark as before.
+**Match system** remains available in Settings. The sidebar selection saves to
+your account and also works when navigation is collapsed or opened on a phone.
+
+### Other personal preferences
+
 The picture beside your name in the rail and at the top of **User Settings** is your Microsoft 365
 photo, which SimpleChat reads when it first sees you. If you change your photo in Microsoft 365,
 choose **Refresh photo** in the page header to fetch it again; both pictures change as soon as the
