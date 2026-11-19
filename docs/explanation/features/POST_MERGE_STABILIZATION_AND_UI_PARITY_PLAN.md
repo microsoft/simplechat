@@ -19,7 +19,7 @@
   `5f2390160f1c3274d55ddc311b3b102fdfa415a7`
 - Preserved reviewed merge:
   `bf923068ab3d8ae2e286060246ecb9ad6e671f60`
-- Current merge source (`MERGE_HEAD`):
+- Pinned Development parent of the local merge:
   `1137910e57d094b5ea97018f3e0b1debc5c25530` (`origin/Development`, `.459`)
 - Known tracking issue:
   [microsoft/simplechat#1928](https://github.com/microsoft/simplechat/issues/1928),
@@ -48,14 +48,15 @@ with `.438` as `HEAD` and `.459` as `MERGE_HEAD`. The ordinary merge reported 49
 unmerged paths. Comparing the same two trees against the earlier reviewed
 Development snapshot reused existing resolutions for 464 paths and identified
 one incorrectly combined clean path. The remaining 27 paths were reconciled
-without changing `MERGE_HEAD`. The user requested an uncommitted, staged
-handoff. Development ancestry will be recorded only when the merge is
-committed. The live checks below establish staging behavior for their listed
-builds, not for the new merged tree.
+without changing `MERGE_HEAD`. The result was left staged at handoff and is
+now recorded locally as two-parent merge `3278ba9bd` with the same reviewed
+tree. The live checks below establish staging behavior for their listed builds,
+not for the new merged tree.
 
 ### Development Merge Handoff (0.261.460)
 
-- All conflicts resolved and staged. No merge commit, push, PR, or deployment.
+- All conflicts resolved. The local merge has parents `a8c17078a` and
+  `1137910e5`. No push, PR, or deployment was performed during validation.
 - Local verification: V2 typecheck and production build; 120 Chromium tests
   for Retry/Stop, credential recovery, catalog, embeddings, workflow history,
   theme behavior, Classic math, and local assets. Focused offline backend,
@@ -66,10 +67,11 @@ builds, not for the new merged tree.
   without matching review evidence (568 diagnostics). The inventory records
   these as `review-required`; no check was weakened. Existing endpoint and
   workflow test-harness failures were reproduced against `.438` and are not
-  counted as new merge regressions. Repository-wide collection and the
-  broader test/inventory overhaul remain deferred.
+  counted as new merge regressions. The Cosmos gate is the first slice of the
+  [Python backend test revamp](./PYTHON_BACKEND_TEST_REVAMP_PLAN.md#first-slice-cosmos-response-contracts),
+  which also owns collection and the remaining backend test cleanup.
 - The remote `Development` tip advanced to `6613136e` while validating. This
-  staged result is against the approved `1137910e5` parent, not the later tip.
+  merge includes the approved `1137910e5` parent, not the later tip.
 
 ### Already complete
 
@@ -154,15 +156,17 @@ builds, not for the new merged tree.
     TSV upload, live hard-error budgets, and source revocation remain open
     acceptance items. Finish reviewed source-control closeout separately.
 
-### Explicitly not active blockers
+### Scope boundaries and follow-ups
 
 - Direct Foundry authentication/401 is **out of scope**. APIM is the approved
   working Responses path, and the direct fallback remains disabled.
-- By user direction on 2026-11-18, **root pytest collection, the stale workflow
-  access-count assertion, and the global Cosmos review inventory are deferred
-  to the testing-suite overhaul**. They are not merge-closeout requirements.
-  Earlier results below are historical evidence; no tests or checks were
-  disabled or edited to waive the failures.
+- Root pytest collection, the stale workflow access-count assertion, and Cosmos
+  review were deferred from stabilization on 2026-11-18. They now belong to the
+  [Python backend test revamp](./PYTHON_BACKEND_TEST_REVAMP_PLAN.md): review every
+  backend test and aim for near-complete unit, API, functional, and regression
+  coverage. UI interactions and browser tests stay outside the revamp. The
+  Cosmos review is its first slice because the PR check remains red; no checks
+  were waived.
 - Dated Azure Responses (`/openai/responses?api-version=...`) is **deferred**.
   Leave the working v1 routes and existing APIM operations unchanged.
 - The other B-series parity items remain a separate product backlog, not
@@ -1995,9 +1999,10 @@ provider status of the historical .429 fixture.
 - [ ] Obtain live action-bearing Responses and two-participant collaboration
   evidence before claiming those acceptance cases.
 - [x] Resolve GPT-6-capacity routing and record the .433 rollback target.
-- [x] Defer root collection, the global Cosmos review inventory and the stale
-  workflow access-count expectation to the separate testing-suite overhaul,
-  per the 2026-11-18 scope decision. Their historical results were not passes.
+- [x] Move root collection, the Cosmos review inventory, and the stale workflow
+  access-count expectation into the
+  [Python backend test revamp](./PYTHON_BACKEND_TEST_REVAMP_PLAN.md), per the
+  2026-11-18 deferral. Their historical results were not passes.
 
 The bundled App Service diagnostic script could not run its deprecated
 deployment-list command, but did collect Running/image metadata; the real

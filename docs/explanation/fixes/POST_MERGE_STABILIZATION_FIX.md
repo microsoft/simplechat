@@ -786,8 +786,10 @@ Verified locally and on staging (ACR `cph`).
   routing/group/agent-option cases, 30 route-policy cases, 73 Responses and
   workflow review cases, and 6 native V2 Custom editor tests passed.
 - Repository-wide pytest startup and the global Cosmos review were
-  explicitly moved to the next test-suite workstream. No global checks
-  were disabled or rerun for this follow-up.
+  moved to the [Python backend test revamp](../features/PYTHON_BACKEND_TEST_REVAMP_PLAN.md).
+  Cosmos is the first slice of that workstream; UI interactions and browser
+  tests are out of scope. No global checks were disabled or rerun for the
+  .435 follow-up.
 - Live .435 recheck: the classic invalid draft received a focused inline
   error and was not saved; the V2 New agent page loaded both saved
   Responses models; the retained staging agent returned `MATH=588877997`
