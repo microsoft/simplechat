@@ -2,6 +2,8 @@
 
 import base64
 import json
+import re
+from urllib.parse import unquote, urlparse
 
 from flask import has_request_context
 
@@ -1288,26 +1290,78 @@ def get_graph_base_url():
     return "https://graph.microsoft.com/v1.0"
 
 
-def get_graph_endpoint(path=""):
+def get_graph_endpoint(path="", *, allow_absolute=False):
     """
-    Build a full Graph endpoint from a relative path.
+    Build a Graph endpoint without letting request data change its origin or root.
 
     Args:
         path (str): Relative Graph path (for example: "/users" or "users/{id}")
+        allow_absolute (bool): Accept same-origin Graph metadata pagination URLs.
 
     Returns:
         str: Fully qualified Microsoft Graph URL
     """
     base_url = get_graph_base_url().rstrip("/")
-    path = (path or "").strip()
+    base = urlparse(base_url)
+    try:
+        base_port = base.port
+        base_origin = (
+            base.scheme, base.hostname.encode("idna").decode("ascii") if base.hostname else None,
+            base_port if base_port is not None else (443 if base.scheme == "https" else 80),
+        )
+    except ValueError as error:
+        raise ValueError("Invalid configured Microsoft Graph origin") from error
+    if (
+        base.scheme not in {"http", "https"} or not base.hostname
+        or base.username is not None or base.password is not None
+        or base.query or base.fragment
+    ):
+        raise ValueError("Invalid configured Microsoft Graph origin")
+
+    path = path or ""
+    if not isinstance(path, str) or any(ord(character) < 32 or ord(character) == 127 for character in path):
+        raise ValueError("Invalid Microsoft Graph request path")
+    path = path.strip()
 
     if not path:
         return base_url
 
-    if not path.startswith("/"):
-        path = f"/{path}"
+    if not re.fullmatch(r"(?:[A-Za-z0-9._~:/?\[\]@!$&'()*+,;=-]|%[0-9A-Fa-f]{2})+", path):
+        raise ValueError("Invalid Microsoft Graph request path")
 
-    return f"{base_url}{path}"
+    parsed = urlparse(path)
+    request_path = parsed.path + (f";{parsed.params}" if parsed.params else "")
+    if parsed.scheme or parsed.netloc:
+        try:
+            port = parsed.port
+            origin = (
+                parsed.scheme, parsed.hostname.encode("idna").decode("ascii") if parsed.hostname else None,
+                port if port is not None else (443 if parsed.scheme == "https" else 80),
+            )
+        except ValueError as error:
+            raise ValueError("Invalid Microsoft Graph metadata origin") from error
+        if (
+            not allow_absolute or origin != base_origin
+            or parsed.username is not None or parsed.password is not None
+        ):
+            raise ValueError("Microsoft Graph metadata URLs must use the configured Graph origin")
+        base_path = base.path + (f";{base.params}" if base.params else "")
+        if request_path != base_path and not request_path.startswith(f"{base_path}/"):
+            raise ValueError("Microsoft Graph metadata URLs must stay inside the configured Graph root")
+        request_path = request_path[len(base_path):]
+
+    for segment in request_path.split("/"):
+        decoded_segment = unquote(segment)
+        if (
+            any(part in {".", ".."} for part in decoded_segment.replace("\\", "/").split("/"))
+            or any(ord(character) < 32 or ord(character) == 127 for character in decoded_segment)
+        ):
+            raise ValueError("Microsoft Graph request paths must not contain invalid segments")
+
+    if request_path and not request_path.startswith("/"):
+        request_path = f"/{request_path}"
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{base_url}{request_path}{query}"
 
 def get_user_profile_image():
     """

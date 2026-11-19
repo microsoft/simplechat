@@ -1,0 +1,5 @@
+# requirements-build.txt
+-c ../docker-customization/requirements-build.lock.txt
+pip==26.0.1
+setuptools==80.9.0
+wheel==0.45.1

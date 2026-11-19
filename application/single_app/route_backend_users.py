@@ -84,11 +84,20 @@ def _get_graph_user_info_by_id(user_id):
     if not normalized_user_id:
         return None
 
+    try:
+        user_endpoint = get_graph_endpoint(f"/users/{quote(normalized_user_id, safe='')}")
+    except ValueError as error:
+        log_event(
+            "[USERS] Graph user info lookup rejected an invalid path",
+            extra={"error_type": type(error).__name__},
+            level=logging.WARNING,
+        )
+        return None
+
     token = get_valid_access_token()
     if not token:
         return None
 
-    user_endpoint = get_graph_endpoint(f"/users/{quote(normalized_user_id, safe='')}")
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -97,7 +106,9 @@ def _get_graph_user_info_by_id(user_id):
         "$select": "id,displayName,mail,userPrincipalName"
     }
 
-    response = requests.get(user_endpoint, headers=headers, params=params)
+    response = requests.get(user_endpoint, headers=headers, params=params, allow_redirects=False)
+    if 300 <= response.status_code < 400:
+        raise requests.exceptions.HTTPError("Microsoft Graph metadata redirects are not allowed", response=response)
     response.raise_for_status()
     user = response.json() or {}
     graph_user_id = user.get("id") or normalized_user_id

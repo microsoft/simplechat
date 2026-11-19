@@ -8,8 +8,8 @@ from dataclasses import dataclass, field, replace
 from threading import Lock
 from typing import Callable, Optional
 import uuid
-from action_usage import action_usage_identity, current_action_usage_identity
 
+from action_usage_context import action_usage_identity, current_action_usage_identity
 from functions_orchestration_execution_policy import (
     current_orchestration_file_policy,
     orchestration_file_policy,

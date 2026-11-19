@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for Foundry model fetch sync credential handling.
-Version: 0.239.156
+Version: 0.261.457
 Implemented in: 0.239.156
+Enhanced in: 0.261.457 (Azure request-boundary credential compatibility)
 
 This test ensures sync Foundry model discovery helpers use synchronous Azure
 credentials so token retrieval returns a token object instead of a coroutine.
@@ -14,6 +15,8 @@ import inspect
 import os
 import sys
 import types
+
+import pytest
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -50,7 +53,6 @@ def load_foundry_agent_runtime_module():
     requests_stub.get = lambda *args, **kwargs: None
     requests_stub.post = lambda *args, **kwargs: None
 
-    azure_stub = types.ModuleType("azure")
     azure_identity_stub = types.ModuleType("azure.identity")
     azure_identity_aio_stub = types.ModuleType("azure.identity.aio")
 
@@ -98,8 +100,16 @@ def load_foundry_agent_runtime_module():
 
     semantic_kernel_stub = types.ModuleType("semantic_kernel")
     semantic_kernel_agents_stub = types.ModuleType("semantic_kernel.agents")
+    semantic_kernel_open_ai_stub = types.ModuleType("semantic_kernel.agents.open_ai")
+    semantic_kernel_polling_stub = types.ModuleType("semantic_kernel.agents.open_ai.run_polling_options")
     semantic_kernel_contents_stub = types.ModuleType("semantic_kernel.contents")
     semantic_kernel_chat_stub = types.ModuleType("semantic_kernel.contents.chat_message_content")
+    functions_authentication_stub = types.ModuleType("functions_authentication")
+
+    def refuse_delegated_token(*args, **kwargs):
+        raise AssertionError("Delegated token acquisition is outside synchronous discovery")
+
+    functions_authentication_stub.get_valid_access_token_for_plugins = refuse_delegated_token
 
     class AzureAIAgent:
         @staticmethod
@@ -109,7 +119,11 @@ def load_foundry_agent_runtime_module():
     class ChatMessageContent:
         pass
 
+    class RunPollingOptions:
+        pass
+
     semantic_kernel_agents_stub.AzureAIAgent = AzureAIAgent
+    semantic_kernel_polling_stub.RunPollingOptions = RunPollingOptions
     semantic_kernel_chat_stub.ChatMessageContent = ChatMessageContent
 
     original_modules = {}
@@ -118,13 +132,15 @@ def load_foundry_agent_runtime_module():
         "functions_debug": functions_debug_stub,
         "functions_keyvault": functions_keyvault_stub,
         "requests": requests_stub,
-        "azure": azure_stub,
         "azure.identity": azure_identity_stub,
         "azure.identity.aio": azure_identity_aio_stub,
         "semantic_kernel": semantic_kernel_stub,
         "semantic_kernel.agents": semantic_kernel_agents_stub,
+        "semantic_kernel.agents.open_ai": semantic_kernel_open_ai_stub,
+        "semantic_kernel.agents.open_ai.run_polling_options": semantic_kernel_polling_stub,
         "semantic_kernel.contents": semantic_kernel_contents_stub,
         "semantic_kernel.contents.chat_message_content": semantic_kernel_chat_stub,
+        "functions_authentication": functions_authentication_stub,
     }
 
     for module_name, module_stub in module_stubs.items():
@@ -133,7 +149,11 @@ def load_foundry_agent_runtime_module():
 
     original_modules["foundry_agent_runtime"] = sys.modules.get("foundry_agent_runtime")
     sys.modules.pop("foundry_agent_runtime", None)
-    module = importlib.import_module("foundry_agent_runtime")
+    try:
+        module = importlib.import_module("foundry_agent_runtime")
+    except BaseException:
+        restore_modules(original_modules)
+        raise
     return module, original_modules
 
 
@@ -152,6 +172,40 @@ def test_build_project_credential_returns_sync_token_provider():
         restore_modules(original_modules)
 
     print("✅ Foundry sync discovery credential builder passed.")
+
+
+@pytest.mark.parametrize("auth,scope,expected_options", [
+    (
+        {"type": "managed_identity", "managed_identity_client_id": "configured-identity"},
+        "https://ai.azure.com/.default",
+        {"managed_identity_client_id": "configured-identity"},
+    ),
+    (
+        {"type": "service_principal", "management_cloud": "government",
+         "tenant_id": "tenant", "client_id": "client", "client_secret": "fixture-only-secret"},
+        "https://ai.azure.us/.default",
+        {"tenant_id": "tenant", "client_id": "client", "client_secret": "fixture-only-secret",
+         "authority": "https://login.microsoftonline.us"},
+    ),
+    (
+        {"type": "service_principal", "management_cloud": "custom",
+         "custom_authority": "https://login.custom.example",
+         "tenant_id": "tenant", "client_id": "client", "client_secret": "fixture-only-secret"},
+        "https://ai.custom.example/.default",
+        {"tenant_id": "tenant", "client_id": "client", "client_secret": "fixture-only-secret",
+         "authority": "https://login.custom.example"},
+    ),
+])
+def test_sync_discovery_preserves_credential_type_authority_and_identity(auth, scope, expected_options):
+    module, original_modules = load_foundry_agent_runtime_module()
+    try:
+        credential = module.build_project_credential(auth)
+        token = credential.get_token(scope)
+        assert not inspect.iscoroutine(token)
+        assert token.token == f"sync:{scope}"
+        assert credential.kwargs == expected_options
+    finally:
+        restore_modules(original_modules)
 
 
 if __name__ == "__main__":

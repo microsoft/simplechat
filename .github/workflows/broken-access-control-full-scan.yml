@@ -20,7 +20,7 @@ on:
 
 jobs:
   broken-access-control-full-scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -31,7 +31,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.12.12'
 
       - name: Run Broken Access Control guardrail self-test
         if: inputs.run_self_tests

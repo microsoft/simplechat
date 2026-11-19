@@ -1,80 +1,100 @@
-
 name: SimpleChat Docker Image Publish (development/staging branch)
 
 on:
   push:
     branches:
-    - Development
-    - Staging
-
+      - Development
+      - Staging
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-tomain:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-24.04
     steps:
-    - name: Azure Container Registry Login
-      uses: Azure/docker-login@15c4aadf093404726ab2ff205b2cdd33fa6d054c # v2
-      with:
-        # Container registry username
-        username: ${{ secrets.ACR_USERNAME }}
-        # Container registry password
-        password: ${{ secrets.ACR_PASSWORD }}
-        # Container registry server url
-        login-server: ${{ secrets.ACR_LOGIN_SERVER }}
-        
-    - name: Normalize branch name for tag
-      run: |
-        REF="${GITHUB_REF_NAME}"
-        SAFE=$(echo "$REF" \
-          | tr '[:upper:]' '[:lower:]' \
-          | sed 's#[^a-z0-9._-]#-#g' \
-          | sed 's/^-*//;s/-*$//' \
-          | cut -c1-128)
-        echo "BRANCH_TAG=$SAFE" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12.12'
+      - name: Check destination DNS and connectivity
+        env:
+          REGISTRY_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: python scripts/check_registry_destination.py
+      - name: Azure Container Registry Login
+        uses: Azure/docker-login@15c4aadf093404726ab2ff205b2cdd33fa6d054c # v2
+        with:
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+      - name: Set image tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          SAFE=$(printf '%s' "$GITHUB_REF_NAME" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's#[^a-z0-9._-]#-#g;s/^-*//;s/-*$//' \
+            | cut -c1-128)
+          echo "IMAGE_TAG=$(date -u +'%Y-%m-%d')_${SAFE}_${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+      - name: Build application image
+        env:
+          DOCKER_BUILDKIT: '0'
+          REGISTRY_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: docker build . --file application/single_app/Dockerfile --tag "${REGISTRY_LOGIN_SERVER}/simple-chat-dev:${IMAGE_TAG}"
+      - name: Tag application image
+        env:
+          REGISTRY_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: docker tag "${REGISTRY_LOGIN_SERVER}/simple-chat-dev:${IMAGE_TAG}" "${REGISTRY_LOGIN_SERVER}/simple-chat-dev:latest"
+      - name: Push application images
+        env:
+          REGISTRY_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${REGISTRY_LOGIN_SERVER}/simple-chat-dev:${IMAGE_TAG}"
+          docker push "${REGISTRY_LOGIN_SERVER}/simple-chat-dev:latest"
 
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-    - name: Build the Docker image
-      env:
-        DOCKER_BUILDKIT: "0"
-      run:         
-        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_${BRANCH_TAG}_$GITHUB_RUN_NUMBER;
-        docker tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_${BRANCH_TAG}_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:latest;
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_${BRANCH_TAG}_$GITHUB_RUN_NUMBER;
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:latest;
-  
   build-nadoyle:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-24.04
     steps:
-    - name: Azure Container Registry Login
-      uses: Azure/docker-login@15c4aadf093404726ab2ff205b2cdd33fa6d054c # v2
-      with:
-        # Container registry username
-        username: ${{ secrets.ACR_USERNAME_NADOYLE }}
-        # Container registry password
-        password: ${{ secrets.ACR_PASSWORD_NADOYLE }}
-        # Container registry server url
-        login-server: ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}
-
-    - name: Normalize branch name for tag
-      run: |
-        REF="${GITHUB_REF_NAME}"
-        SAFE=$(echo "$REF" \
-          | tr '[:upper:]' '[:lower:]' \
-          | sed 's#[^a-z0-9._-]#-#g' \
-          | sed 's/^-*//;s/-*$//' \
-          | cut -c1-128)
-        echo "BRANCH_TAG=$SAFE" >> "$GITHUB_ENV"
-        
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-    - name: Build the Docker image
-      env:
-        DOCKER_BUILDKIT: "0"
-      run:         
-        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}/simple-chat-dev:$(date +'%Y-%m-%d')_${BRANCH_TAG}_$GITHUB_RUN_NUMBER;
-        docker tag ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}/simple-chat-dev:$(date +'%Y-%m-%d')_${BRANCH_TAG}_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}/simple-chat-dev:latest;
-        docker push ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}/simple-chat-dev:$(date +'%Y-%m-%d')_${BRANCH_TAG}_$GITHUB_RUN_NUMBER;
-        docker push ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}/simple-chat-dev:latest;
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12.12'
+      - name: Check destination DNS and connectivity
+        env:
+          REGISTRY_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}
+        run: python scripts/check_registry_destination.py
+      - name: Azure Container Registry Login
+        uses: Azure/docker-login@15c4aadf093404726ab2ff205b2cdd33fa6d054c # v2
+        with:
+          username: ${{ secrets.ACR_USERNAME_NADOYLE }}
+          password: ${{ secrets.ACR_PASSWORD_NADOYLE }}
+          login-server: ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}
+      - name: Set image tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          SAFE=$(printf '%s' "$GITHUB_REF_NAME" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's#[^a-z0-9._-]#-#g;s/^-*//;s/-*$//' \
+            | cut -c1-128)
+          echo "IMAGE_TAG=$(date -u +'%Y-%m-%d')_${SAFE}_${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+      - name: Build application image
+        env:
+          DOCKER_BUILDKIT: '0'
+          REGISTRY_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}
+        run: docker build . --file application/single_app/Dockerfile --tag "${REGISTRY_LOGIN_SERVER}/simple-chat-dev:${IMAGE_TAG}"
+      - name: Tag application image
+        env:
+          REGISTRY_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}
+        run: docker tag "${REGISTRY_LOGIN_SERVER}/simple-chat-dev:${IMAGE_TAG}" "${REGISTRY_LOGIN_SERVER}/simple-chat-dev:latest"
+      - name: Push application images
+        env:
+          REGISTRY_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${REGISTRY_LOGIN_SERVER}/simple-chat-dev:${IMAGE_TAG}"
+          docker push "${REGISTRY_LOGIN_SERVER}/simple-chat-dev:latest"

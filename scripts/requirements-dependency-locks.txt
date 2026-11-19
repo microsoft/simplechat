@@ -1,0 +1,4 @@
+# requirements-dependency-locks.txt
+# uv 0.8.22 was published on 2025-09-23; no runtime dependencies.
+-c requirements-dependency-locks.lock.txt
+uv==0.8.22

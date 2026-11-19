@@ -1,4 +1,5 @@
 # requirements-model-catalog-tests.txt
+-c requirements-model-catalog.lock.txt
 -r requirements-model-catalog.txt
 pytest==8.4.2
 PyYAML==6.0.2

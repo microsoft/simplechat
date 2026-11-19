@@ -32,7 +32,7 @@ jobs:
   ui-smoke:
     name: Validate existing staging and run UI smoke tests
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: Staging-Validation
     timeout-minutes: 30
@@ -139,21 +139,31 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version: '3.12.12'
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "20"
+          node-version: "24.22.3"
           cache: npm
           cache-dependency-path: ui_tests/playwright-workspaces/package-lock.json
+
+      - name: Freeze Ubuntu browser dependency sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f /etc/apt/sources.list.d/ubuntu.sources
+          sudo sed -i \
+            -e 's|^URIs:.*|URIs: https://snapshot.ubuntu.com/ubuntu/20261104T000000Z/|' \
+            -e '/^Signed-By:/a Check-Valid-Until: no' \
+            /etc/apt/sources.list.d/ubuntu.sources
 
       - name: Install UI test dependencies
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install -r ui_tests/requirements.txt
+          python -m pip install --upgrade pip==26.0.1
+          python -m pip install --build-constraint docker-customization/requirements-build.lock.txt -r ui_tests/requirements.txt
           python -m playwright install --with-deps chromium
 
       - name: Install JavaScript browser test dependencies

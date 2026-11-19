@@ -1,8 +1,9 @@
 # group_endpoint_harness.py
 """Shared, isolated harness for the native group model endpoint tests (M5C).
 
-Version: 0.261.140
+Version: 0.261.457
 Implemented in: 0.261.140
+Enhanced in: 0.261.457 (Azure request-boundary fixture parity)
 
 The modules under test are loaded unchanged from their file paths: the group
 document helpers (``functions_group``), the endpoint policy and access modules,
@@ -40,6 +41,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from azure.cosmos import exceptions as cosmos_exceptions
 from flask import Blueprint, Flask, jsonify, request, session
@@ -480,7 +482,11 @@ def group_endpoint_environment():
             "FOUNDRY_DELEGATED_AUTH_REQUIRED_MESSAGE", "FoundryAgentInvocationError",
             "FoundryAgentUserAuthenticationRequired", "_get_delegated_foundry_user_token",
             "resolve_foundry_project_base", "resolve_foundry_project_api_version", "resolve_authority",
-        }, {"Any": typing.Any, "Dict": typing.Dict, "Optional": typing.Optional})
+        }, {
+            "Any": typing.Any, "Dict": typing.Dict, "Optional": typing.Optional,
+            "re": re, "quote": quote, "unquote": unquote,
+            "urlsplit": urlsplit, "urlunsplit": urlunsplit,
+        })
         foundry_namespace["get_valid_access_token_for_plugins"] = lambda scopes: {
             "scopes": list(scopes), "consent_url": "https://login.example.test/consent",
         }
@@ -539,7 +545,10 @@ def group_endpoint_environment():
             # Stand-ins for settings-module dependencies with no bearing on endpoints,
             # the same set the model endpoint normalization suite uses.
             "functions_content_safety": module_stub(
-                "functions_content_safety", CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT="Content safety policy violation.",
+                "functions_content_safety",
+                CONTENT_SAFETY_CATEGORY_KEYS=("Violence", "Hate", "Sexual", "SelfHarm"),
+                CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT=4,
+                CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT="Content safety policy violation.",
             ),
             "functions_cosmos_throughput": module_stub(
                 "functions_cosmos_throughput", get_default_cosmos_throughput_settings=lambda: {},
@@ -583,6 +592,7 @@ def group_endpoint_environment():
 
         settings_module.update_user_settings = update_user_settings
         providers = importlib.import_module("functions_model_endpoint_providers")
+        urls = importlib.import_module("functions_model_endpoint_urls")
         stack.enter_context(patch.dict(sys.modules, {
             "model_endpoint_clients": module_stub(
                 "model_endpoint_clients",
@@ -595,6 +605,7 @@ def group_endpoint_environment():
                 normalize_anthropic_messages_url=lambda endpoint, **kwargs: str(endpoint or ""),
                 normalize_openai_style_base_url=lambda endpoint: str(endpoint or ""),
                 resolve_custom_openai_base_url=lambda endpoint, api_type, url_mode: str(endpoint or ""),
+                resolve_model_inference_endpoint=urls.resolve_model_inference_endpoint,
             ),
         }))
         keyvault = _load(stack, "functions_keyvault")

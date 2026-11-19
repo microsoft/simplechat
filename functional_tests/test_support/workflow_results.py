@@ -1,7 +1,7 @@
 # workflow_results.py
 """
 Isolated workflow result dependencies for existing sequence unit tests.
-Version: 0.261.362
+Version: 0.261.454
 Implemented in: 0.261.106
 Non-retryable workflow policy dependencies added in: 0.261.362
 """
@@ -9,6 +9,9 @@ Non-retryable workflow policy dependencies added in: 0.261.362
 import hashlib
 import json
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from contextvars import copy_context
 
 from azure.core.exceptions import AzureError
 from content_screening.access import isolate_request_source_fence
@@ -67,6 +70,19 @@ from functions_workflow_readiness import (
 )
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_policy_errors import WorkflowTaskPolicyError, workflow_policy_failure
+from model_endpoint_clients import (
+    bind_callable_with_timeout,
+    resolve_document_action_timeout_seconds,
+    resolve_model_call_max_retries,
+    resolve_model_stream_read_timeout_seconds,
+)
+from runtime_usage import exception_outcome
+
+
+# AST extraction skips the production executor initializer.
+_DOCUMENT_ACTION_MODEL_EXECUTOR = ThreadPoolExecutor(
+    max_workers=16, thread_name_prefix="workflow-handoff-test",
+)
 
 
 def workflow_result_helpers():
@@ -95,6 +111,15 @@ def workflow_result_helpers():
         "WorkflowContextBudgetError": WorkflowContextBudgetError,
         "WorkflowTaskPolicyError": WorkflowTaskPolicyError,
         "workflow_policy_failure": workflow_policy_failure,
+        "exception_outcome": exception_outcome,
+        "time": time,
+        "copy_context": copy_context,
+        "FutureTimeoutError": FutureTimeoutError,
+        "_DOCUMENT_ACTION_MODEL_EXECUTOR": _DOCUMENT_ACTION_MODEL_EXECUTOR,
+        "bind_callable_with_timeout": bind_callable_with_timeout,
+        "resolve_document_action_timeout_seconds": resolve_document_action_timeout_seconds,
+        "resolve_model_call_max_retries": resolve_model_call_max_retries,
+        "resolve_model_stream_read_timeout_seconds": resolve_model_stream_read_timeout_seconds,
         "WorkflowResultNotReadyError": WorkflowResultNotReadyError,
         "AnalysisResultUnavailable": AnalysisResultUnavailable,
         "WorkflowInputError": WorkflowInputError,

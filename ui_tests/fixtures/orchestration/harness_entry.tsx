@@ -20,6 +20,9 @@ import * as collaborationStore from '../../../application/v2_ui/src/stores/colla
 import * as generatedDocumentsStore from '../../../application/v2_ui/src/stores/generatedDocumentsStore';
 import * as generatedExportRunStore from '../../../application/v2_ui/src/stores/generatedExportRunStore';
 import * as userSettingsStore from '../../../application/v2_ui/src/stores/userSettingsStore';
+import * as uiStore from '../../../application/v2_ui/src/stores/uiStore';
+import { useColorSchemeRuntime } from '../../../application/v2_ui/src/lib/useColorSchemeRuntime';
+import { ColorModeCard } from '../../../application/v2_ui/src/components/settings/ColorModeCard';
 import * as assistThreadStore from '../../../application/v2_ui/src/stores/assistThreadStore';
 import * as m365PendingActionsStore from '../../../application/v2_ui/src/stores/m365PendingActionsStore';
 import * as appSessionStore from '../../../application/v2_ui/src/stores/appSessionStore';
@@ -73,6 +76,15 @@ import type { AdminField } from '../../../application/v2_ui/src/lib/adminFields'
 
 function ChatExperience() {
     return <div style={{ height: '100dvh' }}><AppShell><ChatPage /></AppShell></div>;
+}
+
+function ColorModeExperience() {
+    useColorSchemeRuntime();
+    return (
+        <div style={{ height: '100dvh' }}>
+            <AppShell><ColorModeCard /></AppShell>
+        </div>
+    );
 }
 
 function ActionCredentialAuthoring({ initial, definition }: {
@@ -243,6 +255,7 @@ type ComponentName =
     | 'SessionChatExperience'
     | 'Sidebar'
     | 'ChatExperience'
+    | 'ColorModeExperience'
     | 'HomeExperience'
     | 'HeaderExperience'
     | 'Dropdown'
@@ -279,6 +292,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     SessionChatExperience,
     Sidebar,
     ChatExperience,
+    ColorModeExperience,
     HomeExperience,
     HeaderExperience,
     Dropdown,
@@ -427,6 +441,7 @@ const harness = {
         generatedDocuments: generatedDocumentsStore,
         generatedExportRuns: generatedExportRunStore,
         userSettings: userSettingsStore,
+        ui: uiStore,
         assistThread: assistThreadStore,
         pendingActions: m365PendingActionsStore,
         appSession: appSessionStore,

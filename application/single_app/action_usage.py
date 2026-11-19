@@ -10,12 +10,12 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
+from action_usage_context import action_usage_identity, current_action_usage_identity
 from functions_action_manifest import get_action_origin, resolve_action_type
 import runtime_usage
 
 
 _attempt = ContextVar("action_usage_attempt", default=None)
-_identity = ContextVar("action_usage_identity", default=None)
 _AUTH_CATEGORIES = frozenset({
     "none", "unknown", "not_applicable", "api_key", "basic", "bearer", "oauth2",
     "oauth", "managed_identity", "service_principal", "username_password",
@@ -24,31 +24,10 @@ _AUTH_CATEGORIES = frozenset({
 })
 
 
-def current_action_usage_identity():
-    """Return a copy of the explicitly bound, server-authorized execution context."""
-    return dict(_identity.get() or {})
-
-
-@contextmanager
-def action_usage_identity(user_id, *, conversation_id="", workspace_type="", group_id="",
-                          public_workspace_id="", workflow_id="", run_id="", trigger_type=""):
-    """Supply server-authorized background identity, never tool-call arguments."""
-    context = dict(
-        user_id=user_id, conversation_id=conversation_id, workspace_type=workspace_type,
-        group_id=group_id, public_workspace_id=public_workspace_id, workflow_id=workflow_id,
-        run_id=run_id, trigger_type=trigger_type,
-    )
-    token = _identity.set(context)
-    try:
-        yield
-    finally:
-        _identity.reset(token)
-
-
 def _execution_identity():
-    explicit = _identity.get()
-    if explicit is not None:
-        return dict(explicit)
+    explicit = current_action_usage_identity()
+    if explicit:
+        return explicit
     # Execution identity is runtime-owned; defer imports to preserve discovery/bootstrap safety.
     from agent_execution_context import current_agent_execution
 
