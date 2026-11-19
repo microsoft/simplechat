@@ -1094,7 +1094,7 @@ def _execute_prepared_relational(
     from functions_tabular_merge import TabularMergeSource, read_tabular_source_records
     from functions_tabular_relational import (
         TabularRelationalError, calculate_relational_sources, check_relational_columns,
-        normalize_relational_spec, relational_spec_schema,
+        normalize_relational_spec, relational_spec_schema, with_operation_version,
     )
 
     invoke = getattr(context, "invoke_prompt", None)
@@ -1359,6 +1359,26 @@ def _execute_prepared_relational(
                     program = json.loads(response)
                     if not isinstance(program, dict):
                         raise TabularRelationalError("relational_spec_invalid", detail={"check": "json_object"})
+                    # This path admits both operation sets, so the version follows from the
+                    # operations and is stated here, not checked against what was written.
+                    program, authored_version = with_operation_version(program)
+                    if authored_version != program.get("version"):
+                        log_event(
+                            "[ORCHESTRATION_NATIVE] Calculation program version set from its operations.",
+                            level=logging.DEBUG,
+                            extra={
+                                **workflow_log_context(
+                                    run_id=getattr(context, "run_id", None),
+                                    conversation_id=getattr(context, "conversation_id", None),
+                                    step_id=step["step_id"],
+                                ),
+                                "stage": "tabular_program_lowering",
+                                "program_version": program.get("version"),
+                                "authored_version_valid": authored_version in (
+                                    "tabular-relate-v1", "tabular-relate-v2",
+                                ),
+                            },
+                        )
                     program = normalize_relational_spec(program, arguments["document_ids"])
                     check_relational_columns(program, source_headers)
                     state = store.save_lowering_state(

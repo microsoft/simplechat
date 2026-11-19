@@ -272,6 +272,31 @@ def _precise_spec(value, columns=None, **detail):
     return normalized
 
 
+V2_OPERATIONS = ("allocate", "cumulative_sum")
+
+
+def with_operation_version(value):
+    """Return the program with the format version its operations determine.
+
+    The version is not a choice: a program that uses ``allocate`` or ``cumulative_sum`` is the
+    second format and any other program is the first. Where a program may use either set, the
+    server states the version instead of asking its author to restate what the operations
+    already say. A value that is not a program with a list of step objects is returned
+    unchanged, for the normalizer to reject.
+
+    Returns ``(program, authored_version)``.
+    """
+    if not isinstance(value, dict) or not isinstance(value.get("steps"), list) or not all(
+        isinstance(step, dict) for step in value["steps"]
+    ):
+        return value, None
+    authored = value.get("version")
+    derived = RELATIONAL_VERSION_V2 if any(
+        step.get("op") in V2_OPERATIONS for step in value["steps"]
+    ) else RELATIONAL_VERSION
+    return {**value, "version": derived}, authored
+
+
 def normalize_relational_spec(value, document_ids=None):
     """Reject malformed/ambiguous graphs before any file is read."""
     try:
@@ -350,7 +375,7 @@ def normalize_relational_spec(value, document_ids=None):
             spec["result"] in origins and origins[spec["result"]] == set(aliases), "relational_source_unused",
             check="result_sources",
         )
-        new_operations = any(step["op"] in ("allocate", "cumulative_sum") for step in spec["steps"])
+        new_operations = any(step["op"] in V2_OPERATIONS for step in spec["steps"])
         _require(
             new_operations == (spec["version"] == RELATIONAL_VERSION_V2),
             check="version_operations",

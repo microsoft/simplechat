@@ -225,7 +225,7 @@ def test_relational_arguments_and_legacy_single_source_contracts_are_distinct():
     [
         None, "body", "request", "selector", "saved_unsupported",
         "saved_wrong_sources", "resume_correction",
-        "two_corrections", "correction_exhausted",
+        "two_corrections", "correction_exhausted", "authored_version",
     ],
 )
 def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(monkeypatch, mutation):
@@ -362,6 +362,9 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
                 faulty = deepcopy(spec)
                 faulty["steps"][0]["on"][0]["right"] = "catalog.missing"
                 return json.dumps(faulty)
+            if mutation == "authored_version":
+                # The author names the other format; the operations decide, with no correction.
+                return json.dumps({**spec, "version": "tabular-relate-v2"})
             return json.dumps(spec)
 
         invoke.enforces_complete_generation = True
@@ -447,7 +450,7 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
             assert len(commits(runtime)) == initial_commits
             assert "catalog.missing" not in json.dumps(failures, default=str)
             return
-        if mutation not in (None, "resume_correction", "two_corrections"):
+        if mutation not in (None, "resume_correction", "two_corrections", "authored_version"):
             assert result["status"] == "failed", result
             assert result["failure"]["native_code"] in {
                 "native_inputs_unsupported", "native_access_unavailable",
