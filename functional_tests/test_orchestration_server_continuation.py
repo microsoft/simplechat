@@ -2,7 +2,7 @@
 # test_orchestration_server_continuation.py
 """
 Functional test for the server-side next attempt after a failed orchestration run.
-Version: 0.261.462
+Version: 0.261.467
 Implemented in: 0.261.462
 
 This test ensures that a failed attempt is followed by its next one on the server, after the
@@ -108,3 +108,35 @@ def test_the_server_starts_nothing_when_the_setting_is_off(real_http_harness):
     time.sleep(1.5)
     assert len(_wait_for_attempts(harness, 1)) == len(attempts) == 1
     assert len(harness.model_calls) == 6
+
+
+def test_a_refused_next_attempt_logs_which_check_refused_it(modules):
+    """Most refusals share one public code; the log must name the check behind it."""
+    from functions_orchestration_checkpoints import CheckpointError
+    from functions_orchestration_recovery import RecoveryError
+
+    try:
+        try:
+            raise CheckpointError(
+                "recovery_changed", rule="execution_binding_changed", stage="resume_binding",
+                producer_capability_id="tabular_analyze",
+            )
+        except CheckpointError as inner:
+            raise RecoveryError("Saved progress changed.", recovery={"reason_code": "recovery_changed"}) from inner
+    except RecoveryError as refused:
+        detail = modules.route._refusal_detail(refused)
+        assert refused.code == "recovery_unavailable"
+    assert detail["cause_type"] == "CheckpointError" and detail["cause_code"] == "recovery_changed"
+    assert detail["validation_rule"] == "execution_binding_changed" and detail["refusal_stage"] == "resume_binding"
+    assert detail["reason_code"] == "recovery_changed" and detail["producer_capability_id"] == "tabular_analyze"
+    assert detail["error_site"].startswith("test_orchestration_server_continuation.py:")
+    # A plain error from rebuilding the context has no rule; its type and raise site still show.
+    try:
+        try:
+            raise ValueError("private detail that must not be logged")
+        except ValueError as inner:
+            raise RecoveryError() from inner
+    except RecoveryError as refused:
+        detail = modules.route._refusal_detail(refused)
+    assert detail["cause_type"] == "ValueError" and "private" not in json.dumps(detail)
+    assert set(detail) == {"cause_type", "error_site"}

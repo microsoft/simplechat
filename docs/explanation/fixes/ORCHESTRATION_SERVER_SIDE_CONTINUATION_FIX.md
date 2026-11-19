@@ -75,6 +75,11 @@ to the conversation as every run does.
 - The same message with `stage` `automatic_continuation_offer` and a reason: why it did not.
 - `[ORCHESTRATION_RUNS] The next attempt could not be prepared.` and `... was prepared but
   could not start.` carry the refusal code.
+- From 0.261.467 the "could not be prepared" line also says which check refused:
+  `reason_code`, `cause_type`, `cause_code`, `validation_rule`, `refusal_stage`,
+  `producer_capability_id` and `error_site` (file and line that raised). On 0.261.463, 11 of
+  12 next attempts were refused with the shared code `recovery_unavailable` and the log could
+  not say why. No run content is logged.
 - The scorecard's "Later attempts, by outcome" shows how those attempts ended.
 
 ## Validation

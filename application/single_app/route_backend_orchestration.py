@@ -36,6 +36,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import queue
 import threading
 import time
@@ -2314,8 +2315,34 @@ def _continue_failed_run(run_id, conversation_id, user_id, run_plan):
             level=logging.WARNING, extra={
                 **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
                 'stage': 'automatic_continuation', 'validation_code': exc.code,
+                **_refusal_detail(exc),
             },
         )
+
+
+def _refusal_detail(exc):
+    """Say which check refused a next attempt, without any of the run's content.
+
+    Most refusals share one public code. The check that raised is on the error it was raised
+    from: its code, rule and stage, and the file and line that raised it.
+    """
+    cause = exc.__cause__ if isinstance(exc.__cause__, Exception) else exc
+    frame = None
+    trace = cause.__traceback__
+    while trace is not None:
+        frame, trace = trace, trace.tb_next
+    detail = {
+        'reason_code': (exc.recovery or {}).get('reason_code') if isinstance(exc.recovery, dict) else None,
+        'cause_type': type(cause).__name__,
+        'cause_code': getattr(cause, 'code', None),
+        'validation_rule': getattr(cause, 'validation_rule', None) or exc.validation_rule,
+        'refusal_stage': getattr(cause, 'stage', None) or exc.stage,
+        'producer_capability_id': getattr(cause, 'producer_capability_id', None) or exc.producer_capability_id,
+        'error_site': (
+            f'{os.path.basename(frame.tb_frame.f_code.co_filename)}:{frame.tb_lineno}' if frame is not None else None
+        ),
+    }
+    return {key: value for key, value in detail.items() if isinstance(value, str) and value}
 
 
 def _validate_retry_context(record, user_id, settings, *, preparing=False):
