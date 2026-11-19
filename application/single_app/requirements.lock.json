@@ -1,0 +1,1167 @@
+{
+  "selected_at": "2026-11-19T12:33:32.920324+00:00",
+  "minimum_age_days": 14,
+  "inputs": {
+    "application/single_app/requirements.txt": "aad9ddd6e3f2d47ef7e79f7b720b7e6e0f350a495ec01976bfaf02c18f5521aa",
+    "requirements-dev.txt": "a9c70dcdcd5d87d54e67cc8d8a52dc53b204f709ae08603f0b29eda725811166",
+    "ui_tests/requirements.txt": "12083cb5ec232e93b063e90224f1a2b2cb217bac039c428aca7491805f5e50ce"
+  },
+  "lock_sha256": "3269d6fd7c25429a1783376da1482d57fa561806083ab1a68cf6df335bc6ddd6",
+  "packages": {
+    "aiohappyeyeballs==2.7.1": {
+      "released_at": "2026-07-01T17:11:54.055058Z",
+      "source": "https://pypi.org/pypi/aiohappyeyeballs/2.7.1/json",
+      "grandfathered_pin": false
+    },
+    "aiohttp==3.14.4": {
+      "released_at": "2026-10-05T17:37:45.079081Z",
+      "source": "https://pypi.org/pypi/aiohttp/3.14.4/json",
+      "grandfathered_pin": true
+    },
+    "aioice==0.10.2": {
+      "released_at": "2025-11-28T15:56:47.847926Z",
+      "source": "https://pypi.org/pypi/aioice/0.10.2/json",
+      "grandfathered_pin": false
+    },
+    "aiortc==1.15.0": {
+      "released_at": "2026-07-13T19:26:42.241925Z",
+      "source": "https://pypi.org/pypi/aiortc/1.15.0/json",
+      "grandfathered_pin": false
+    },
+    "aiosignal==1.4.0": {
+      "released_at": "2025-07-03T22:54:42.156277Z",
+      "source": "https://pypi.org/pypi/aiosignal/1.4.0/json",
+      "grandfathered_pin": false
+    },
+    "annotated-types==0.8.0": {
+      "released_at": "2026-07-23T20:16:12.938651Z",
+      "source": "https://pypi.org/pypi/annotated-types/0.8.0/json",
+      "grandfathered_pin": false
+    },
+    "anyio==4.14.2": {
+      "released_at": "2026-07-12T20:29:05.763870Z",
+      "source": "https://pypi.org/pypi/anyio/4.14.2/json",
+      "grandfathered_pin": true
+    },
+    "asgiref==3.13.0": {
+      "released_at": "2026-10-23T08:13:13.394646Z",
+      "source": "https://pypi.org/pypi/asgiref/3.13.0/json",
+      "grandfathered_pin": false
+    },
+    "asn1crypto==1.5.1": {
+      "released_at": "2022-03-15T14:46:51.055960Z",
+      "source": "https://pypi.org/pypi/asn1crypto/1.5.1/json",
+      "grandfathered_pin": false
+    },
+    "attrs==26.1.0": {
+      "released_at": "2026-03-19T14:22:23.645947Z",
+      "source": "https://pypi.org/pypi/attrs/26.1.0/json",
+      "grandfathered_pin": false
+    },
+    "av==17.1.0": {
+      "released_at": "2026-06-07T05:51:40.405842Z",
+      "source": "https://pypi.org/pypi/av/17.1.0/json",
+      "grandfathered_pin": false
+    },
+    "azure-ai-agents==1.2.0b6": {
+      "released_at": "2025-10-24T18:04:47.877731Z",
+      "source": "https://pypi.org/pypi/azure-ai-agents/1.2.0b6/json",
+      "grandfathered_pin": true
+    },
+    "azure-ai-contentsafety==1.0.0": {
+      "released_at": "2023-12-12T08:36:25.337536Z",
+      "source": "https://pypi.org/pypi/azure-ai-contentsafety/1.0.0/json",
+      "grandfathered_pin": true
+    },
+    "azure-ai-documentintelligence==1.0.2": {
+      "released_at": "2025-03-27T02:46:20.606000Z",
+      "source": "https://pypi.org/pypi/azure-ai-documentintelligence/1.0.2/json",
+      "grandfathered_pin": true
+    },
+    "azure-ai-formrecognizer==3.3.3": {
+      "released_at": "2024-04-09T23:23:33.458502Z",
+      "source": "https://pypi.org/pypi/azure-ai-formrecognizer/3.3.3/json",
+      "grandfathered_pin": true
+    },
+    "azure-ai-projects==1.0.0": {
+      "released_at": "2025-07-31T02:09:27.912694Z",
+      "source": "https://pypi.org/pypi/azure-ai-projects/1.0.0/json",
+      "grandfathered_pin": true
+    },
+    "azure-cognitiveservices-speech==1.48.2": {
+      "released_at": "2026-02-21T01:19:19.652789Z",
+      "source": "https://pypi.org/pypi/azure-cognitiveservices-speech/1.48.2/json",
+      "grandfathered_pin": true
+    },
+    "azure-common==1.1.28": {
+      "released_at": "2022-02-03T19:39:42.417501Z",
+      "source": "https://pypi.org/pypi/azure-common/1.1.28/json",
+      "grandfathered_pin": false
+    },
+    "azure-core-tracing-opentelemetry==1.0.0b13": {
+      "released_at": "2026-05-01T00:59:57.941546Z",
+      "source": "https://pypi.org/pypi/azure-core-tracing-opentelemetry/1.0.0b13/json",
+      "grandfathered_pin": false
+    },
+    "azure-core==1.41.0": {
+      "released_at": "2026-05-07T23:30:54.302432Z",
+      "source": "https://pypi.org/pypi/azure-core/1.41.0/json",
+      "grandfathered_pin": false
+    },
+    "azure-cosmos==4.9.0": {
+      "released_at": "2024-11-19T04:09:30.195466Z",
+      "source": "https://pypi.org/pypi/azure-cosmos/4.9.0/json",
+      "grandfathered_pin": true
+    },
+    "azure-identity==1.24.0": {
+      "released_at": "2025-08-07T22:27:36.258935Z",
+      "source": "https://pypi.org/pypi/azure-identity/1.24.0/json",
+      "grandfathered_pin": true
+    },
+    "azure-keyvault-secrets==4.10.0": {
+      "released_at": "2025-06-16T22:52:20.986353Z",
+      "source": "https://pypi.org/pypi/azure-keyvault-secrets/4.10.0/json",
+      "grandfathered_pin": true
+    },
+    "azure-mgmt-cognitiveservices==13.6.0": {
+      "released_at": "2024-12-19T05:43:19.759486Z",
+      "source": "https://pypi.org/pypi/azure-mgmt-cognitiveservices/13.6.0/json",
+      "grandfathered_pin": true
+    },
+    "azure-mgmt-core==1.6.0": {
+      "released_at": "2025-07-03T02:02:24.093978Z",
+      "source": "https://pypi.org/pypi/azure-mgmt-core/1.6.0/json",
+      "grandfathered_pin": false
+    },
+    "azure-mgmt-playwright==1.0.0": {
+      "released_at": "2025-09-01T08:09:08.669977Z",
+      "source": "https://pypi.org/pypi/azure-mgmt-playwright/1.0.0/json",
+      "grandfathered_pin": true
+    },
+    "azure-monitor-opentelemetry-exporter==1.0.0b56": {
+      "released_at": "2026-08-05T22:49:43.804970Z",
+      "source": "https://pypi.org/pypi/azure-monitor-opentelemetry-exporter/1.0.0b56/json",
+      "grandfathered_pin": false
+    },
+    "azure-monitor-opentelemetry==1.8.9": {
+      "released_at": "2026-07-01T17:48:58.369166Z",
+      "source": "https://pypi.org/pypi/azure-monitor-opentelemetry/1.8.9/json",
+      "grandfathered_pin": true
+    },
+    "azure-monitor-query==1.4.1": {
+      "released_at": "2025-01-14T23:00:47.263763Z",
+      "source": "https://pypi.org/pypi/azure-monitor-query/1.4.1/json",
+      "grandfathered_pin": true
+    },
+    "azure-search-documents==11.5.3": {
+      "released_at": "2025-06-25T16:48:58.924006Z",
+      "source": "https://pypi.org/pypi/azure-search-documents/11.5.3/json",
+      "grandfathered_pin": true
+    },
+    "azure-storage-blob==12.24.1": {
+      "released_at": "2025-01-22T21:27:20.822313Z",
+      "source": "https://pypi.org/pypi/azure-storage-blob/12.24.1/json",
+      "grandfathered_pin": true
+    },
+    "azure-storage-file-share==12.25.0": {
+      "released_at": "2026-05-15T04:24:38.898059Z",
+      "source": "https://pypi.org/pypi/azure-storage-file-share/12.25.0/json",
+      "grandfathered_pin": true
+    },
+    "azure-storage-queue==12.12.0": {
+      "released_at": "2024-09-17T21:25:28.926763Z",
+      "source": "https://pypi.org/pypi/azure-storage-queue/12.12.0/json",
+      "grandfathered_pin": true
+    },
+    "babel==2.18.0": {
+      "released_at": "2026-02-01T12:30:53.445172Z",
+      "source": "https://pypi.org/pypi/babel/2.18.0/json",
+      "grandfathered_pin": false
+    },
+    "beautifulsoup4==4.13.3": {
+      "released_at": "2025-02-04T20:05:01.681122Z",
+      "source": "https://pypi.org/pypi/beautifulsoup4/4.13.3/json",
+      "grandfathered_pin": true
+    },
+    "bleach==6.4.0": {
+      "released_at": "2026-06-05T13:01:12.504892Z",
+      "source": "https://pypi.org/pypi/bleach/6.4.0/json",
+      "grandfathered_pin": true
+    },
+    "blinker==1.9.0": {
+      "released_at": "2024-11-08T17:25:46.184412Z",
+      "source": "https://pypi.org/pypi/blinker/1.9.0/json",
+      "grandfathered_pin": false
+    },
+    "boto3==1.43.121": {
+      "released_at": "2026-10-28T19:18:58.973278Z",
+      "source": "https://pypi.org/pypi/boto3/1.43.121/json",
+      "grandfathered_pin": false
+    },
+    "botocore==1.43.121": {
+      "released_at": "2026-10-28T19:18:52.083274Z",
+      "source": "https://pypi.org/pypi/botocore/1.43.121/json",
+      "grandfathered_pin": false
+    },
+    "cachelib==0.17.0": {
+      "released_at": "2026-08-24T00:40:50.237085Z",
+      "source": "https://pypi.org/pypi/cachelib/0.17.0/json",
+      "grandfathered_pin": false
+    },
+    "certifi==2026.10.23": {
+      "released_at": "2026-10-23T11:36:14.763067Z",
+      "source": "https://pypi.org/pypi/certifi/2026.10.23/json",
+      "grandfathered_pin": false
+    },
+    "cffi==2.1.1": {
+      "released_at": "2026-08-03T21:19:15.602573Z",
+      "source": "https://pypi.org/pypi/cffi/2.1.1/json",
+      "grandfathered_pin": false
+    },
+    "chardet==7.7.0": {
+      "released_at": "2026-10-18T00:05:17.210399Z",
+      "source": "https://pypi.org/pypi/chardet/7.7.0/json",
+      "grandfathered_pin": false
+    },
+    "charset-normalizer==3.5.2": {
+      "released_at": "2026-09-30T04:34:42.843457Z",
+      "source": "https://pypi.org/pypi/charset-normalizer/3.5.2/json",
+      "grandfathered_pin": false
+    },
+    "click==8.5.0": {
+      "released_at": "2026-08-26T13:33:12.928043Z",
+      "source": "https://pypi.org/pypi/click/8.5.0/json",
+      "grandfathered_pin": false
+    },
+    "cloudevents==1.13.0": {
+      "released_at": "2026-07-11T18:52:18.742508Z",
+      "source": "https://pypi.org/pypi/cloudevents/1.13.0/json",
+      "grandfathered_pin": false
+    },
+    "colorama==0.4.6": {
+      "released_at": "2022-10-25T02:36:20.889702Z",
+      "source": "https://pypi.org/pypi/colorama/0.4.6/json",
+      "grandfathered_pin": false
+    },
+    "contourpy==1.4.0": {
+      "released_at": "2026-09-11T19:02:45.103999Z",
+      "source": "https://pypi.org/pypi/contourpy/1.4.0/json",
+      "grandfathered_pin": false
+    },
+    "cryptography==46.0.7": {
+      "released_at": "2026-04-08T01:56:17.157787Z",
+      "source": "https://pypi.org/pypi/cryptography/46.0.7/json",
+      "grandfathered_pin": true
+    },
+    "cycler==0.12.1": {
+      "released_at": "2023-10-07T05:32:16.783035Z",
+      "source": "https://pypi.org/pypi/cycler/0.12.1/json",
+      "grandfathered_pin": false
+    },
+    "cython==3.2.4": {
+      "released_at": "2026-01-04T14:14:12.373568Z",
+      "source": "https://pypi.org/pypi/cython/3.2.4/json",
+      "grandfathered_pin": true
+    },
+    "defusedxml==0.7.1": {
+      "released_at": "2021-03-08T10:59:24.450195Z",
+      "source": "https://pypi.org/pypi/defusedxml/0.7.1/json",
+      "grandfathered_pin": true
+    },
+    "deprecation==2.1.0": {
+      "released_at": "2020-04-20T14:23:36.581193Z",
+      "source": "https://pypi.org/pypi/deprecation/2.1.0/json",
+      "grandfathered_pin": false
+    },
+    "distro==1.9.0": {
+      "released_at": "2023-12-24T09:54:30.421191Z",
+      "source": "https://pypi.org/pypi/distro/1.9.0/json",
+      "grandfathered_pin": false
+    },
+    "dnspython==2.9.0": {
+      "released_at": "2026-10-09T00:07:22.622887Z",
+      "source": "https://pypi.org/pypi/dnspython/2.9.0/json",
+      "grandfathered_pin": false
+    },
+    "docx2txt==0.8": {
+      "released_at": "2019-06-23T19:58:36.940643Z",
+      "source": "https://pypi.org/pypi/docx2txt/0.8/json",
+      "grandfathered_pin": true
+    },
+    "docxcompose==2.2.0": {
+      "released_at": "2026-06-02T12:18:09.963536Z",
+      "source": "https://pypi.org/pypi/docxcompose/2.2.0/json",
+      "grandfathered_pin": true
+    },
+    "et-xmlfile==2.0.0": {
+      "released_at": "2024-10-25T17:25:39.051783Z",
+      "source": "https://pypi.org/pypi/et-xmlfile/2.0.0/json",
+      "grandfathered_pin": false
+    },
+    "ffmpeg-binaries-compat==1.0.1": {
+      "released_at": "2025-03-30T19:06:13.112594Z",
+      "source": "https://pypi.org/pypi/ffmpeg-binaries-compat/1.0.1/json",
+      "grandfathered_pin": true
+    },
+    "ffmpeg-python==0.2.0": {
+      "released_at": "2019-07-06T00:19:07.215917Z",
+      "source": "https://pypi.org/pypi/ffmpeg-python/0.2.0/json",
+      "grandfathered_pin": true
+    },
+    "filelock==3.32.7": {
+      "released_at": "2026-09-16T00:24:19.543182Z",
+      "source": "https://pypi.org/pypi/filelock/3.32.7/json",
+      "grandfathered_pin": false
+    },
+    "flask-executor==1.0.0": {
+      "released_at": "2022-08-18T01:14:30.425190Z",
+      "source": "https://pypi.org/pypi/flask-executor/1.0.0/json",
+      "grandfathered_pin": true
+    },
+    "flask-session==0.8.0": {
+      "released_at": "2024-03-26T07:56:11.377699Z",
+      "source": "https://pypi.org/pypi/flask-session/0.8.0/json",
+      "grandfathered_pin": true
+    },
+    "flask-wtf==1.2.1": {
+      "released_at": "2023-10-02T07:50:32.552182Z",
+      "source": "https://pypi.org/pypi/flask-wtf/1.2.1/json",
+      "grandfathered_pin": true
+    },
+    "flask==3.1.3": {
+      "released_at": "2026-02-19T05:00:56.027585Z",
+      "source": "https://pypi.org/pypi/flask/3.1.3/json",
+      "grandfathered_pin": true
+    },
+    "fonttools==4.68.0": {
+      "released_at": "2026-10-27T16:28:02.169288Z",
+      "source": "https://pypi.org/pypi/fonttools/4.68.0/json",
+      "grandfathered_pin": false
+    },
+    "frozenlist==1.8.0": {
+      "released_at": "2025-10-06T05:35:23.699793Z",
+      "source": "https://pypi.org/pypi/frozenlist/1.8.0/json",
+      "grandfathered_pin": false
+    },
+    "future==1.0.0": {
+      "released_at": "2024-02-21T11:52:35.956157Z",
+      "source": "https://pypi.org/pypi/future/1.0.0/json",
+      "grandfathered_pin": false
+    },
+    "google-crc32c==1.9.0": {
+      "released_at": "2026-09-24T21:19:00.091495Z",
+      "source": "https://pypi.org/pypi/google-crc32c/1.9.0/json",
+      "grandfathered_pin": false
+    },
+    "greenlet==3.5.6": {
+      "released_at": "2026-09-14T14:21:31.962676Z",
+      "source": "https://pypi.org/pypi/greenlet/3.5.6/json",
+      "grandfathered_pin": false
+    },
+    "gunicorn==25.0.3": {
+      "released_at": "2026-02-07T16:53:49.546258Z",
+      "source": "https://pypi.org/pypi/gunicorn/25.0.3/json",
+      "grandfathered_pin": true
+    },
+    "h11==0.16.0": {
+      "released_at": "2025-04-24T03:35:24.344199Z",
+      "source": "https://pypi.org/pypi/h11/0.16.0/json",
+      "grandfathered_pin": false
+    },
+    "html2text==2025.4.15": {
+      "released_at": "2025-04-15T04:02:28.440054Z",
+      "source": "https://pypi.org/pypi/html2text/2025.4.15/json",
+      "grandfathered_pin": true
+    },
+    "httpcore2==2.16.0": {
+      "released_at": "2026-10-21T07:09:42.802531Z",
+      "source": "https://pypi.org/pypi/httpcore2/2.16.0/json",
+      "grandfathered_pin": false
+    },
+    "httpcore==1.0.9": {
+      "released_at": "2025-04-24T22:06:20.566605Z",
+      "source": "https://pypi.org/pypi/httpcore/1.0.9/json",
+      "grandfathered_pin": true
+    },
+    "httpx-sse==0.4.3": {
+      "released_at": "2025-10-10T21:48:21.158886Z",
+      "source": "https://pypi.org/pypi/httpx-sse/0.4.3/json",
+      "grandfathered_pin": false
+    },
+    "httpx2==2.16.0": {
+      "released_at": "2026-10-21T07:09:44.010669Z",
+      "source": "https://pypi.org/pypi/httpx2/2.16.0/json",
+      "grandfathered_pin": false
+    },
+    "httpx==0.28.1": {
+      "released_at": "2024-12-06T15:37:21.509172Z",
+      "source": "https://pypi.org/pypi/httpx/0.28.1/json",
+      "grandfathered_pin": true
+    },
+    "idna==3.20": {
+      "released_at": "2026-09-17T14:11:03.168153Z",
+      "source": "https://pypi.org/pypi/idna/3.20/json",
+      "grandfathered_pin": false
+    },
+    "ifaddr==0.2.0": {
+      "released_at": "2022-06-15T21:40:25.756202Z",
+      "source": "https://pypi.org/pypi/ifaddr/0.2.0/json",
+      "grandfathered_pin": false
+    },
+    "iniconfig==2.3.1": {
+      "released_at": "2026-10-06T22:48:36.959685Z",
+      "source": "https://pypi.org/pypi/iniconfig/2.3.1/json",
+      "grandfathered_pin": false
+    },
+    "isodate==0.7.2": {
+      "released_at": "2024-10-08T23:04:09.501382Z",
+      "source": "https://pypi.org/pypi/isodate/0.7.2/json",
+      "grandfathered_pin": false
+    },
+    "itsdangerous==2.2.0": {
+      "released_at": "2024-04-16T21:28:14.499616Z",
+      "source": "https://pypi.org/pypi/itsdangerous/2.2.0/json",
+      "grandfathered_pin": false
+    },
+    "jinja2==3.1.6": {
+      "released_at": "2025-03-05T20:05:00.369721Z",
+      "source": "https://pypi.org/pypi/jinja2/3.1.6/json",
+      "grandfathered_pin": false
+    },
+    "jiter==0.18.0": {
+      "released_at": "2026-10-23T13:48:38.070514Z",
+      "source": "https://pypi.org/pypi/jiter/0.18.0/json",
+      "grandfathered_pin": false
+    },
+    "jmespath==1.1.0": {
+      "released_at": "2026-01-22T16:35:24.919874Z",
+      "source": "https://pypi.org/pypi/jmespath/1.1.0/json",
+      "grandfathered_pin": false
+    },
+    "joblib==1.4.2": {
+      "released_at": "2024-05-02T12:15:00.765677Z",
+      "source": "https://pypi.org/pypi/joblib/1.4.2/json",
+      "grandfathered_pin": true
+    },
+    "jsonpatch==1.38": {
+      "released_at": "2026-10-26T21:19:20.750703Z",
+      "source": "https://pypi.org/pypi/jsonpatch/1.38/json",
+      "grandfathered_pin": false
+    },
+    "jsonpointer==3.6": {
+      "released_at": "2026-10-26T20:59:24.947043Z",
+      "source": "https://pypi.org/pypi/jsonpointer/3.6/json",
+      "grandfathered_pin": false
+    },
+    "jsonschema-path==0.3.4": {
+      "released_at": "2025-01-24T14:33:14.652507Z",
+      "source": "https://pypi.org/pypi/jsonschema-path/0.3.4/json",
+      "grandfathered_pin": false
+    },
+    "jsonschema-specifications==2025.9.1": {
+      "released_at": "2025-09-08T01:34:57.871954Z",
+      "source": "https://pypi.org/pypi/jsonschema-specifications/2025.9.1/json",
+      "grandfathered_pin": false
+    },
+    "jsonschema==4.25.1": {
+      "released_at": "2025-08-18T17:03:48.373191Z",
+      "source": "https://pypi.org/pypi/jsonschema/4.25.1/json",
+      "grandfathered_pin": true
+    },
+    "kiwisolver==1.5.1": {
+      "released_at": "2026-08-28T10:24:43.402987Z",
+      "source": "https://pypi.org/pypi/kiwisolver/1.5.1/json",
+      "grandfathered_pin": false
+    },
+    "langchain-core==1.7.1": {
+      "released_at": "2026-10-28T14:59:45.887055Z",
+      "source": "https://pypi.org/pypi/langchain-core/1.7.1/json",
+      "grandfathered_pin": false
+    },
+    "langchain-protocol==0.0.20": {
+      "released_at": "2026-10-20T11:13:49.566752Z",
+      "source": "https://pypi.org/pypi/langchain-protocol/0.0.20/json",
+      "grandfathered_pin": false
+    },
+    "langchain-text-splitters==1.1.2": {
+      "released_at": "2026-04-16T14:20:38.243834Z",
+      "source": "https://pypi.org/pypi/langchain-text-splitters/1.1.2/json",
+      "grandfathered_pin": true
+    },
+    "langsmith==0.14.14": {
+      "released_at": "2026-10-27T20:41:12.241266Z",
+      "source": "https://pypi.org/pypi/langsmith/0.14.14/json",
+      "grandfathered_pin": false
+    },
+    "lazy-object-proxy==1.13.0": {
+      "released_at": "2026-10-17T16:37:39.451210Z",
+      "source": "https://pypi.org/pypi/lazy-object-proxy/1.13.0/json",
+      "grandfathered_pin": false
+    },
+    "lxml==6.1.2": {
+      "released_at": "2026-08-19T04:58:15.341824Z",
+      "source": "https://pypi.org/pypi/lxml/6.1.2/json",
+      "grandfathered_pin": true
+    },
+    "markdown2==2.5.5": {
+      "released_at": "2026-03-02T20:46:52.032236Z",
+      "source": "https://pypi.org/pypi/markdown2/2.5.5/json",
+      "grandfathered_pin": true
+    },
+    "markdown==3.8.1": {
+      "released_at": "2025-06-18T14:50:48.520058Z",
+      "source": "https://pypi.org/pypi/markdown/3.8.1/json",
+      "grandfathered_pin": true
+    },
+    "markupsafe==3.0.4": {
+      "released_at": "2026-10-02T23:04:20.141728Z",
+      "source": "https://pypi.org/pypi/markupsafe/3.0.4/json",
+      "grandfathered_pin": false
+    },
+    "matplotlib==3.10.7": {
+      "released_at": "2025-10-09T00:26:06.023117Z",
+      "source": "https://pypi.org/pypi/matplotlib/3.10.7/json",
+      "grandfathered_pin": true
+    },
+    "mcp==1.30.0": {
+      "released_at": "2026-09-07T14:34:14.266679Z",
+      "source": "https://pypi.org/pypi/mcp/1.30.0/json",
+      "grandfathered_pin": true
+    },
+    "more-itertools==11.2.1": {
+      "released_at": "2026-10-14T18:50:29.116732Z",
+      "source": "https://pypi.org/pypi/more-itertools/11.2.1/json",
+      "grandfathered_pin": false
+    },
+    "msal-extensions==1.3.1": {
+      "released_at": "2025-03-14T23:51:03.016939Z",
+      "source": "https://pypi.org/pypi/msal-extensions/1.3.1/json",
+      "grandfathered_pin": false
+    },
+    "msal==1.33.0": {
+      "released_at": "2025-07-22T19:36:32.403606Z",
+      "source": "https://pypi.org/pypi/msal/1.33.0/json",
+      "grandfathered_pin": true
+    },
+    "msgspec==0.22.0": {
+      "released_at": "2026-09-29T14:12:07.599583Z",
+      "source": "https://pypi.org/pypi/msgspec/0.22.0/json",
+      "grandfathered_pin": false
+    },
+    "msrest==0.7.1": {
+      "released_at": "2022-06-13T22:41:22.420385Z",
+      "source": "https://pypi.org/pypi/msrest/0.7.1/json",
+      "grandfathered_pin": false
+    },
+    "multidict==6.9.1": {
+      "released_at": "2026-09-21T17:54:14.957153Z",
+      "source": "https://pypi.org/pypi/multidict/6.9.1/json",
+      "grandfathered_pin": false
+    },
+    "nest-asyncio==1.6.0": {
+      "released_at": "2024-01-21T14:25:17.223200Z",
+      "source": "https://pypi.org/pypi/nest-asyncio/1.6.0/json",
+      "grandfathered_pin": false
+    },
+    "numpy==2.1.1": {
+      "released_at": "2024-09-03T15:01:06.905664Z",
+      "source": "https://pypi.org/pypi/numpy/2.1.1/json",
+      "grandfathered_pin": true
+    },
+    "oauthlib==4.0.0": {
+      "released_at": "2026-09-28T06:01:17.008169Z",
+      "source": "https://pypi.org/pypi/oauthlib/4.0.0/json",
+      "grandfathered_pin": false
+    },
+    "olefile==0.47": {
+      "released_at": "2023-12-01T16:22:51.518738Z",
+      "source": "https://pypi.org/pypi/olefile/0.47/json",
+      "grandfathered_pin": true
+    },
+    "openai==1.109.1": {
+      "released_at": "2025-09-24T13:00:50.754435Z",
+      "source": "https://pypi.org/pypi/openai/1.109.1/json",
+      "grandfathered_pin": true
+    },
+    "openapi-core==0.19.4": {
+      "released_at": "2024-09-02T14:10:25.408275Z",
+      "source": "https://pypi.org/pypi/openapi-core/0.19.4/json",
+      "grandfathered_pin": false
+    },
+    "openapi-schema-validator==0.6.3": {
+      "released_at": "2025-01-10T18:08:19.758187Z",
+      "source": "https://pypi.org/pypi/openapi-schema-validator/0.6.3/json",
+      "grandfathered_pin": false
+    },
+    "openapi-spec-validator==0.7.2": {
+      "released_at": "2025-06-07T14:48:54.077247Z",
+      "source": "https://pypi.org/pypi/openapi-spec-validator/0.7.2/json",
+      "grandfathered_pin": false
+    },
+    "openpyxl==3.1.5": {
+      "released_at": "2024-06-28T14:03:41.161372Z",
+      "source": "https://pypi.org/pypi/openpyxl/3.1.5/json",
+      "grandfathered_pin": true
+    },
+    "opentelemetry-api==1.43.0": {
+      "released_at": "2026-06-24T15:19:35.434333Z",
+      "source": "https://pypi.org/pypi/opentelemetry-api/1.43.0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-asgi==0.64b0": {
+      "released_at": "2026-06-24T15:18:23.107309Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-asgi/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-dbapi==0.64b0": {
+      "released_at": "2026-06-24T15:18:33.541518Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-dbapi/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-django==0.64b0": {
+      "released_at": "2026-06-24T15:18:34.449510Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-django/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-fastapi==0.64b0": {
+      "released_at": "2026-06-24T15:18:38.553424Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-fastapi/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-flask==0.64b0": {
+      "released_at": "2026-06-24T15:18:39.423802Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-flask/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-logging==0.64b0": {
+      "released_at": "2026-06-24T15:18:44.019739Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-logging/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-psycopg2==0.64b0": {
+      "released_at": "2026-06-24T15:18:48.693550Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-psycopg2/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-requests==0.64b0": {
+      "released_at": "2026-06-24T15:18:56.163767Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-requests/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-urllib3==0.64b0": {
+      "released_at": "2026-06-24T15:19:04.491725Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-urllib3/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-urllib==0.64b0": {
+      "released_at": "2026-06-24T15:19:03.412515Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-urllib/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation-wsgi==0.64b0": {
+      "released_at": "2026-06-24T15:19:05.417691Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation-wsgi/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-instrumentation==0.64b0": {
+      "released_at": "2026-06-24T15:18:17.277899Z",
+      "source": "https://pypi.org/pypi/opentelemetry-instrumentation/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-resource-detector-azure==0.3.0": {
+      "released_at": "2026-09-29T17:54:28.932354Z",
+      "source": "https://pypi.org/pypi/opentelemetry-resource-detector-azure/0.3.0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-sdk==1.43.0": {
+      "released_at": "2026-06-24T15:19:52.169943Z",
+      "source": "https://pypi.org/pypi/opentelemetry-sdk/1.43.0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-semantic-conventions==0.64b0": {
+      "released_at": "2026-06-24T15:19:53.339306Z",
+      "source": "https://pypi.org/pypi/opentelemetry-semantic-conventions/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "opentelemetry-util-http==0.64b0": {
+      "released_at": "2026-06-24T15:19:09.020078Z",
+      "source": "https://pypi.org/pypi/opentelemetry-util-http/0.64b0/json",
+      "grandfathered_pin": false
+    },
+    "orjson==3.13.0": {
+      "released_at": "2026-10-07T14:07:54.539211Z",
+      "source": "https://pypi.org/pypi/orjson/3.13.0/json",
+      "grandfathered_pin": false
+    },
+    "packaging==26.3": {
+      "released_at": "2026-08-04T18:15:27.159957Z",
+      "source": "https://pypi.org/pypi/packaging/26.3/json",
+      "grandfathered_pin": false
+    },
+    "pandas==2.2.3": {
+      "released_at": "2024-09-20T13:08:42.347501Z",
+      "source": "https://pypi.org/pypi/pandas/2.2.3/json",
+      "grandfathered_pin": true
+    },
+    "parse==1.22.4": {
+      "released_at": "2026-10-20T21:16:06.547930Z",
+      "source": "https://pypi.org/pypi/parse/1.22.4/json",
+      "grandfathered_pin": false
+    },
+    "pathable==0.4.4": {
+      "released_at": "2025-01-10T18:43:11.880125Z",
+      "source": "https://pypi.org/pypi/pathable/0.4.4/json",
+      "grandfathered_pin": false
+    },
+    "patool==4.1.0": {
+      "released_at": "2026-09-04T10:46:11.880994Z",
+      "source": "https://pypi.org/pypi/patool/4.1.0/json",
+      "grandfathered_pin": false
+    },
+    "pillow==13.0.0": {
+      "released_at": "2026-10-16T22:15:24.672561Z",
+      "source": "https://pypi.org/pypi/pillow/13.0.0/json",
+      "grandfathered_pin": true
+    },
+    "platformdirs==4.14.0": {
+      "released_at": "2026-10-28T18:27:29.659262Z",
+      "source": "https://pypi.org/pypi/platformdirs/4.14.0/json",
+      "grandfathered_pin": false
+    },
+    "playwright==1.58.0": {
+      "released_at": "2026-01-30T15:09:24.028367Z",
+      "source": "https://pypi.org/pypi/playwright/1.58.0/json",
+      "grandfathered_pin": true
+    },
+    "pluggy==1.7.0": {
+      "released_at": "2026-10-15T09:50:56.808462Z",
+      "source": "https://pypi.org/pypi/pluggy/1.7.0/json",
+      "grandfathered_pin": false
+    },
+    "prance==25.4.8.0": {
+      "released_at": "2025-04-07T22:22:35.183285Z",
+      "source": "https://pypi.org/pypi/prance/25.4.8.0/json",
+      "grandfathered_pin": false
+    },
+    "propcache==0.5.4": {
+      "released_at": "2026-09-16T00:13:43.864723Z",
+      "source": "https://pypi.org/pypi/propcache/0.5.4/json",
+      "grandfathered_pin": false
+    },
+    "protobuf==6.33.5": {
+      "released_at": "2026-01-29T21:51:21.751469Z",
+      "source": "https://pypi.org/pypi/protobuf/6.33.5/json",
+      "grandfathered_pin": true
+    },
+    "psutil==7.2.2": {
+      "released_at": "2026-01-28T18:14:54.428400Z",
+      "source": "https://pypi.org/pypi/psutil/7.2.2/json",
+      "grandfathered_pin": false
+    },
+    "psycopg2-binary==2.9.10": {
+      "released_at": "2024-10-16T11:18:58.647504Z",
+      "source": "https://pypi.org/pypi/psycopg2-binary/2.9.10/json",
+      "grandfathered_pin": true
+    },
+    "pyarrow==26.0.1": {
+      "released_at": "2026-11-03T09:54:01.046378Z",
+      "source": "https://pypi.org/pypi/pyarrow/26.0.1/json",
+      "grandfathered_pin": false
+    },
+    "pybars4==0.9.13": {
+      "released_at": "2021-04-04T15:07:10.661660Z",
+      "source": "https://pypi.org/pypi/pybars4/0.9.13/json",
+      "grandfathered_pin": false
+    },
+    "pycparser==3.12": {
+      "released_at": "2026-10-22T13:40:02.021539Z",
+      "source": "https://pypi.org/pypi/pycparser/3.12/json",
+      "grandfathered_pin": false
+    },
+    "pydantic-core==2.33.2": {
+      "released_at": "2025-04-23T18:30:43.919068Z",
+      "source": "https://pypi.org/pypi/pydantic-core/2.33.2/json",
+      "grandfathered_pin": false
+    },
+    "pydantic-settings==2.16.2": {
+      "released_at": "2026-10-28T11:14:26.716329Z",
+      "source": "https://pypi.org/pypi/pydantic-settings/2.16.2/json",
+      "grandfathered_pin": false
+    },
+    "pydantic==2.11.10": {
+      "released_at": "2025-10-04T10:40:39.055818Z",
+      "source": "https://pypi.org/pypi/pydantic/2.11.10/json",
+      "grandfathered_pin": false
+    },
+    "pyee==13.0.1": {
+      "released_at": "2026-02-14T21:12:26.263088Z",
+      "source": "https://pypi.org/pypi/pyee/13.0.1/json",
+      "grandfathered_pin": false
+    },
+    "pygments==2.21.0": {
+      "released_at": "2026-08-17T08:02:44.912148Z",
+      "source": "https://pypi.org/pypi/pygments/2.21.0/json",
+      "grandfathered_pin": false
+    },
+    "pyjwt==2.15.0": {
+      "released_at": "2026-09-23T16:55:59.241512Z",
+      "source": "https://pypi.org/pypi/pyjwt/2.15.0/json",
+      "grandfathered_pin": true
+    },
+    "pylibsrtp==1.0.0": {
+      "released_at": "2025-10-13T16:12:15.620319Z",
+      "source": "https://pypi.org/pypi/pylibsrtp/1.0.0/json",
+      "grandfathered_pin": false
+    },
+    "pymeta3==0.5.1": {
+      "released_at": "2015-02-22T16:30:06.858725Z",
+      "source": "https://pypi.org/pypi/pymeta3/0.5.1/json",
+      "grandfathered_pin": true
+    },
+    "pymupdf==1.25.3": {
+      "released_at": "2025-02-06T13:03:06.966107Z",
+      "source": "https://pypi.org/pypi/pymupdf/1.25.3/json",
+      "grandfathered_pin": true
+    },
+    "pymysql==1.1.2": {
+      "released_at": "2025-08-24T12:55:53.394863Z",
+      "source": "https://pypi.org/pypi/pymysql/1.1.2/json",
+      "grandfathered_pin": true
+    },
+    "pyodbc==5.3.0": {
+      "released_at": "2025-10-17T18:02:58.285090Z",
+      "source": "https://pypi.org/pypi/pyodbc/5.3.0/json",
+      "grandfathered_pin": true
+    },
+    "pyopenssl==26.2.0": {
+      "released_at": "2026-05-04T23:06:08.395604Z",
+      "source": "https://pypi.org/pypi/pyopenssl/26.2.0/json",
+      "grandfathered_pin": false
+    },
+    "pyparsing==3.3.3": {
+      "released_at": "2026-09-20T20:59:04.025856Z",
+      "source": "https://pypi.org/pypi/pyparsing/3.3.3/json",
+      "grandfathered_pin": false
+    },
+    "pypdf==6.21.4": {
+      "released_at": "2026-10-28T17:00:53.146109Z",
+      "source": "https://pypi.org/pypi/pypdf/6.21.4/json",
+      "grandfathered_pin": true
+    },
+    "pyspnego==0.12.4": {
+      "released_at": "2026-10-06T03:46:21.509977Z",
+      "source": "https://pypi.org/pypi/pyspnego/0.12.4/json",
+      "grandfathered_pin": false
+    },
+    "pytest-base-url==2.1.0": {
+      "released_at": "2024-01-31T22:42:58.897844Z",
+      "source": "https://pypi.org/pypi/pytest-base-url/2.1.0/json",
+      "grandfathered_pin": false
+    },
+    "pytest-playwright==0.7.2": {
+      "released_at": "2025-11-24T03:43:22.530306Z",
+      "source": "https://pypi.org/pypi/pytest-playwright/0.7.2/json",
+      "grandfathered_pin": true
+    },
+    "pytest==9.0.3": {
+      "released_at": "2026-04-07T17:16:16.130051Z",
+      "source": "https://pypi.org/pypi/pytest/9.0.3/json",
+      "grandfathered_pin": true
+    },
+    "python-dateutil==2.9.0.post0": {
+      "released_at": "2024-03-01T18:36:18.570437Z",
+      "source": "https://pypi.org/pypi/python-dateutil/2.9.0.post0/json",
+      "grandfathered_pin": false
+    },
+    "python-docx==1.1.2": {
+      "released_at": "2024-05-01T19:41:47.006988Z",
+      "source": "https://pypi.org/pypi/python-docx/1.1.2/json",
+      "grandfathered_pin": true
+    },
+    "python-dotenv==1.2.2": {
+      "released_at": "2026-03-01T16:00:25.090725Z",
+      "source": "https://pypi.org/pypi/python-dotenv/1.2.2/json",
+      "grandfathered_pin": true
+    },
+    "python-multipart==0.0.32": {
+      "released_at": "2026-06-04T16:18:57.319904Z",
+      "source": "https://pypi.org/pypi/python-multipart/0.0.32/json",
+      "grandfathered_pin": false
+    },
+    "python-pptx==1.0.2": {
+      "released_at": "2024-08-07T17:33:28.192160Z",
+      "source": "https://pypi.org/pypi/python-pptx/1.0.2/json",
+      "grandfathered_pin": true
+    },
+    "python-slugify==8.0.4": {
+      "released_at": "2024-02-08T18:32:43.911471Z",
+      "source": "https://pypi.org/pypi/python-slugify/8.0.4/json",
+      "grandfathered_pin": false
+    },
+    "pytz==2026.6": {
+      "released_at": "2026-10-29T09:05:45.140432Z",
+      "source": "https://pypi.org/pypi/pytz/2026.6/json",
+      "grandfathered_pin": false
+    },
+    "pywin32==312": {
+      "released_at": "2026-06-04T07:49:04.776060Z",
+      "source": "https://pypi.org/pypi/pywin32/312/json",
+      "grandfathered_pin": false
+    },
+    "pyyaml==6.0.2": {
+      "released_at": "2024-08-06T20:31:40.178426Z",
+      "source": "https://pypi.org/pypi/pyyaml/6.0.2/json",
+      "grandfathered_pin": true
+    },
+    "redis-entraid==1.2.2": {
+      "released_at": "2026-10-08T14:07:29.339200Z",
+      "source": "https://pypi.org/pypi/redis-entraid/1.2.2/json",
+      "grandfathered_pin": true
+    },
+    "redis==5.3.1": {
+      "released_at": "2025-07-25T08:06:26.317109Z",
+      "source": "https://pypi.org/pypi/redis/5.3.1/json",
+      "grandfathered_pin": true
+    },
+    "referencing==0.36.2": {
+      "released_at": "2025-01-25T08:48:14.241134Z",
+      "source": "https://pypi.org/pypi/referencing/0.36.2/json",
+      "grandfathered_pin": false
+    },
+    "regex==2026.5.9": {
+      "released_at": "2026-05-09T23:11:29.374775Z",
+      "source": "https://pypi.org/pypi/regex/2026.5.9/json",
+      "grandfathered_pin": true
+    },
+    "requests-oauthlib==2.0.0": {
+      "released_at": "2024-03-22T20:32:28.055244Z",
+      "source": "https://pypi.org/pypi/requests-oauthlib/2.0.0/json",
+      "grandfathered_pin": false
+    },
+    "requests-toolbelt==1.0.0": {
+      "released_at": "2023-05-01T04:11:28.427086Z",
+      "source": "https://pypi.org/pypi/requests-toolbelt/1.0.0/json",
+      "grandfathered_pin": false
+    },
+    "requests==2.33.1": {
+      "released_at": "2026-03-30T16:09:13.830020Z",
+      "source": "https://pypi.org/pypi/requests/2.33.1/json",
+      "grandfathered_pin": true
+    },
+    "rfc3339-validator==0.1.4": {
+      "released_at": "2021-05-12T16:37:52.536885Z",
+      "source": "https://pypi.org/pypi/rfc3339-validator/0.1.4/json",
+      "grandfathered_pin": false
+    },
+    "rpds-py==2026.9.1": {
+      "released_at": "2026-10-04T16:28:55.207354Z",
+      "source": "https://pypi.org/pypi/rpds-py/2026.9.1/json",
+      "grandfathered_pin": false
+    },
+    "ruamel-yaml==0.19.1": {
+      "released_at": "2026-01-02T16:50:29.201949Z",
+      "source": "https://pypi.org/pypi/ruamel-yaml/0.19.1/json",
+      "grandfathered_pin": false
+    },
+    "s3transfer==0.19.3": {
+      "released_at": "2026-10-19T19:19:48.309477Z",
+      "source": "https://pypi.org/pypi/s3transfer/0.19.3/json",
+      "grandfathered_pin": false
+    },
+    "scikit-learn==1.5.2": {
+      "released_at": "2024-09-11T15:49:19.633319Z",
+      "source": "https://pypi.org/pypi/scikit-learn/1.5.2/json",
+      "grandfathered_pin": true
+    },
+    "scipy==1.15.1": {
+      "released_at": "2025-01-10T23:59:19.173548Z",
+      "source": "https://pypi.org/pypi/scipy/1.15.1/json",
+      "grandfathered_pin": true
+    },
+    "semantic-kernel==1.39.4": {
+      "released_at": "2026-02-10T10:09:47.014318Z",
+      "source": "https://pypi.org/pypi/semantic-kernel/1.39.4/json",
+      "grandfathered_pin": true
+    },
+    "setuptools==84.2.1": {
+      "released_at": "2026-10-20T19:01:35.678013Z",
+      "source": "https://pypi.org/pypi/setuptools/84.2.1/json",
+      "grandfathered_pin": false
+    },
+    "six==1.17.0": {
+      "released_at": "2024-12-04T17:35:26.475808Z",
+      "source": "https://pypi.org/pypi/six/1.17.0/json",
+      "grandfathered_pin": false
+    },
+    "smbprotocol==1.15.0": {
+      "released_at": "2024-11-11T21:29:35.037300Z",
+      "source": "https://pypi.org/pypi/smbprotocol/1.15.0/json",
+      "grandfathered_pin": true
+    },
+    "sniffio==1.3.1": {
+      "released_at": "2024-02-25T23:20:01.196159Z",
+      "source": "https://pypi.org/pypi/sniffio/1.3.1/json",
+      "grandfathered_pin": false
+    },
+    "snowflake-connector-python==4.7.3": {
+      "released_at": "2026-09-03T14:13:17.943897Z",
+      "source": "https://pypi.org/pypi/snowflake-connector-python/4.7.3/json",
+      "grandfathered_pin": true
+    },
+    "sortedcontainers==2.4.0": {
+      "released_at": "2021-05-16T22:03:41.177807Z",
+      "source": "https://pypi.org/pypi/sortedcontainers/2.4.0/json",
+      "grandfathered_pin": false
+    },
+    "soupsieve==3.0.4": {
+      "released_at": "2026-10-22T00:45:24.843035Z",
+      "source": "https://pypi.org/pypi/soupsieve/3.0.4/json",
+      "grandfathered_pin": false
+    },
+    "sse-starlette==3.6.0": {
+      "released_at": "2026-10-25T20:31:58.134689Z",
+      "source": "https://pypi.org/pypi/sse-starlette/3.6.0/json",
+      "grandfathered_pin": false
+    },
+    "sspilib==0.6.0": {
+      "released_at": "2026-08-24T06:43:28.639587Z",
+      "source": "https://pypi.org/pypi/sspilib/0.6.0/json",
+      "grandfathered_pin": false
+    },
+    "starlette==1.3.1": {
+      "released_at": "2026-06-12T09:23:10.017643Z",
+      "source": "https://pypi.org/pypi/starlette/1.3.1/json",
+      "grandfathered_pin": true
+    },
+    "tableauserverclient==0.40": {
+      "released_at": "2026-02-03T20:21:07.222744Z",
+      "source": "https://pypi.org/pypi/tableauserverclient/0.40/json",
+      "grandfathered_pin": true
+    },
+    "tenacity==9.2.1": {
+      "released_at": "2026-10-07T12:13:00.102198Z",
+      "source": "https://pypi.org/pypi/tenacity/9.2.1/json",
+      "grandfathered_pin": false
+    },
+    "text-unidecode==1.3": {
+      "released_at": "2019-08-30T21:36:45.405555Z",
+      "source": "https://pypi.org/pypi/text-unidecode/1.3/json",
+      "grandfathered_pin": false
+    },
+    "threadpoolctl==3.5.0": {
+      "released_at": "2024-04-29T13:50:14.014558Z",
+      "source": "https://pypi.org/pypi/threadpoolctl/3.5.0/json",
+      "grandfathered_pin": true
+    },
+    "tiktoken==0.12.0": {
+      "released_at": "2025-10-06T20:21:34.098716Z",
+      "source": "https://pypi.org/pypi/tiktoken/0.12.0/json",
+      "grandfathered_pin": true
+    },
+    "tomlkit==0.15.2": {
+      "released_at": "2026-10-16T04:07:08.166827Z",
+      "source": "https://pypi.org/pypi/tomlkit/0.15.2/json",
+      "grandfathered_pin": false
+    },
+    "tqdm==4.70.1": {
+      "released_at": "2026-09-11T07:25:14.599062Z",
+      "source": "https://pypi.org/pypi/tqdm/4.70.1/json",
+      "grandfathered_pin": false
+    },
+    "truststore==0.10.5": {
+      "released_at": "2026-10-12T22:27:30.377491Z",
+      "source": "https://pypi.org/pypi/truststore/0.10.5/json",
+      "grandfathered_pin": false
+    },
+    "typing-extensions==4.16.0": {
+      "released_at": "2026-07-02T08:40:04.659120Z",
+      "source": "https://pypi.org/pypi/typing-extensions/4.16.0/json",
+      "grandfathered_pin": false
+    },
+    "typing-inspection==0.4.4": {
+      "released_at": "2026-08-12T12:37:24.648475Z",
+      "source": "https://pypi.org/pypi/typing-inspection/0.4.4/json",
+      "grandfathered_pin": false
+    },
+    "tzdata==2026.3": {
+      "released_at": "2026-07-10T08:50:36.460750Z",
+      "source": "https://pypi.org/pypi/tzdata/2026.3/json",
+      "grandfathered_pin": true
+    },
+    "urllib3==2.7.0": {
+      "released_at": "2026-05-07T16:13:17.151740Z",
+      "source": "https://pypi.org/pypi/urllib3/2.7.0/json",
+      "grandfathered_pin": true
+    },
+    "uuid-utils==0.19.0": {
+      "released_at": "2026-10-26T10:54:06.751264Z",
+      "source": "https://pypi.org/pypi/uuid-utils/0.19.0/json",
+      "grandfathered_pin": false
+    },
+    "uvicorn==0.50.2": {
+      "released_at": "2026-07-06T10:38:30.543587Z",
+      "source": "https://pypi.org/pypi/uvicorn/0.50.2/json",
+      "grandfathered_pin": true
+    },
+    "webencodings==0.6.1": {
+      "released_at": "2026-08-15T14:22:56.310482Z",
+      "source": "https://pypi.org/pypi/webencodings/0.6.1/json",
+      "grandfathered_pin": false
+    },
+    "websocket-client==1.9.2": {
+      "released_at": "2026-08-31T14:08:39.899926Z",
+      "source": "https://pypi.org/pypi/websocket-client/1.9.2/json",
+      "grandfathered_pin": false
+    },
+    "websockets==15.0.1": {
+      "released_at": "2025-03-05T20:01:35.363776Z",
+      "source": "https://pypi.org/pypi/websockets/15.0.1/json",
+      "grandfathered_pin": true
+    },
+    "werkzeug==3.1.9": {
+      "released_at": "2026-09-27T18:33:39.685530Z",
+      "source": "https://pypi.org/pypi/werkzeug/3.1.9/json",
+      "grandfathered_pin": true
+    },
+    "wrapt==2.5.1": {
+      "released_at": "2026-10-14T00:36:43.697345Z",
+      "source": "https://pypi.org/pypi/wrapt/2.5.1/json",
+      "grandfathered_pin": false
+    },
+    "wtforms==3.3.1": {
+      "released_at": "2026-10-24T07:19:35.892488Z",
+      "source": "https://pypi.org/pypi/wtforms/3.3.1/json",
+      "grandfathered_pin": false
+    },
+    "xlrd==2.0.1": {
+      "released_at": "2020-12-11T10:14:20.877979Z",
+      "source": "https://pypi.org/pypi/xlrd/2.0.1/json",
+      "grandfathered_pin": true
+    },
+    "xlsxwriter==3.3.1": {
+      "released_at": "2026-10-28T22:52:45.048756Z",
+      "source": "https://pypi.org/pypi/xlsxwriter/3.3.1/json",
+      "grandfathered_pin": false
+    },
+    "xxhash==4.0.2": {
+      "released_at": "2026-10-19T05:57:55.948415Z",
+      "source": "https://pypi.org/pypi/xxhash/4.0.2/json",
+      "grandfathered_pin": false
+    },
+    "yamcs-client==2.1.0": {
+      "released_at": "2026-08-06T09:13:45.452777Z",
+      "source": "https://pypi.org/pypi/yamcs-client/2.1.0/json",
+      "grandfathered_pin": true
+    },
+    "yarl==1.25.1": {
+      "released_at": "2026-09-15T19:29:53.114460Z",
+      "source": "https://pypi.org/pypi/yarl/1.25.1/json",
+      "grandfathered_pin": false
+    },
+    "zstandard==0.25.0": {
+      "released_at": "2025-09-14T22:15:54.002551Z",
+      "source": "https://pypi.org/pypi/zstandard/0.25.0/json",
+      "grandfathered_pin": false
+    }
+  }
+}

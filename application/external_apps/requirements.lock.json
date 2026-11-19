@@ -1,0 +1,66 @@
+{
+  "selected_at": "2026-11-19T12:33:32.920324+00:00",
+  "minimum_age_days": 14,
+  "inputs": {
+    "application/external_apps/bulkloader/requirements.txt": "a286f7c03507e536b3c3803b1ef575058f4393197e06d6e30bf023abe088b88b",
+    "application/external_apps/databaseseeder/requirements.txt": "f4b465ef745ae27e1b5a96b504f9e1d8425bf8c98c6c0f9cec83ee610e067325"
+  },
+  "lock_sha256": "43c3fe99d8b97e16d1f87a42f2d3314ebd5726a7652469cd95dd5f77289eeb40",
+  "packages": {
+    "certifi==2026.10.23": {
+      "released_at": "2026-10-23T11:36:14.763067Z",
+      "source": "https://pypi.org/pypi/certifi/2026.10.23/json",
+      "grandfathered_pin": false
+    },
+    "cffi==2.1.1": {
+      "released_at": "2026-08-03T21:19:15.602573Z",
+      "source": "https://pypi.org/pypi/cffi/2.1.1/json",
+      "grandfathered_pin": false
+    },
+    "charset-normalizer==3.5.2": {
+      "released_at": "2026-09-30T04:34:42.843457Z",
+      "source": "https://pypi.org/pypi/charset-normalizer/3.5.2/json",
+      "grandfathered_pin": false
+    },
+    "cryptography==45.0.7": {
+      "released_at": "2025-09-01T11:13:59.684906Z",
+      "source": "https://pypi.org/pypi/cryptography/45.0.7/json",
+      "grandfathered_pin": false
+    },
+    "idna==3.20": {
+      "released_at": "2026-09-17T14:11:03.168153Z",
+      "source": "https://pypi.org/pypi/idna/3.20/json",
+      "grandfathered_pin": false
+    },
+    "msal==1.31.0": {
+      "released_at": "2024-09-06T22:20:44.386897Z",
+      "source": "https://pypi.org/pypi/msal/1.31.0/json",
+      "grandfathered_pin": true
+    },
+    "pycparser==3.12": {
+      "released_at": "2026-10-22T13:40:02.021539Z",
+      "source": "https://pypi.org/pypi/pycparser/3.12/json",
+      "grandfathered_pin": false
+    },
+    "pyjwt==2.15.1": {
+      "released_at": "2026-09-28T18:40:41.429003Z",
+      "source": "https://pypi.org/pypi/pyjwt/2.15.1/json",
+      "grandfathered_pin": false
+    },
+    "python-dotenv==1.2.2": {
+      "released_at": "2026-03-01T16:00:25.090725Z",
+      "source": "https://pypi.org/pypi/python-dotenv/1.2.2/json",
+      "grandfathered_pin": true
+    },
+    "requests==2.33.0": {
+      "released_at": "2026-03-25T15:10:40.382036Z",
+      "source": "https://pypi.org/pypi/requests/2.33.0/json",
+      "grandfathered_pin": true
+    },
+    "urllib3==2.8.0": {
+      "released_at": "2026-09-15T19:29:34.577402Z",
+      "source": "https://pypi.org/pypi/urllib3/2.8.0/json",
+      "grandfathered_pin": false
+    }
+  }
+}

@@ -1,0 +1,165 @@
+{
+  "selected_at": "2026-11-19T12:33:31.578298+00:00",
+  "minimum_age_days": 14,
+  "inputs": {
+    ".github/dependencies/model-catalog/package.json": "9239c2a52adebf0a5a275bd8feee4d8323e2493d9bdcb36fdfac5c13b3f8f584"
+  },
+  "lock_sha256": "3e0f6717463166c1975a511fd14f7be1e97381ef6d94a677b37b777cad18b10a",
+  "packages": {
+    "@github/copilot-sdk-darwin-arm64@1.0.16": {
+      "released_at": "2026-09-30T21:58:17Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@github%2Fcopilot-sdk-darwin-arm64"
+    },
+    "@github/copilot-sdk-darwin-x64@1.0.16": {
+      "released_at": "2026-09-30T21:56:28Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@github%2Fcopilot-sdk-darwin-x64"
+    },
+    "@github/copilot-sdk-linux-arm64@1.0.16": {
+      "released_at": "2026-09-30T21:58:43Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@github%2Fcopilot-sdk-linux-arm64"
+    },
+    "@github/copilot-sdk-linux-x64@1.0.16": {
+      "released_at": "2026-09-30T21:56:56Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@github%2Fcopilot-sdk-linux-x64"
+    },
+    "@github/copilot-sdk-linuxmusl-arm64@1.0.16": {
+      "released_at": "2026-09-30T21:57:38Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@github%2Fcopilot-sdk-linuxmusl-arm64"
+    },
+    "@github/copilot-sdk-linuxmusl-x64@1.0.16": {
+      "released_at": "2026-09-30T21:57:51Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@github%2Fcopilot-sdk-linuxmusl-x64"
+    },
+    "@github/copilot-sdk-win32-arm64@1.0.16": {
+      "released_at": "2026-09-30T21:57:33Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@github%2Fcopilot-sdk-win32-arm64"
+    },
+    "@github/copilot-sdk-win32-x64@1.0.16": {
+      "released_at": "2026-09-30T21:58:15Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@github%2Fcopilot-sdk-win32-x64"
+    },
+    "@github/copilot-sdk@1.0.16": {
+      "released_at": "2026-09-30T21:58:46Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@github%2Fcopilot-sdk"
+    },
+    "@koromix/koffi-android-arm64@3.2.1": {
+      "released_at": "2026-09-04T07:35:47Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-android-arm64"
+    },
+    "@koromix/koffi-android-x64@3.2.1": {
+      "released_at": "2026-09-04T07:35:50Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-android-x64"
+    },
+    "@koromix/koffi-darwin-arm64@3.2.1": {
+      "released_at": "2026-09-04T07:36:58Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-darwin-arm64"
+    },
+    "@koromix/koffi-darwin-x64@3.2.1": {
+      "released_at": "2026-09-04T07:35:40Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-darwin-x64"
+    },
+    "@koromix/koffi-freebsd-arm64@3.2.1": {
+      "released_at": "2026-09-04T07:35:25Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-freebsd-arm64"
+    },
+    "@koromix/koffi-freebsd-ia32@3.2.1": {
+      "released_at": "2026-09-04T07:35:21Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-freebsd-ia32"
+    },
+    "@koromix/koffi-freebsd-x64@3.2.1": {
+      "released_at": "2026-09-04T07:35:23Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-freebsd-x64"
+    },
+    "@koromix/koffi-linux-arm64@3.2.1": {
+      "released_at": "2026-09-04T07:35:12Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-linux-arm64"
+    },
+    "@koromix/koffi-linux-arm@3.2.1": {
+      "released_at": "2026-09-04T07:35:09Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-linux-arm"
+    },
+    "@koromix/koffi-linux-ia32@3.2.1": {
+      "released_at": "2026-09-04T07:35:14Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-linux-ia32"
+    },
+    "@koromix/koffi-linux-loong64@3.2.1": {
+      "released_at": "2026-09-04T07:37:20Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-linux-loong64"
+    },
+    "@koromix/koffi-linux-riscv64@3.2.1": {
+      "released_at": "2026-09-04T07:36:13Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-linux-riscv64"
+    },
+    "@koromix/koffi-linux-x64@3.2.1": {
+      "released_at": "2026-09-04T07:36:11Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-linux-x64"
+    },
+    "@koromix/koffi-openbsd-ia32@3.2.1": {
+      "released_at": "2026-09-04T07:35:28Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-openbsd-ia32"
+    },
+    "@koromix/koffi-openbsd-x64@3.2.1": {
+      "released_at": "2026-09-04T07:35:30Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-openbsd-x64"
+    },
+    "@koromix/koffi-win32-arm64@3.2.1": {
+      "released_at": "2026-09-04T07:35:37Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-win32-arm64"
+    },
+    "@koromix/koffi-win32-ia32@3.2.1": {
+      "released_at": "2026-09-04T07:35:32Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-win32-ia32"
+    },
+    "@koromix/koffi-win32-x64@3.2.1": {
+      "released_at": "2026-09-04T07:35:35Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/@koromix%2Fkoffi-win32-x64"
+    },
+    "koffi@3.2.1": {
+      "released_at": "2026-09-04T07:39:01Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/koffi"
+    },
+    "undici@6.28.0": {
+      "released_at": "2026-07-24T12:55:27Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/undici"
+    },
+    "vscode-jsonrpc@8.2.1": {
+      "released_at": "2024-05-21T13:53:09Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/vscode-jsonrpc"
+    },
+    "zod@4.3.6": {
+      "released_at": "2026-01-22T19:14:35Z",
+      "grandfathered_pin": false,
+      "source": "https://registry.npmjs.org/zod"
+    }
+  }
+}

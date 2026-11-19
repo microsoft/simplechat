@@ -1,0 +1,25 @@
+{
+  "selected_at": "2026-11-19T12:33:32.920324+00:00",
+  "minimum_age_days": 14,
+  "inputs": {
+    "scripts/requirements-build.txt": "fe22ca73c211f20ae5579dccb6bf17d72d8c5a1531616bbcf42da7c881c8e5dc"
+  },
+  "lock_sha256": "48cce89b3ac4c7a29171bbeab22af0e8050e033635537d9ee80e58e13afb3cfc",
+  "packages": {
+    "pip==26.0.1": {
+      "released_at": "2026-02-05T02:20:16.416911Z",
+      "source": "https://pypi.org/pypi/pip/26.0.1/json",
+      "grandfathered_pin": false
+    },
+    "setuptools==80.9.0": {
+      "released_at": "2025-05-27T00:56:49.664463Z",
+      "source": "https://pypi.org/pypi/setuptools/80.9.0/json",
+      "grandfathered_pin": false
+    },
+    "wheel==0.45.1": {
+      "released_at": "2024-11-23T00:18:21.207713Z",
+      "source": "https://pypi.org/pypi/wheel/0.45.1/json",
+      "grandfathered_pin": false
+    }
+  }
+}

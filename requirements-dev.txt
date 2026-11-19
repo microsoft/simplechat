@@ -1,4 +1,5 @@
 # requirements-dev.txt
+-c application/single_app/requirements.lock.txt
 # Development and test-only Python packages not already pinned by
 # application/single_app/requirements.txt.
 #

@@ -19,7 +19,7 @@ ARG V2_UI_API_BASE=""
 # Uses the Azure Linux Node image to stay consistent with the Python stages below and to
 # avoid introducing a Docker Hub dependency, which matters for sovereign-cloud builds.
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/azurelinux/base/nodejs:20 AS v2uibuilder
+FROM mcr.microsoft.com/azurelinux/base/nodejs:20.14.0-13-azl3.0.20260304@sha256:b8a48ba88fdff68c20a2895cb002d547ea47779e37e2fdcb6cd64e4a875f8a71 AS v2uibuilder
 
 ARG V2_UI_API_BASE
 ENV VITE_API_BASE=${V2_UI_API_BASE}
@@ -51,7 +51,7 @@ RUN cargo build --release --locked \
     && cp Cargo.toml Cargo.lock /onenote-source/wrapper/ \
     && cp -R src /onenote-source/wrapper/
 
-FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
+FROM mcr.microsoft.com/azurelinux/base/python:3.12.16-1-azl3.0.20261028@sha256:71a1f5a1821f4c56e45aff52e792ed6c0500631e201cfc140c4c9d22886b29f9 AS builder
 
 ARG UID
 ARG GID
@@ -60,6 +60,9 @@ ARG INSTALL_AUDIO_FFMPEG
 
 # Copy pip.conf into the image for pip configuration
 COPY docker-customization/pip.conf /etc/pip.conf
+COPY docker-customization/requirements-build.lock.txt /build-assets/requirements-build.lock.txt
+COPY docker-customization/install_locked_rpms.py docker-customization/azurelinux-packages.lock.json /build-assets/
+ENV PIP_BUILD_CONSTRAINT=/build-assets/requirements-build.lock.txt
 
 # CA
 # copy certs to /etc/pki/ca-trust/source/anchors
@@ -73,15 +76,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV ACCEPT_EULA=Y
 
 RUN set -eux; \
-    printf '%s\n' \
-        '[packages-microsoft-com-prod]' \
-        'name=packages-microsoft-com-prod' \
-        'baseurl=https://packages.microsoft.com/azurelinux/3.0/prod/ms-non-oss/x86_64' \
-        'enabled=1' \
-        'gpgcheck=1' \
-        'gpgkey=https://packages.microsoft.com/keys/microsoft.asc' \
-        > /etc/yum.repos.d/packages-microsoft-com-prod.repo; \
-    tdnf install -y msodbcsql18 unixODBC; \
+    python3 /build-assets/install_locked_rpms.py --profile common; \
     driver_lib="$(find /opt/microsoft/msodbcsql18/lib64 -name 'libmsodbcsql-*.so*' | sort | tail -n 1)"; \
     test -n "${driver_lib}"; \
     printf '[ODBC Driver 18 for SQL Server]\nDescription=Microsoft ODBC Driver 18 for SQL Server\nDriver=%s\nUsageCount=1\n' "${driver_lib}" > /etc/odbcinst.ini; \
@@ -91,21 +86,6 @@ RUN set -eux; \
     done; \
     find /odbc-runtime/usr/lib -maxdepth 1 -name 'libodbc*' | grep -q .; \
     find /odbc-runtime/usr/lib -maxdepth 1 -name 'libltdl*' | grep -q .; \
-    tdnf clean all
-
-RUN set -eux; \
-    tdnf install -y curl ca-certificates; \
-    printf '%s\n' \
-        '[microsoft-azurelinux-3-ms-non-oss]' \
-        'name=Microsoft Azure Linux 3 Non-OSS' \
-        'baseurl=https://packages.microsoft.com/azurelinux/3.0/prod/ms-non-oss/$basearch' \
-        'enabled=1' \
-        'gpgcheck=1' \
-        'gpgkey=https://packages.microsoft.com/keys/microsoft.asc' \
-        > /etc/yum.repos.d/microsoft-ms-non-oss.repo; \
-    mkdir -p /opt/microsoft/msodbcsql18; \
-    touch /opt/microsoft/msodbcsql18/ACCEPT_EULA; \
-    tdnf install -y unixODBC unixODBC-devel msodbcsql18; \
     tdnf clean all; \
     rm -rf /var/cache/tdnf
 
@@ -113,44 +93,8 @@ RUN set -eux; \
     mkdir -p /playwright-runtime; \
     case "$(printf '%s' "${INSTALL_PLAYWRIGHT_CHROMIUM}" | tr '[:upper:]' '[:lower:]')" in \
         true|1|yes|on) \
-            tdnf install -y \
-                alsa-lib \
-                atk \
-                at-spi2-atk \
-                at-spi2-core \
-                cairo \
-                cups-libs \
-                dbus-libs \
-                expat \
-                fontconfig \
-                freetype \
-                glib2 \
-                gtk3 \
-                libdrm \
-                libjpeg-turbo \
-                libpng \
-                libX11 \
-                libxcb \
-                libXcomposite \
-                libXcursor \
-                libXdamage \
-                libXext \
-                libXfixes \
-                libXi \
-                libXrandr \
-                libXrender \
-                libXtst \
-                libxkbcommon \
-                libxshmfence \
-                mesa-libgbm \
-                nspr \
-                nss \
-                pango; \
-            tdnf install -y dejavu-fonts || tdnf install -y dejavu-sans-fonts || true; \
-            tdnf install -y liberation-fonts || true; \
-            tdnf install -y google-noto-sans-fonts || true; \
-            tdnf install -y xorg-x11-fonts-Type1 xorg-x11-fonts-misc || true; \
-            command -v fc-cache >/dev/null 2>&1 && fc-cache -f || true; \
+            python3 /build-assets/install_locked_rpms.py --profile chromium; \
+            fc-cache -f; \
             ;; \
         *) \
             echo "Skipping Chromium runtime package installation because INSTALL_PLAYWRIGHT_CHROMIUM=${INSTALL_PLAYWRIGHT_CHROMIUM}"; \
@@ -193,8 +137,10 @@ RUN set -eux; \
 WORKDIR /app
 
 # Copy requirements and install them to system
-COPY --chown=${UID}:${GID} application/single_app/requirements.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
+COPY --chown=${UID}:${GID} application/single_app/requirements.txt application/single_app/requirements.lock.txt ./
+# Keep the pinned build installer separate from RPM-managed Python packages.
+RUN python3 -m pip install --no-cache-dir --target /build-assets/pip pip==26.0.1 \
+    && PYTHONPATH=/build-assets/pip python3 -m pip install --no-cache-dir -r requirements.txt
 
 RUN set -eux; \
     mkdir -p /audio-runtime/usr/bin; \
@@ -227,7 +173,7 @@ RUN set -eux; \
             ;; \
     esac
 
-FROM mcr.microsoft.com/azurelinux/distroless/python:3.12
+FROM mcr.microsoft.com/azurelinux/distroless/python:3.12.16-1-azl3.0.20261028@sha256:10bcfa3c563fd05f9b11495551bd36bfe919b4a2f32b68388e1c393bbeea64ac
 
 ARG UID
 ARG GID

@@ -1,0 +1,82 @@
+{
+    "selected_at": "2026-11-19T12:15:27Z",
+    "minimum_age_days": 14,
+    "selections": [
+        {
+            "reference": "mcr.microsoft.com/azurelinux/base/python:3.12.16-1-azl3.0.20261028@sha256:71a1f5a1821f4c56e45aff52e792ed6c0500631e201cfc140c4c9d22886b29f9",
+            "file": "application/single_app/Dockerfile",
+            "released_at": "2026-10-29T14:10:14Z",
+            "source": "https://mcr.microsoft.com/api/v1/catalog/azurelinux/base/python/tags?reg=mar"
+        },
+        {
+            "reference": "mcr.microsoft.com/azurelinux/distroless/python:3.12.16-1-azl3.0.20261028@sha256:10bcfa3c563fd05f9b11495551bd36bfe919b4a2f32b68388e1c393bbeea64ac",
+            "file": "application/single_app/Dockerfile",
+            "released_at": "2026-10-29T14:10:46Z",
+            "source": "https://mcr.microsoft.com/api/v1/catalog/azurelinux/distroless/python/tags?reg=mar"
+        },
+        {
+            "reference": "mcr.microsoft.com/azurelinux/base/nodejs:20.14.0-13-azl3.0.20260304@sha256:b8a48ba88fdff68c20a2895cb002d547ea47779e37e2fdcb6cd64e4a875f8a71",
+            "file": "application/single_app/Dockerfile",
+            "released_at": "2026-03-11T21:31:55Z",
+            "source": "https://mcr.microsoft.com/api/v1/catalog/azurelinux/base/nodejs/tags?reg=mar"
+        },
+        {
+            "reference": "mcr.microsoft.com/devcontainers/base:1.2.6-ubuntu-24.04@sha256:763eca1839b2c6366f25b9c2b4c75c46e3d485a8d1b95f725e829397398a4c46",
+            "file": ".devcontainer/Dockerfile",
+            "released_at": "2025-05-06T21:07:03Z",
+            "source": "https://mcr.microsoft.com/api/v1/catalog/devcontainers/base/tags?reg=mar"
+        },
+        {
+            "reference": "python:3.12.12-bookworm@sha256:c0abd0758831ad99b7a29e0c1a875da9c4abb9a2e3f21e2eeb585dbcadfb6cd0",
+            "file": "application/community_customizations/actions/databricks_mag/Dockerfile",
+            "released_at": "2026-02-25T14:07:51.789550Z",
+            "source": "https://hub.docker.com/v2/repositories/library/python/tags/3.12.12-bookworm"
+        },
+        {
+            "reference": "gcr.io/distroless/python3-debian12@sha256:2fdb05402a2cf21cf78fdb3ba4c5db167241e9e498140f5bf689d7efb773731f",
+            "file": "application/community_customizations/actions/databricks_mag/Dockerfile",
+            "released_at": "2026-04-10T02:00:20.564000Z",
+            "source": "https://gcr.io/v2/distroless/python3-debian12/tags/list"
+        },
+        {
+            "reference": "3.12.12",
+            "file": ".github/workflows/cosmos-response-contract-check.yml",
+            "released_at": "2025-10-09T23:59:59Z",
+            "source": "https://www.python.org/downloads/release/python-31212/",
+            "precision": "Release date conservatively treated as end of day UTC."
+        },
+        {
+            "reference": "3.11.14",
+            "file": ".github/workflows/publish-model-catalog.yml",
+            "released_at": "2025-10-09T23:59:59Z",
+            "source": "https://www.python.org/downloads/release/python-31114/",
+            "precision": "Release date conservatively treated as end of day UTC."
+        },
+        {
+            "reference": "20.20.2",
+            "file": ".github/workflows/staging-ui-smoke.yml",
+            "released_at": "2026-03-24T23:59:59Z",
+            "source": "https://nodejs.org/dist/index.json",
+            "precision": "Release date conservatively treated as end of day UTC."
+        },
+        {
+            "reference": "24.22.1",
+            "file": ".github/workflows/refresh-model-catalog.md",
+            "released_at": "2026-10-20T23:59:59Z",
+            "source": "https://nodejs.org/dist/index.json",
+            "precision": "Release date conservatively treated as end of day UTC."
+        },
+        {
+            "reference": "= 1.12.0",
+            "file": "deployers/terraform/main.tf",
+            "released_at": "2025-05-14T15:15:45Z",
+            "source": "https://api.github.com/repos/hashicorp/terraform/releases/tags/v1.12.0"
+        },
+        {
+            "reference": "57e07f0c8ca17784d6bb8217f65a6d500b822816473299dc2cb618e75066b4a0",
+            "file": "application/community_customizations/actions/databricks_mag/Dockerfile",
+            "released_at": "2025-08-05T14:56:07Z",
+            "source": "https://databricks-bi-artifacts.s3.us-east-2.amazonaws.com/simbaspark-drivers/odbc/2.9.2/SimbaSparkODBC-2.9.2.1008-Debian-64bit.zip"
+        }
+    ]
+}

@@ -1,0 +1,15 @@
+{
+  "selected_at": "2026-11-19T12:33:32.920324+00:00",
+  "minimum_age_days": 14,
+  "inputs": {
+    "scripts/requirements-dependency-locks.txt": "5a63a36c0fd827ff1a598eb672e83f4f492adc576b90d2ab03ad7c77a2e394f2"
+  },
+  "lock_sha256": "24d4d7f98998083f74fd07837a9cfb022ca5ca2a28697f041673d3874fc89293",
+  "packages": {
+    "uv==0.8.22": {
+      "released_at": "2025-09-23T20:34:26.549579Z",
+      "source": "https://pypi.org/pypi/uv/0.8.22/json",
+      "grandfathered_pin": false
+    }
+  }
+}

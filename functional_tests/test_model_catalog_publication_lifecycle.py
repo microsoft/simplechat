@@ -1,7 +1,7 @@
 # test_model_catalog_publication_lifecycle.py
 """
 Functional tests for isolated catalog channels and exact tested-payload promotion.
-Version: 0.261.431
+Version: 0.261.454
 Implemented in: 0.261.428
 
 Real signatures and publisher code run offline without application/cloud bootstrap.
@@ -244,7 +244,11 @@ def test_weekly_workflow_is_review_only_bounded_and_targets_development():
     assert "id-token" not in workflow["permissions"]
     assert "ENABLE_MODEL_CATALOG_REFRESH" in workflow["if"]
     outputs = workflow["safe-outputs"]
-    assert set(outputs) == {"create-pull-request", "report-incomplete"}
+    assert set(outputs) == {
+        "runs-on", "threat-detection", "create-pull-request", "report-incomplete",
+    }
+    assert outputs["runs-on"] == "ubuntu-24.04"
+    assert outputs["threat-detection"] == {"runs-on": "ubuntu-24.04"}
     assert outputs["report-incomplete"]["create-issue"] is False
     create = outputs["create-pull-request"]
     assert create["base-branch"] == "Development" and create["draft"] is True

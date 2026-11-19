@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   cosmos-contracts:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       PYTHONPATH: application/single_app:functional_tests
@@ -29,15 +29,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.12'
+          python-version: '3.12.12'
           cache: pip
           cache-dependency-path: |
             application/single_app/requirements.txt
+            application/single_app/requirements.lock.txt
             requirements-dev.txt
+            docker-customization/requirements-build.lock.txt
       - name: Install pinned application and test dependencies
-        run: python -m pip install -r application/single_app/requirements.txt -r requirements-dev.txt
+        run: |
+          python -m pip install pip==26.0.1
+          python -m pip install --build-constraint docker-customization/requirements-build.lock.txt -r application/single_app/requirements.txt -r requirements-dev.txt
       - name: Prepare pinned tokenizer dependency assets before network blocking
         run: python -c "import tiktoken; tiktoken.get_encoding('cl100k_base'); tiktoken.get_encoding('o200k_base')"
+      - name: Verify dependency and publishing safeguards
+        run: >-
+          python -m pytest -q -p no:cacheprovider
+          functional_tests/test_dependency_pin_audit.py
+          functional_tests/test_registry_destination.py
       - name: Require reviewed storage owners and doubles
         run: python scripts/check_cosmos_response_boundaries.py
       - name: Verify real plugin discovery and document-action runtime
