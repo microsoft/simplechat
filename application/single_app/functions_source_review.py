@@ -14,8 +14,10 @@ import re
 import socket
 import time
 import unicodedata
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from threading import Lock, Thread
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import robotparser
 from urllib.parse import urljoin, urlparse, urlunparse, urldefrag
@@ -33,6 +35,9 @@ DEEP_RESEARCH_APP_ROLE = "DeepResearchUser"
 URL_ACCESS_APP_ROLE = "UrlAccessUser"
 URL_ACCESS_CONTEXT_CHAT = "chat"
 URL_ACCESS_CONTEXT_WORKFLOW = "workflow"
+_SOURCE_REVIEW_RUNTIME_PROBE_TIMEOUT_SECONDS = 15
+_SOURCE_REVIEW_RUNTIME_PROBE_LOCK = Lock()
+_SOURCE_REVIEW_RUNTIME_PROBE: Optional[Future[Dict[str, Any]]] = None
 _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE: Optional[Dict[str, Any]] = None
 _SOURCE_REVIEW_RENDER_SEMAPHORE: Optional[asyncio.Semaphore] = None
 SOURCE_REVIEW_DEFAULTS = {
@@ -562,28 +567,26 @@ def capture_research_planner_configuration(*, settings, planner_client, planner_
     capture("deep_research", settings=settings, source=source)
 
 
-def get_source_review_runtime_capabilities(force_refresh: bool = False) -> Dict[str, Any]:
-    """Return cached runtime support details for optional Source Review browser rendering."""
-    global _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE
-    if _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE is not None and not force_refresh:
-        return dict(_SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE)
-
-    capabilities = {
+def _unverified_source_review_runtime(playwright_available: bool, message: str) -> Dict[str, Any]:
+    return {
         "js_rendering_available": False,
-        "playwright_available": False,
+        "playwright_available": playwright_available,
         "chromium_launch_available": False,
         "sandbox_disabled": _is_chromium_no_sandbox_enabled(),
         "browser_path": os.getenv("PLAYWRIGHT_BROWSERS_PATH", ""),
         "max_render_concurrency": _get_source_review_render_max_concurrency(),
-        "message": "Playwright is not installed in this app runtime.",
+        "message": message,
     }
 
-    if importlib.util.find_spec("playwright") is None:
-        _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE = capabilities
-        return dict(capabilities)
 
-    capabilities["playwright_available"] = True
+def _probe_source_review_runtime(probe: Future[Dict[str, Any]]) -> None:
+    global _SOURCE_REVIEW_RUNTIME_PROBE, _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE
+    capabilities = _unverified_source_review_runtime(
+        True, "Playwright is installed, but Chromium launch failed."
+    )
+    error_type = None
     try:
+        # Playwright is optional and its startup must not happen on the caller's event loop.
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright_instance:
@@ -593,16 +596,58 @@ def get_source_review_runtime_capabilities(force_refresh: bool = False) -> Dict[
                 timeout=5000,
             )
             browser.close()
+    except Exception as runtime_error:
+        error_type = type(runtime_error).__name__
+    else:
         capabilities.update({
             "js_rendering_available": True,
             "chromium_launch_available": True,
             "message": "Playwright Chromium launch verified for this runtime.",
         })
-    except Exception as runtime_error:
-        capabilities["message"] = f"Playwright is installed, but Chromium launch failed: {str(runtime_error)[:220]}"
 
-    _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE = capabilities
-    return dict(capabilities)
+    with _SOURCE_REVIEW_RUNTIME_PROBE_LOCK:
+        _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE = capabilities
+        _SOURCE_REVIEW_RUNTIME_PROBE = None
+        probe.set_result(capabilities)
+    if error_type is not None:
+        log_event(
+            "[SOURCE_REVIEW] Chromium runtime probe failed.",
+            level=logging.WARNING,
+            extra={"error_type": error_type},
+        )
+
+
+def get_source_review_runtime_capabilities(force_refresh: bool = False) -> Dict[str, Any]:
+    """Check optional rendering without letting a stuck driver block settings."""
+    global _SOURCE_REVIEW_RUNTIME_PROBE, _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE
+    with _SOURCE_REVIEW_RUNTIME_PROBE_LOCK:
+        if _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE is not None and not force_refresh:
+            return dict(_SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE)
+        if _SOURCE_REVIEW_RUNTIME_PROBE is None:
+            if importlib.util.find_spec("playwright") is None:
+                _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE = _unverified_source_review_runtime(
+                    False, "Playwright is not installed in this app runtime."
+                )
+                return dict(_SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE)
+            # Share one daemon probe per worker, even if the driver never answers.
+            probe: Future[Dict[str, Any]] = Future()
+            Thread(target=_probe_source_review_runtime, args=(probe,), daemon=True).start()
+            _SOURCE_REVIEW_RUNTIME_PROBE = probe
+            _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE = None
+        else:
+            probe = _SOURCE_REVIEW_RUNTIME_PROBE
+
+    try:
+        return dict(probe.result(timeout=_SOURCE_REVIEW_RUNTIME_PROBE_TIMEOUT_SECONDS))
+    except FutureTimeoutError:
+        with _SOURCE_REVIEW_RUNTIME_PROBE_LOCK:
+            if probe.done():
+                return dict(probe.result())
+            if _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE is None:
+                _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE = _unverified_source_review_runtime(
+                    True, "Playwright is installed, but the Chromium runtime check timed out."
+                )
+            return dict(_SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE)
 
 
 def _get_chromium_launch_args() -> List[str]:
@@ -3301,6 +3346,14 @@ async def _try_rendered_page_fetch(
     parent_url: Optional[str],
     reason: Optional[str],
 ) -> Dict[str, Any]:
+    capabilities = await asyncio.to_thread(get_source_review_runtime_capabilities)
+    if not capabilities["js_rendering_available"]:
+        skip_reason = (
+            "js_rendering_runtime_unavailable"
+            if capabilities["playwright_available"] else "js_rendering_dependency_unavailable"
+        )
+        return _skipped_page(url, skip_reason, depth=depth, parent_url=parent_url)
+
     try:
         # Optional dependency: only loaded when admins enable JS rendering fallback.
         from playwright.async_api import async_playwright
