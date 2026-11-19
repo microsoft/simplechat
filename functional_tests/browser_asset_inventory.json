@@ -6,16 +6,17 @@
             "source": "https://www.npmjs.com/package/@microsoft/teams-js/v/2.19.0",
             "license": "MIT; application/single_app/static/js/MicrosoftTeams.min.LICENSE.txt",
             "patch": "Only m=new URL(remote trusted-domain JSON) becomes m=/static/js/teams-2.19.0/validDomains.json. The snapshot is the identical embedded SDK validOrigins list; origin matching and embedded-list fallback are unchanged.",
-            "upstream_sha256": "9be1f4e408255d8ce3c2a379c1fbf872a2ba754ba8ba1c842f9c84e28970c58e",
+            "upstream_sha256": "5424d056be67ce60974bee82c8954f311628c1cef62bb028501eea261116b97c",
             "files": [
                 "application/single_app/static/js/MicrosoftTeams.min.js",
                 "application/single_app/static/js/MicrosoftTeams.min.LICENSE.txt",
                 "application/single_app/static/js/teams-2.19.0/validDomains.json"
             ],
             "sha256": {
-                "application/single_app/static/js/MicrosoftTeams.min.js": "e1abec3228a8c13f96952cf08de65d391ca3b6fbd6bf9785bd9b9b2e4e011ede",
+                "application/single_app/static/js/MicrosoftTeams.min.js": "591da54cb3eb1202de968b2780bed77d3a54ba9b931fded99e042021f6dbd827",
                 "application/single_app/static/js/teams-2.19.0/validDomains.json": "ea2b4b9aa8c659101356922c57637f334ebf4dd63bba535b174b29e255706e4e"
-            }
+            },
+            "upstream_original_sha256": "9be1f4e408255d8ce3c2a379c1fbf872a2ba754ba8ba1c842f9c84e28970c58e"
         },
         {
             "name": "V2 rich rendering",
@@ -76,7 +77,7 @@
         },
         {
             "name": "Reviewed minified distributions",
-            "version": "Exact distribution bytes pinned by SHA-256; upstream versions and attribution remain in existing file headers and versioned directories",
+            "version": "Distribution bytes pinned by SHA-256 with CRLF normalized to LF; upstream versions and attribution remain in existing file headers and versioned directories",
             "source": "Existing repository-vendored distributions; no new runtime downloads",
             "license": "Retain upstream attribution in distribution headers and adjacent license files",
             "patch": "Computed loader identifiers cannot be resolved across minified scopes by the static checker. Any byte change requires renewed loader review and browser validation. Remote literal loader checks still run. Local-only sourceMappingURL comments are retained; missing development maps are not runtime fallbacks.",
@@ -110,34 +111,35 @@
                 "docs/assets/vendor/prism-1.29.0/prism.min.js"
             ],
             "sha256": {
-                "application/single_app/static/js/MicrosoftTeams.min.js": "e1abec3228a8c13f96952cf08de65d391ca3b6fbd6bf9785bd9b9b2e4e011ede",
-                "application/single_app/static/js/chart.min.js": "75d827c7b2271f938c21aeb89b08c692f2b364149f3a5e086ef898650fd4f8cf",
-                "application/single_app/static/js/prism-original.js": "88924454769d5de06cd82af32c36db7b5af5bbda03856e16c2551e6598624cd7",
-                "application/single_app/static/js/prism-tomorrow-night.js": "e91d3d175faf31229506a1b0b1f608eb07c2dc6c25ff3fc460b6f36d0b5a1e31",
-                "application/single_app/static/js/bootstrap/bootstrap.bundle.min.js": "eb37e4d8bf11df00a045b673a64122ed4602d9b73a7d81888057cd7aac8e5a74",
-                "application/single_app/static/js/bootstrap/bootstrap.esm.min.js": "4448d27a279529dd349c02b077a76fecc321b952af29cb4f98b23888346cfdc7",
-                "application/single_app/static/js/bootstrap/bootstrap.min.js": "6824c8ab0f68a745d01989cd7b5eb8f55edf9e2840083e3c38fdccf013f6c553",
-                "application/single_app/static/js/chat/bootstrap.bundle.min.js": "eb37e4d8bf11df00a045b673a64122ed4602d9b73a7d81888057cd7aac8e5a74",
-                "application/single_app/static/js/chat/dataTables.responsive.min.js": "bc286700d111205167da3bc948fc790d14b920861892a1ae2428a0d240e7db18",
-                "application/single_app/static/js/chat/jquery.dataTables.min.js": "43e3dd038cef5f5395501d8b65629d6f2b5430f123cafd2cbd933db961716f4a",
-                "application/single_app/static/js/chat/jquery.min.js": "ce9d07500ad91ec2b524c270764ec4c9a33e78320d8d374ec400ede488f6251b",
-                "application/single_app/static/js/chat/marked.min.js": "391107f1f23ebe7418712d94410fda92830fc365ef12d10180f21943be4a0ea7",
-                "application/single_app/static/js/chat/purify.min.js": "2ef84875cdaffaf5ba10f49b11ea985251ea99ff464c4b2b282bfd4398eb7345",
-                "application/single_app/static/js/datatables/datatables.min.js": "21c4a9e341abe77c70c0f469fabf3d171943c20896e34fa98d32b1fef33bf862",
-                "application/single_app/static/js/mermaid/mermaid-11.17.2.min.js": "66188ee859a5b1405cd66e8a96ff336e3151a92a9626ef61ae23bc728bd88a53",
-                "application/single_app/static/js/openlayers/ol.js": "d8ddaa4d7f36e4446b8b29fb96c819b7dd53f3da02c0649f4be8b2b4c6b2dfdb",
-                "application/single_app/static/js/simplemde/simplemde.min.js": "5e1c9868466807190f0a67b1d6c79e632f4c6b21c05a248adfe24f137b27714e",
-                "application/single_app/static/swagger-ui/swagger-ui-bundle.js": "94d5341abf945c05b5dc2a4ee599be6adee30503790b998540795e766d8aea02",
-                "application/single_app/static/swagger-ui/swagger-ui-standalone-preset.js": "c2009affdb3231de94af0c9043c86f568662c840c6af53ab3e12553cee17050a",
-                "application/v2_ui/public/vendor/chartjs-4.5.1/chart.umd.min.js": "f52399835588eada7bc2a9f720298d5f12fea63c01d6a59c34beec89ccaa670f",
-                "application/v2_ui/public/vendor/dompurify-3.4.14/purify.min.js": "0ef1176c070f6a73e54382f6044b7d47e0194bc86fa41bc16e1a1745172f56d8",
+                "application/single_app/static/js/MicrosoftTeams.min.js": "591da54cb3eb1202de968b2780bed77d3a54ba9b931fded99e042021f6dbd827",
+                "application/single_app/static/js/chart.min.js": "321e3a3fa98da4aaa957d10be57cbb514de0989eed8f9d726b5d05902cd01904",
+                "application/single_app/static/js/prism-original.js": "208af7d85fab5541858b19a1912c2cadde91760f366c69b2b91f81d16024a4e0",
+                "application/single_app/static/js/prism-tomorrow-night.js": "e496da11caac9d76b617f80b34b7760cffe6b7080bbc3818255ef966c31d34e4",
+                "application/single_app/static/js/bootstrap/bootstrap.bundle.min.js": "0833b2e9c3a26c258476c46266e6877fc75218625162e0460be9a3a098a61c6c",
+                "application/single_app/static/js/bootstrap/bootstrap.esm.min.js": "4197454f564d765cb8ae681406d5e65c54bd054d454dafac3deea1efde2c1514",
+                "application/single_app/static/js/bootstrap/bootstrap.min.js": "de040986d9a3ed89d5d5f9ad6d5727015e9e238c2cd13af8f1b55909386d0864",
+                "application/single_app/static/js/chat/bootstrap.bundle.min.js": "0833b2e9c3a26c258476c46266e6877fc75218625162e0460be9a3a098a61c6c",
+                "application/single_app/static/js/chat/dataTables.responsive.min.js": "d58bfe4fe08a3da83d4e921ff7bb9a84759d361d59b59c512bd6e888a0345eda",
+                "application/single_app/static/js/chat/jquery.dataTables.min.js": "a33146fad8c7228dc4dc90043e3e50d51cead8b2267aeac32b0a8f3be8a52b86",
+                "application/single_app/static/js/chat/jquery.min.js": "ff1523fb7389539c84c65aba19260648793bb4f5e29329d2ee8804bc37a3fe6e",
+                "application/single_app/static/js/chat/marked.min.js": "874536e781eeb9f967ff84bad12ff8c7c040e55d3d581b390a94fffb2c87b43f",
+                "application/single_app/static/js/chat/purify.min.js": "291e88071b6814a7d87449a603d125fc45ce53fbb05f2c4da14d4862ecc0e8ff",
+                "application/single_app/static/js/datatables/datatables.min.js": "10147704a2127d874b6f1ec7e9c55e3101d2674f5e224abc6de685c66e6a546f",
+                "application/single_app/static/js/mermaid/mermaid-11.17.2.min.js": "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8",
+                "application/single_app/static/js/openlayers/ol.js": "eb5ceb37f7f15f210e9a9db54e471b994ed1f3b205af73c98a7156c95a911b77",
+                "application/single_app/static/js/simplemde/simplemde.min.js": "d42b6dc31a2e207f9dba5796501722ccb0279ca58dad3c662881b1dd40e05da1",
+                "application/single_app/static/swagger-ui/swagger-ui-bundle.js": "fd76294e33356ab3fd111ddaeeb10d3f79de8ae1a4d34dbf777f5eef224648d9",
+                "application/single_app/static/swagger-ui/swagger-ui-standalone-preset.js": "8e910e1d42309b49aec560301a5d32930c698848df752ced0490691918ce9a5b",
+                "application/v2_ui/public/vendor/chartjs-4.5.1/chart.umd.min.js": "48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a",
+                "application/v2_ui/public/vendor/dompurify-3.4.14/purify.min.js": "c2f26ea4fc0d88141c9aa430eb515ac86fce59418ceebd85fa475b87a8d6c3e6",
                 "application/v2_ui/public/vendor/katex-0.18.4/katex.min.js": "2ec5916941ef4383e0314eaabcc712301b06001d9fb68e08d751d2bae5a27a1a",
-                "application/v2_ui/public/vendor/mermaid-11.17.2/mermaid.min.js": "66188ee859a5b1405cd66e8a96ff336e3151a92a9626ef61ae23bc728bd88a53",
-                "application/v2_ui/public/vendor/openlayers-10.6.1/ol.js": "d8ddaa4d7f36e4446b8b29fb96c819b7dd53f3da02c0649f4be8b2b4c6b2dfdb",
-                "docs/assets/js/vendor/lunr-2.3.9/lunr.min.js": "43640071a5d5c092a876f893fa53833ae295bcb6616b6d9c3866bdb865178131",
-                "docs/assets/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js": "f5ae8f599f28fb11affea9a68b755b6b3f27d763500bea6242919f1ef6b49389",
+                "application/v2_ui/public/vendor/mermaid-11.17.2/mermaid.min.js": "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8",
+                "application/v2_ui/public/vendor/openlayers-10.6.1/ol.js": "eb5ceb37f7f15f210e9a9db54e471b994ed1f3b205af73c98a7156c95a911b77",
+                "docs/assets/js/vendor/lunr-2.3.9/lunr.min.js": "0c50d9002b85780a842afffb567bb54ede402dae7c6dc5997a018614d8044fc8",
+                "docs/assets/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js": "aa53d582f97eb594c2a5cc5824574707f9ba9837bce3046bfa5f3556860f4e04",
                 "docs/assets/vendor/prism-1.29.0/prism.min.js": "e7b88bddc6c757b2fc8cb113e2469801ab14a78ec1a8fada4d6391e3573f5f9f"
             }
         }
-    ]
+    ],
+    "checksum_format": "SHA-256 of distribution bytes with CRLF normalized to LF for Git checkout portability; all other bytes are unchanged."
 }

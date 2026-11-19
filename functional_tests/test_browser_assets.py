@@ -20,7 +20,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from check_browser_assets import check_inventory, check_text, scan
+from check_browser_assets import asset_sha256, check_inventory, check_text, scan
 
 
 @pytest.mark.parametrize("source", [
@@ -151,7 +151,30 @@ def test_teams_snapshot_and_patch_preserve_the_embedded_origin_policy():
     inventory = json.loads((ROOT / "functional_tests/browser_asset_inventory.json").read_text(encoding="utf-8"))
     teams = next(entry for entry in inventory["libraries"] if entry["name"] == "Microsoft Teams SDK")
     assert sdk.count(local) == 1
-    assert hashlib.sha256(sdk.replace(local, upstream)).hexdigest() == teams["upstream_sha256"]
+    assert asset_sha256(sdk.replace(local, upstream)) == teams["upstream_sha256"]
+
+
+def test_reviewed_hashes_ignore_checkout_line_endings_but_not_loader_changes(tmp_path):
+    directory = tmp_path / "application"
+    directory.mkdir()
+    runtime = directory / "runtime.js"
+    original = b'const source = "/static/local.js";\n'
+    runtime.write_bytes(original.replace(b"\n", b"\r\n"))
+    inventory = tmp_path / "functional_tests"
+    inventory.mkdir()
+    (inventory / "browser_asset_inventory.json").write_text(json.dumps({
+        "libraries": [{
+            "name": "Local runtime",
+            "files": ["application/runtime.js"],
+            "sha256": {"application/runtime.js": hashlib.sha256(original).hexdigest()},
+        }],
+    }), encoding="utf-8")
+    findings = check_inventory(tmp_path)
+    assert findings == []
+    runtime.write_bytes(original.replace(b"local.js", b"changed.js"))
+    findings = check_inventory(tmp_path)
+    assert len(findings) == 1
+    assert "review changed loader/metadata" in findings[0].message
 
 
 @pytest.mark.parametrize("filename,function_name", [

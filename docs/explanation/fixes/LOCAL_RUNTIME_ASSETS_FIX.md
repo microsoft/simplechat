@@ -65,6 +65,9 @@ distributions by SHA-256. A changed or new minified distribution requires
 renewed review, because identifier reuse makes cross-scope string resolution
 unreliable in a static pattern checker. Built V2 output is checked but is not
 committed or assigned source-distribution hashes.
+Checksums normalize CRLF to LF so Git's Windows and Linux checkouts agree;
+all other byte changes still require review. The inventory also retains the
+original upstream Teams checksum separately from its normalized checksum.
 
 For an update, obtain the intended pinned upstream distribution, retain its
 required attribution, review its executable and companion loaders, and update
@@ -129,6 +132,10 @@ to use the shared minimum-version helper.
   OpenLayers and three applicable Teams SSO contracts also passed in that run.
 - First-party changed-file XSS sink validation, Teams SDK JavaScript syntax,
   workflow YAML parsing and whitespace checks: passed.
+- Post-commit portability validation: 37 scanner-contract tests passed, with
+  the full-repository test deselected; every inventory hash matched both the
+  working distribution and its committed Git blob. The regression accepts
+  CRLF/LF differences but still rejects changed loader content.
 
 Two additional historical Teams SSO tests fail independently of this change:
 one requires the obsolete exact application version `0.242.072`, and another

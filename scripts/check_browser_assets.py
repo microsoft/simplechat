@@ -107,6 +107,11 @@ def is_generated_harness(path, root):
     )
 
 
+def asset_sha256(content):
+    """Keep text-distribution checksums stable across Git's checkout line endings."""
+    return hashlib.sha256(content.replace(b"\r\n", b"\n")).hexdigest()
+
+
 def check_text(path, text, root=ROOT, check_files=True):
     """Return concrete violations in one browser source or generated HTML string."""
     path = Path(path)
@@ -308,7 +313,7 @@ def check_inventory(root=ROOT):
                 findings.append(Finding(str(INVENTORY), 1, f"missing {entry['name']} companion: {filename}"))
         for filename, expected in entry.get("sha256", {}).items():
             path = root / filename
-            if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            if path.is_file() and asset_sha256(path.read_bytes()) != expected:
                 findings.append(Finding(str(INVENTORY), 1, f"review changed loader/metadata: {filename}"))
     reviewed = {filename for entry in data["libraries"] for filename in entry.get("sha256", {})}
     for path in browser_files(root):
