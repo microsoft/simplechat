@@ -19175,13 +19175,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0a11525ea1e7cd836555f9d347c5edd02bc33d7d298fb2846ce2e0688ded9082"
+        "module_sha256": "79af99ae3e53fc0f88e5d7437fbe02a14cd2f8dfe01166ca3fdba0d60a2f3a8f"
       },
       "classification": "sdk-compatible",
-      "contract": "persist_mcp_tool_drift: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "persist_mcp_tool_drift: SDK point documents are consumed through Mapping reads and setdefault before an unchanged whole-document replacement. Numeric fingerprint canonicalization changes only a separate hash helper; the storage owner body is unchanged. Real-owner runtime tests retain nested fields and ETags, verify personal/group/global read routing, persist drift, and retry notification creation through a 409 and SDK-shaped scoped read without duplicate delivery.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_mcp_drift_cosmos_contract.py::test_drift_owner_persists_sdk_documents_and_retries_notification"
       ]
     },
     "application/single_app/functions_msgraph_pending_actions.py::create_msgraph_pending_action": {
@@ -34165,7 +34165,6 @@
     "application/single_app/functions_mcp_server_tools.py::_load_legacy_messages": "0113be12ba7f24aade864c0929ea46be0727d4039d1bb68b0f0d59423ba2feee",
     "application/single_app/functions_mcp_server_tools.py::_load_legacy_personal_conversations": "2d089a8ed6a514f6ea6727457977048b8df7cb31995c4fb0813afbb5e6f7c98d",
     "application/single_app/functions_mcp_server_tools.py::_load_personal_prompt_page": "05845d307473e30980aafde342c9bedd4fd4b10b7427e34ef49e023bf90ee1a8",
-    "application/single_app/functions_mcp_tool_pinning.py::persist_mcp_tool_drift": "d4973e7c62d1e6987b4070fb3c404cc7b11413bbe7dbd20954dea0f028eb4fe4",
     "application/single_app/functions_orchestration_workflow_handoff_decisions.py::_read_workflow": "22cc82878b1df27322b3bb4a529f07ab3d4451cc5aa70ba0d2daa5bb7b25dcae",
     "application/single_app/functions_orchestration_workflow_handoff_decisions.py::_read_workflow_run": "8fb41cefbc1cead5c2ffb73bc63b1cc9075993afab480e50205e47fb4eb4fdd3",
     "application/single_app/functions_orchestration_workflow_proposals.py::_read_workflow": "04f5f464541540a451389a3e23a63ddf75c485e2ca6fbb21d1856fa3e551222c",
