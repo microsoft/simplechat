@@ -1,7 +1,7 @@
 # test_v2_sidebar_color_mode_cycle.py
 """
 Browser regressions for returning to a saved custom color mode from the V2 sidebar.
-Version: 0.261.459
+Version: 0.261.460
 Implemented in: 0.261.459
 
 The production Sidebar, ColorModeCard, color runtime and preference stores run with
@@ -17,13 +17,11 @@ import pytest
 from playwright.sync_api import expect
 
 import test_v2_orchestration_plan_editor as editor_tests
-from test_v2_orchestration_plan_editor import (  # noqa: F401
-    connect_options,
-    editor_assets,
-    editor_browser,
-)
 
 
+connect_options = editor_tests.connect_options
+editor_assets = editor_tests.editor_assets
+editor_browser = editor_tests.editor_browser
 pytestmark = pytest.mark.ui
 ARTIFACTS = Path(__file__).resolve().parent / "artifacts" / "sidebar-color-mode"
 CUSTOM = {
