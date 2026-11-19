@@ -1,7 +1,7 @@
 # test_brotli_runtime_security.py
 """Regression coverage for SimpleChat's patched Node and Playwright runtimes.
 
-Version: 0.261.453
+Version: 0.261.455
 Implemented in: 0.261.453
 
 Check actual Playwright executables as well as shipped build/deployment settings.

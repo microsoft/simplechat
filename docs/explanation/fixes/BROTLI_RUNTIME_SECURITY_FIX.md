@@ -1,6 +1,6 @@
 # Brotli Runtime Security Fix
 
-Version: **0.261.453**, tracked in `application/single_app/config.py`.
+Version: **0.261.455**, tracked in `application/single_app/config.py`.
 
 Fixed/Implemented in version: **0.261.453**. Deployer version: **1.0.38**.
 
