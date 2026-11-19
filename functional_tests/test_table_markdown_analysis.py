@@ -1,7 +1,8 @@
+# test_table_markdown_analysis.py
 #!/usr/bin/env python3
 """
 Test to verify table markdown processing and identify AI response format issues.
-Version: 0.229.003
+Version: 0.261.458
 Implemented in: 0.229.003
 
 This test investigates how different markdown formats are processed and
@@ -83,7 +84,7 @@ This format allows table rendering.""",
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Table Processing Analysis</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../application/single_app/static/css/bootstrap.min.css" rel="stylesheet">
     <style>
         /* Copy table styles from chats.css */
         .message-text table {
@@ -160,8 +161,8 @@ This format allows table rendering.""",
     html_content += """
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+    <script src="../application/single_app/static/js/chat/marked.min.js"></script>
+    <script src="../application/v2_ui/public/vendor/dompurify-3.4.14/purify.min.js"></script>
     <script>
         // Configure marked for GFM (should support tables by default)
         marked.setOptions({
