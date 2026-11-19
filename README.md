@@ -94,7 +94,7 @@ The following script will create an Entra Enterprise Application, with an App Re
 
 > [!TIP]
 >
-> The web service name may be overriden with the `-AppServceName` parameter.
+> The web service name may be overridden with the `-AppServiceName` parameter.
 
 > [!TIP]
 >
