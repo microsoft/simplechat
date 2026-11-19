@@ -9,7 +9,7 @@ The request intent check separates two jobs:
 - **Understanding the request.** Keywords only nominate an action. A short model call decides whether the user wants it in this turn.
 - **Controlling execution.** The decision is recorded per action for the turn, and the code that starts a background run or publishes a file checks it again.
 
-**Version implemented:** 0.261.453
+**Version implemented:** 0.261.455
 
 **Dependencies:** the conversation's selected chat model (for the check), `functions_appinsights.log_event`.
 

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.453)**
+### **(v0.261.455)**
 
 #### Bug Fixes
 
@@ -19,6 +19,15 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The message shown when a background export or analysis starts now reads as an application status ("The app started a background job to generate the complete JSON for all 826 rows") instead of the assistant agreeing to do it.
     *   The background export card has an **Answer in chat instead** button that cancels the run and answers the same request in chat. Classic interface only.
     *   (Ref: `route_backend_chats.py`, `chat-messages.js`, `ui_tests/test_chat_background_generated_export_status.py`)
+
+### **(v0.261.454)**
+
+#### Bug Fixes
+
+*   **Safe Plain-Text OAuth Sign-In Errors**
+    *   `/getAToken` and `/getATokenApi` now return a consistent plain-text HTTP 400 login-failure message without exposing provider error contents.
+    *   Keeps safe diagnostic fields server-side and preserves missing-code handling, Teams sign-in, and separate Microsoft 365 chat/workflow connection callbacks.
+    *   (Ref: `route_frontend_authentication.py`, `test_oauth_error_responses.py`, `OAUTH_ERROR_RESPONSE_XSS_FIX.md`, [#1903](https://github.com/microsoft/simplechat/pull/1903) as a historical non-closing reference)
 
 ### **(v0.261.452)**
 
