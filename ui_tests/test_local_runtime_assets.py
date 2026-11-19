@@ -8,7 +8,6 @@ Implemented in: 0.261.456
 from contextlib import contextmanager
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-import json
 from pathlib import Path
 import re
 import subprocess
@@ -126,10 +125,18 @@ def test_standalone_tables_use_real_local_assets(page, asset_origin, filename):
 
 @pytest.fixture(scope="module")
 def v2_loader():
-    esbuild = ROOT / "application" / "v2_ui" / "node_modules" / "esbuild" / "bin" / "esbuild"
+    source = ROOT / "application" / "v2_ui" / "src" / "lib" / "vendorAssets.ts"
     result = subprocess.run(
-        ["node", str(esbuild), str(ROOT / "application/v2_ui/src/lib/vendorAssets.ts"),
-         "--format=esm", '--define:import.meta.env.BASE_URL="/static/v2/"'],
+        ["node", "-e", """
+            const esbuild = require('./application/v2_ui/node_modules/esbuild');
+            const fs = require('fs');
+            process.stdout.write(esbuild.transformSync(fs.readFileSync(0, 'utf8'), {
+                loader: 'ts',
+                format: 'esm',
+                define: { 'import.meta.env.BASE_URL': '"/static/v2/"' }
+            }).code);
+        """],
+        input=source.read_text(encoding="utf-8"),
         check=True, capture_output=True, text=True, cwd=ROOT,
     )
     return result.stdout

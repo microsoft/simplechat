@@ -82,6 +82,8 @@ where the upstream map was not vendored. They do not redirect to remote maps.
 output, runs the shared guard and its contracts, and exercises the real vendored
 libraries in Chromium. It does not change dependency manifests or publishing
 workflows.
+The browser harness transpiles its real V2 loader through esbuild's Node API,
+which works with both Linux's native esbuild executable and Windows's wrapper.
 
 The workflow runs on relevant pull requests targeting `Development`, on every
 push to `Development` (including merges, without a path filter), and manually
