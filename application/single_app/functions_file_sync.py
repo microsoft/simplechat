@@ -3033,8 +3033,10 @@ def _onedrive_headers() -> Dict[str, str]:
 
 
 def _graph_get_json(path_or_url: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    url = path_or_url if str(path_or_url or "").startswith("http") else get_graph_endpoint(path_or_url)
-    response = requests.get(url, headers=_onedrive_headers(), params=params, timeout=30)
+    url = get_graph_endpoint(path_or_url, allow_absolute=True)
+    response = requests.get(url, headers=_onedrive_headers(), params=params, timeout=30, allow_redirects=False)
+    if 300 <= response.status_code < 400:
+        raise ValueError("Microsoft Graph metadata redirects are not allowed")
     if response.status_code >= 400:
         try:
             error_body = response.json()
@@ -3121,9 +3123,10 @@ def _iter_onedrive_children(source: Dict[str, Any], item_id: Optional[str] = Non
     next_url = _onedrive_children_path(source, item_id=item_id, selected_path=selected_path)
     items = []
     while next_url and len(items) < max_items:
-        payload = _graph_get_json(next_url, params=params if not str(next_url).startswith("http") else None)
+        payload = _graph_get_json(next_url, params=params)
         items.extend(payload.get("value") or [])
         next_url = payload.get("@odata.nextLink")
+        params = None
     return items[:max_items]
 
 
