@@ -76,7 +76,7 @@ resource v2WebApp 'Microsoft.Web/sites@2023-12-01' = {
       ? appServiceSubnetId
       : null
     siteConfig: {
-      linuxFxVersion: 'NODE|20-lts'
+      linuxFxVersion: 'NODE|24-lts'
       alwaysOn: true
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'

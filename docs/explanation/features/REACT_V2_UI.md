@@ -15,7 +15,9 @@ opt-in editor representation while leaving classic callers compatible.
 **Native Agents catalogue:** 0.261.305 (`application/single_app/config.py`)
 **Classic page parity registry:** 0.261.448 (`application/single_app/ui_route_map.json`),
 described in [V2 Classic Page Parity](V2_CLASSIC_PAGE_PARITY.md)
-**Deployer version:** 1.0.26
+**Deployer version:** 1.0.38
+**Build/hosting runtime baseline fixed in version:** 0.261.453
+(`application/single_app/config.py`); see [Brotli Runtime Security Fix](../fixes/BROTLI_RUNTIME_SECURITY_FIX.md).
 
 **Responsive mobile layout implemented in version: 0.261.323**, recorded in
 `application/single_app/config.py`. Below 768px, the same navigation opens as a
@@ -1202,6 +1204,11 @@ No configuration is required. The `v2uibuilder` Docker stage compiles the SPA an
 compiled bundle is copied into the runtime image after the application code. Visiting `/v2`
 serves the interface using the session the user already has.
 
+The builder uses a pinned Azure Linux Node 24.22.3 image. Only the compiled SPA,
+not the builder's Node executable or `node_modules`, is copied into the Python
+runtime image. Existing application images must be rebuilt and redeployed to
+receive updated browser/runtime dependencies.
+
 If the bundle is missing — which is the normal state of a fresh local checkout, since the
 build output is gitignored — `/v2` returns a 503 page explaining how to build it rather than
 a bare 404.
@@ -1211,6 +1218,11 @@ a bare 404.
 Set `deployV2FrontendAppService=true` to provision a standalone Linux Node App Service that
 serves the SPA with `pm2 serve --spa`. The module is
 `deployers/bicep/modules/v2FrontendAppService.bicep`.
+
+The optional host requests the platform-maintained Node 24 LTS runtime. Verify
+its availability in the target cloud/region and the actual host's patch level
+before deploying; changing the template does not update an existing host by
+itself. The default same-origin deployment does not require this separate host.
 
 This topology requires cross-origin configuration:
 
