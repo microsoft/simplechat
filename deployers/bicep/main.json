@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "14814241508469552508"
+      "templateHash": "17202602035860581707"
     }
   },
   "parameters": {
@@ -5324,7 +5324,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "626991384843288623"
+              "templateHash": "1441787124853586230"
             }
           },
           "parameters": {
@@ -5406,7 +5406,7 @@
                 "httpsOnly": true,
                 "virtualNetworkSubnetId": "[if(and(parameters('enablePrivateNetworking'), not(empty(parameters('appServiceSubnetId')))), parameters('appServiceSubnetId'), null())]",
                 "siteConfig": {
-                  "linuxFxVersion": "NODE|20-lts",
+                  "linuxFxVersion": "NODE|24-lts",
                   "alwaysOn": true,
                   "ftpsState": "Disabled",
                   "minTlsVersion": "1.2",
