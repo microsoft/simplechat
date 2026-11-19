@@ -1,5 +1,22 @@
-# Feature documentation and full-slide explanations; capability snapshot 0.261.411.
+# Feature documentation and full-slide explanations; capability snapshot 0.261.428.
 # Collection page bodies are generated; keep durable explanations here.
+admin-support-exports:
+  name: "Diagnostic support exports"
+  area: "Platform and operations"
+  audience: "Admins"
+  summary: "Collects retained, scoped diagnostics into private support ZIPs, with deterministic privacy checks and optional owner-approved personal transcripts."
+  why: "Use this to hand a reproducible incident to support without giving administrators unrestricted access to private conversations. Source retention, identity permissions, consent, and privacy review remain separate checks; the app never sends the bundle automatically."
+  default_state: "Requires configuration"
+  admin_tab: operations
+  setting_keys: []
+  guides:
+    - title: "Export diagnostic logs for support"
+      url: /guides/export-support-logs/
+    - title: "Review support data consent"
+      url: /guides/review-approval-requests/
+  reference:
+    - title: "Operations settings"
+      url: /admin/operations/
 model-routing:
   name: "Model routing and endpoints"
   area: "Platform and operations"
@@ -22,6 +39,7 @@ model-routing:
     - enable_embedding_apim
     - enable_multi_model_endpoints
     - enable_default_model_for_new_conversations
+    - enable_model_catalog_online_updates
   guides:
     - title: "Choose models for orchestration"
       url: /guides/model-catalog-routing/
@@ -552,6 +570,13 @@ tabular-analysis:
         before relying on the result. The illustrated data is synthetic, not a
         benchmark or a capacity promise.
       media_id: slide-tabular-analysis
+    - heading: "Relate separate files without guessing the math"
+      text: >-
+        Orchestrate can match complete selected CSV and Excel datasets by explicit
+        keys or effective dates, calculate precise values, and retain records with
+        source-row lineage and coverage. Duplicate matches and processing limits
+        remain visible failures, not sampled answers. Native layout and comment
+        inspection uses separate compatible readers.
   default_state: "Mixed"
   admin_tab: agents-actions
   setting_keys:
@@ -574,6 +599,8 @@ tabular-analysis:
   reference:
     - title: "Tabular processing action"
       url: /reference/actions/tabular-processing/
+    - title: "Calculate across selected files"
+      url: /guides/calculate-across-files/
 document-compare:
   name: "Cross-format document compare"
   area: "Media and ingestion"

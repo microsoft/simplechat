@@ -5,7 +5,7 @@ description: "Describe model strengths, manage shared profiles, and influence pe
 section: "Administration"
 audience: admin
 admin_tab: model-catalog
-version: "0.261.410"
+version: "0.261.431"
 ---
 
 # Model Catalog
@@ -24,6 +24,62 @@ capability, origin, favorites, global connection availability, or archived statu
 The detail panel explains task suitability, limitations, technical evidence,
 and the global models using that profile. Personal and group connections remain
 managed in their own workspaces; the catalog does not expose their deployment lists.
+
+## Update built-in metadata without deploying
+
+Implemented in version: **0.261.425**, tracked in
+`application/single_app/config.py`.
+
+Use **Catalog updates** to inspect the installed revision and publication date.
+These updates change metadata understood by the installed application, not provider
+client code. An installation needs one application upgrade to gain this workflow;
+subsequent compatible catalog revisions do not need `azd deploy` or a restart.
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `enable_model_catalog_online_updates` — Allow online catalog update checks | Disabled | Permits an administrator to explicitly contact the official GitHub catalog source from this deployment. Offline signed uploads remain available without this permission. |
+
+The interface displays the repository and exact discovery URL before online access
+is enabled. **Check for updates** reads
+`https://raw.githubusercontent.com/microsoft/simplechat/model-catalog/model-catalog/latest.json`.
+Packages come from the same repository at an immutable Git commit; the resolved
+download URL appears in the check result. The destination cannot be edited in the
+browser, settings, or a package. Outbound requests do not include chats, documents,
+AI connection settings, or credentials. Repeated checks are limited to one per minute.
+The existing application-release check is separate and is not changed by this setting.
+Since **0.261.428**, isolated publisher test deployments can select the fixed
+development feed with the server startup policy `MODEL_CATALOG_CHANNEL=development`.
+Their interface displays that development URL. Normal customer deployments remain
+on the production feed and reject development-signed packages; this is not an
+administrator-editable URL or an unsigned testing bypass.
+Since **0.261.426**, **Allow online catalog update checks** uses the standard
+on/off switch in both classic and V2, matching the other admin settings.
+
+After a successful check, choose **Preview available update**. Alternatively, download
+the publisher's signed package and select **Upload signed package**, including on an
+offline installation. Both paths require a signature from a public key bundled with
+SimpleChat. An ordinary unsigned catalog JSON file is not an import package.
+
+Review the signature, version, source commit, package digest, model additions and
+changes, and operation-metadata change indicator. **Apply catalog update** changes
+the shared active revision only after validation and a concurrency check. Uploading,
+checking, and previewing alone do not install it. Custom profiles, priorities,
+favorites, connection credentials, and deployment overrides remain unchanged.
+
+**Preview rollback** reviews the previous verified revision or, after the first
+import, the catalog bundled with the application. Apply rollback separately.
+Updates and rollback cannot remove model IDs, because personal/group connections
+may still reference them. An incompatible schema, unknown publisher key, broken
+signature, removed ID, or conflicting custom alias blocks installation.
+
+If another administrator changes settings, reload update status and preview again.
+If the active shared catalog cannot be read, affected new model operations fail
+rather than quietly changing technical facts back to the bundled catalog.
+
+An unconfigured publisher key is shown explicitly and prevents signed imports.
+Public keys are not credentials and do not require a customer Key Vault.
+Publisher setup and key rotation are described in
+[Signed model catalog updates]({{ '/explanation/features/SIGNED_MODEL_CATALOG_UPDATES/' | relative_url }}).
 
 ## Find and inspect a profile in V2
 

@@ -5,13 +5,13 @@ import asyncio
 import base64
 import logging
 import time
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
 
 from mcp.types import CallToolResult
 from semantic_kernel.connectors.mcp import (
     MCPSsePlugin,
     MCPStreamableHttpPlugin,
-    MCPWebsocketPlugin,
     _mcp_call_tool_result_to_kernel_contents,
 )
 
@@ -25,6 +25,7 @@ from functions_action_manifest import (
     resolve_action_type,
 )
 from functions_debug import debug_print
+from functions_outbound_http import create_guarded_httpx_client
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
     MCP_PLUGIN_TYPE,
@@ -54,6 +55,8 @@ from functions_mcp_destinations import (
 )
 from functions_mcp_preconfigurations import authorize_mcp_action
 from semantic_kernel_plugins.mcp_plugin import McpPlugin
+from semantic_kernel_plugins.mcp_guarded_transport import GuardedMcpWebsocketPlugin
+from action_usage import action_dispatch_attempt, report_action_usage_failure
 
 
 class McpPluginFactory:
@@ -347,6 +350,7 @@ class McpPluginFactory:
             manifest,
             "tool_call",
             lambda: cls._call_tool_once(manifest, tool_name, normalized_arguments, origin=origin),
+            usage_operation=configured_tool.get("original_name") if configured_tool else None,
         )
 
     @classmethod
@@ -436,6 +440,7 @@ class McpPluginFactory:
                 additional_fields.get("tool_result_policy"),
             )
             if not result["success"]:
+                report_action_usage_failure()
                 cls._log_connector_event(
                     "[MCP_OUTBOUND] Tool reported failure",
                     config,
@@ -453,7 +458,8 @@ class McpPluginFactory:
             await connector.close()
 
     @classmethod
-    async def _run_with_retries(cls, config: Dict[str, Any], operation: str, operation_factory):
+    async def _run_with_retries(cls, config: Dict[str, Any], operation: str, operation_factory,
+                                *, usage_operation=None):
         """Run an MCP operation with bounded retries and classified failures."""
         manifest = cls._normalize_manifest(config)
         additional_fields = manifest["additionalFields"]
@@ -463,7 +469,8 @@ class McpPluginFactory:
         attempt = 0
         while True:
             try:
-                return await operation_factory()
+                with action_dispatch_attempt(usage_operation) if operation == "tool_call" else nullcontext():
+                    return await operation_factory()
             except McpRuntimeError:
                 raise
             except (McpConfigurationError, PermissionError):
@@ -562,15 +569,17 @@ class McpPluginFactory:
                 load_prompts=load_prompts,
                 request_timeout=request_timeout,
                 description=description,
+                httpx_client_factory=create_guarded_httpx_client,
             )
         if transport == "websocket":
-            return MCPWebsocketPlugin(
+            return GuardedMcpWebsocketPlugin(
                 name=name,
                 url=endpoint,
                 load_tools=load_tools,
                 load_prompts=load_prompts,
                 request_timeout=request_timeout,
                 description=description,
+                connect_timeout=timeout,
             )
 
         return MCPStreamableHttpPlugin(
@@ -584,6 +593,7 @@ class McpPluginFactory:
             load_prompts=load_prompts,
             request_timeout=request_timeout,
             description=description,
+            httpx_client_factory=create_guarded_httpx_client,
         )
 
     @classmethod

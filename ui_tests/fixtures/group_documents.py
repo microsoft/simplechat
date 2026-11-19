@@ -195,6 +195,16 @@ class GroupDocumentsFixture(GroupWorkspaceFixture):
     def visible(self, group_id):
         return [row for row in self.documents[group_id] if row.get("is_current_version") is not False]
 
+    def has_legacy_documents(self, group_id):
+        """The list route's `needs_legacy_update_check`: an owned current document stored before
+        progress tracking has no `percentage_complete`
+        (functions_group_document_reads.query_group_document_list). A test makes a document legacy by
+        removing that key from its row, and an upgrade by scripting the row back with it."""
+        return any(
+            row.get("group_id") == group_id and "percentage_complete" not in row
+            for row in self.visible(group_id)
+        )
+
     @staticmethod
     def tags(row):
         raw = row.get("tags", [])
@@ -277,6 +287,7 @@ class GroupDocumentsFixture(GroupWorkspaceFixture):
                 self._json(route, {
                     "documents": [served(row) for row in rows[(page - 1) * size:page * size]], "total_count": len(rows),
                     "page": page, "page_size": size, "file_downloads_enabled": True,
+                    "needs_legacy_update_check": self.has_legacy_documents(group_id),
                 })
             elif path == "/api/group_documents/facets":
                 assert entry.query == {"group_id": [group_id]}

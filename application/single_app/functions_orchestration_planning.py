@@ -326,7 +326,7 @@ def planning_projection(question, state, *, include_request=False):
         "turn_id": state["turn_id"], "submission_id": state["submission_id"],
         "status": state["status"], "updated_at": state["updated_at"],
     }
-    for field in ("run_id", "error", "error_code"):
+    for field in ("run_id", "error", "error_code", "error_stage", "error_rule", "error_attempt"):
         if state.get(field):
             result[field] = state[field]
     if include_request:

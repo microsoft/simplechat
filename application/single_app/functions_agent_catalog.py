@@ -342,6 +342,13 @@ def _resolve_usage_catalog_key(record: Dict[str, Any]) -> str:
     if key:
         return key
 
+    usage = record.get("runtime_usage")
+    if isinstance(usage, dict):
+        return build_agent_catalog_key({
+            "id": usage.get("entity_id"), "name": usage.get("name"),
+            "scope_type": usage.get("scope_type"), "scope_id": usage.get("scope_id"),
+        })
+
     agent = record.get("agent") if isinstance(record.get("agent"), dict) else {}
     workspace_context = record.get("workspace_context") if isinstance(record.get("workspace_context"), dict) else {}
     return build_agent_catalog_key({
@@ -366,7 +373,7 @@ def _load_agent_usage_counts(
     counts: Dict[str, int] = {}
     try:
         query = """
-            SELECT c.agent_catalog_key, c.agent, c.workspace_type, c.workspace_context, c.user_id
+            SELECT c.agent_catalog_key, c.agent, c.workspace_type, c.workspace_context, c.user_id, c.runtime_usage
             FROM c
             WHERE c.activity_type = 'agent_run'
         """
@@ -381,6 +388,9 @@ def _load_agent_usage_counts(
             enable_cross_partition_query=True,
         )
         for record in records:
+            usage = record.get("runtime_usage")
+            if isinstance(usage, dict) and usage.get("outcome") != "succeeded":
+                continue
             key = _resolve_usage_catalog_key(record)
             if key in resolved_keys:
                 counts[key] = counts.get(key, 0) + 1

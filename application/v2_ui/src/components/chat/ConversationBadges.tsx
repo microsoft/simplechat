@@ -1,9 +1,12 @@
 // ConversationBadges.tsx
-// Classification pills, the workspace badge, and the scope-lock indicator shown beside a
+// Classification pills, the workspace badge, and the scope-lock control shown beside a
 // conversation title.
+//
+// The lock is a button rather than a plain indicator: it opens the dialog that locks or unlocks
+// the conversation's workspace scope, as classic's header lock opens its modal. The dialog is
+// hosted here, once, so it outlives whichever control opened it.
 
 import { clsx } from 'clsx';
-import { Lock, Unlock } from 'lucide-react';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import {
     classificationColor,
@@ -16,6 +19,8 @@ import {
     type WorkspaceBadgeTone,
 } from '../../lib/conversationBadges';
 import type { ConversationMetadata } from '../../lib/types';
+import { ScopeLockControl } from './ScopeLockControl';
+import { ScopeLockDialogHost } from './ScopeLockDialog';
 
 /** Tones mirror the classic interface's badge colours so the two read the same. */
 const TONE_CLASS: Record<WorkspaceBadgeTone, string> = {
@@ -58,18 +63,9 @@ export function ConversationBadges({
 
     return (
         <div className={clsx('flex shrink-0 flex-wrap items-center gap-1.5', className)}>
-            {lock !== 'hidden' && (
-                <span
-                    title={
-                        lock === 'locked'
-                            ? 'Workspace scope is locked for this conversation'
-                            : 'Workspace scope is unlocked for this conversation'
-                    }
-                    className={clsx(lock === 'locked' ? 'text-warn' : 'text-text-3')}
-                >
-                    {lock === 'locked' ? <Lock size={13} /> : <Unlock size={13} />}
-                </span>
-            )}
+            {lock !== 'hidden' && <ScopeLockControl variant="badge" />}
+            {/* Portalled to the page, so it takes no room in the row it is rendered in. */}
+            <ScopeLockDialogHost />
 
             {labels.map((label) => {
                 const color = classificationColor(label, categories);

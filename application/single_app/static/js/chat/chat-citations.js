@@ -421,7 +421,9 @@ export function fetchCitedText(citationId, citationContext = {}) {
       // Check for expected data fields explicitly
       if (data.native_annotation || data.native_coverage) {
         const record = data.native_annotation;
-        const text = record ? [
+        const word = data.evidence_kind === 'native_word_annotation'
+            || ['docx', 'docm', 'dotx'].includes(data.native_coverage?.format);
+        const text = record && word ? nativeWordCommentText(record, data.cited_text) : record ? [
             record.kind === 'note' ? 'Workbook note' : record.parent_id ? 'Threaded comment reply' : 'Threaded comment',
             `Author: ${record.author || 'Unavailable'}`,
             `Worksheet / cell: ${record.sheet || 'Unavailable'} / ${record.cell || 'Unavailable'}`,
@@ -436,8 +438,8 @@ export function fetchCitedText(citationId, citationContext = {}) {
             'Inventory coverage is not a worksheet cell or reviewer comment.',
         ].join('\n');
         showCitedTextPopup(text, data.file_name, '', {
-            title: `Native workbook evidence: ${data.file_name}`,
-            workbookPreview: () => showEnhancedCitationModal(
+            title: `Native ${word ? 'Word' : 'workbook'} evidence: ${data.file_name}`,
+            workbookPreview: word ? undefined : () => showEnhancedCitationModal(
                 data.document_id, record?.sheet || '', null, record?.sheet || null,
             ),
         });
@@ -457,6 +459,32 @@ export function fetchCitedText(citationId, citationContext = {}) {
       // Show the error message from the caught error
       showToast(`Error fetching citation: ${error.message}`, "danger");
     });
+}
+
+function nativeWordCommentText(record, citedText) {
+    const resolution = (comment) => comment.resolution_available && typeof comment.done === 'boolean'
+        ? comment.done ? 'Yes' : 'No' : 'Unavailable';
+    const lines = [
+        'Word review comment',
+        `Author: ${record.author || 'Unavailable'}`,
+        `Date: ${record.date || 'Unavailable'}`,
+        `Anchored text: ${record.anchor_text || 'Unavailable'}`,
+        `Anchor coverage: ${record.anchor_complete ? 'Complete' : 'Bounded or unavailable'}`,
+        `Resolved: ${resolution(record)}`,
+        '', 'Reviewer text', citedText || 'No stored reviewer text.',
+    ];
+    if (Array.isArray(record.replies)) {
+        for (const reply of record.replies) {
+            lines.push(
+                '', `Reply ${reply.id}`, `Author: ${reply.author || 'Unavailable'}`,
+                `Date: ${reply.date || 'Unavailable'}`, `Resolved: ${resolution(reply)}`,
+                reply.text || 'No stored reply text.',
+            );
+        }
+    } else {
+        lines.push('', 'Reply metadata unavailable.');
+    }
+    return lines.join('\n');
 }
 
 function renderMarkdownIntoCitationElement(contentElement, markdownText) {

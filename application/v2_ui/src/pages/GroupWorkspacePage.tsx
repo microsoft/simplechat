@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowUpRight, Compass, LayoutGrid, Loader2, Lock, Users } from 'lucide-react';
+import { Compass, LayoutGrid, Loader2, Lock, Users } from 'lucide-react';
 import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
 import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState, GlassButton, Skeleton } from '../components/ui/primitives';
@@ -60,8 +60,7 @@ export function GroupWorkspacePage() {
     const [resourceBusy, setResourceBusy] = useState(false);
     const [notice, setNotice] = useState('');
     const [retry, setRetry] = useState(0);
-    const [externalPrompt, setExternalPrompt] = useState<string | null>(null);
-    const [externalTarget, setExternalTarget] = useState<string | null>(null);
+    const [pickerVersion, setPickerVersion] = useState(0);
     const [logoFailed, setLogoFailed] = useState(false);
     const dirtyRef = useRef(false);
     const busyRef = useRef(false);
@@ -80,7 +79,7 @@ export function GroupWorkspacePage() {
     blockerRef.current = blocker;
 
     useEffect(() => {
-        if (!groupId && !hasDocumentLink && enabled && activeGroupId && !state.activating && !state.needsReconciliation && !externalTarget) {
+        if (!groupId && !hasDocumentLink && enabled && activeGroupId && !state.activating && !state.needsReconciliation) {
             navigate(`${groupWorkspacePath(activeGroupId, linkedWorkflow ? 'workflows' : undefined)}${location.search}`, { replace: true });
         }
         if (groupId && !section && linkedWorkflow && !hasDocumentLink && enabled) {
@@ -90,7 +89,7 @@ export function GroupWorkspacePage() {
             navigate(`${groupWorkspacePath(groupId, 'documents')}${location.search}`, { replace: true });
         }
     }, [groupId, enabled, activeGroupId, section, linkedWorkflow, location.search, navigate,
-        state.activating, state.needsReconciliation, externalTarget, hasDocumentLink]);
+        state.activating, state.needsReconciliation, hasDocumentLink]);
 
     useEffect(() => {
         if (!groupId || !viewerId || !enabled) {
@@ -163,7 +162,7 @@ export function GroupWorkspacePage() {
     }, [groupId, enabled]);
 
     const context = state.context && state.context.scope.id === groupId && state.context.viewer_id === viewerId ? state.context : null;
-    const ready = context && !state.loading && !state.activating && !state.needsReconciliation && !externalTarget;
+    const ready = context && !state.loading && !state.activating && !state.needsReconciliation;
     const accessUnconfirmed = state.refreshing || state.needsRevalidation;
     const basePath = groupId ? groupWorkspacePath(groupId) : '/groups';
     const sections = useMemo(() => GROUP_WORKSPACE_SECTION_IDS.map((id) => {
@@ -275,8 +274,6 @@ export function GroupWorkspacePage() {
 
     useEffect(() => { setLogoFailed(false); }, [context?.scope.id, context?.workspace.logo_url]);
     useEffect(() => {
-        setExternalTarget(null);
-        setExternalPrompt(null);
         setNotice('');
         setDirty(false);
         setResourceBusy(false);
@@ -340,31 +337,27 @@ export function GroupWorkspacePage() {
             if (!(cause instanceof WorkspaceRequestSuperseded)) setNotice(useGroupWorkspaceStore.getState().error || 'Could not confirm your selection.');
         }
     };
-    const openClassic = (href: string) => {
-        if (dirtyRef.current || busyRef.current) setExternalPrompt(href);
-        else setExternalTarget(href);
-    };
     // After leaving, the group is no longer the caller's: re-read the bootstrap so the picker and
-    // the saved active group drop it, then go back to /groups.
+    // the saved active group drop it, then go back to /groups. The picker reads its own list once, so
+    // it is remounted to read it again, or the group just left would stay selectable in it.
     const leftGroup = useCallback(async () => {
         reportDocumentBusy(false);
         await useBootstrapStore.getState().refresh();
+        setPickerVersion((version) => version + 1);
         navigate('/groups', { replace: true });
     }, [navigate, reportDocumentBusy]);
-    useEffect(() => {
-        if (!externalTarget || !groupId) return;
-        let mounted = true;
-        void useGroupWorkspaceStore.getState().activate(groupId, () => true).then((result) => {
-            // xss-check: ignore reviewed: externalTarget is set only to local classic workspace literals with encoded group ids.
-            if (mounted && result.status === 'activated') window.location.assign(externalTarget);
-        }).catch((cause: unknown) => {
-            if (mounted && !(cause instanceof WorkspaceRequestSuperseded)) {
-                setNotice(useGroupWorkspaceStore.getState().error || 'Could not open the classic workspace.');
-                setExternalTarget(null);
-            }
-        });
-        return () => { mounted = false; };
-    }, [externalTarget, groupId]);
+    // A deleted group is no longer the caller's either: the Settings section has already finished the
+    // DELETE, so its draft and busy flags are cleared first and the leave guard never blocks the exit
+    // that delete caused. The groups are read again so the picker and the saved active group drop it,
+    // and the cached context for the deleted group goes with it.
+    const deletedGroup = useCallback(async () => {
+        reportDocumentDirty(false);
+        reportDocumentBusy(false);
+        await useBootstrapStore.getState().refresh();
+        setPickerVersion((version) => version + 1);
+        navigate('/groups', { replace: true });
+        useGroupWorkspaceStore.getState().clear();
+    }, [navigate, reportDocumentBusy, reportDocumentDirty]);
 
     const header = (
         <>
@@ -373,9 +366,9 @@ export function GroupWorkspacePage() {
                 actions={[{ id: 'directory', label: 'Browse all groups', icon: <Compass size={14} />,
                     variant: 'subtle', onClick: () => navigate('/groups/directory') }]} />
             <div className="shrink-0 space-y-2 border-b border-edge px-2 py-2 md:space-y-3 md:px-4 md:py-3">
-                <GroupWorkspacePicker key={viewerId} value={state.pendingGroupId ?? groupId}
+                <GroupWorkspacePicker key={`${viewerId}:${pickerVersion}`} value={state.pendingGroupId ?? groupId}
                     selectedName={context?.workspace.name || bootstrap?.scope?.groups?.find((group) => group.id === groupId)?.name}
-                    disabled={dirty || resourceBusy || state.loading || state.activating || Boolean(externalTarget) || state.needsReconciliation}
+                    disabled={dirty || resourceBusy || state.loading || state.activating || state.needsReconciliation}
                     onSelect={(id) => void selectGroup(id)} />
                 {ready ? (
                     <div className="flex min-w-0 flex-wrap items-center gap-3">
@@ -390,11 +383,6 @@ export function GroupWorkspacePage() {
                             <p className="text-xs text-text-3">Role: {groupRoleLabel(context.role)}</p>
                         </div>
                         <Pill tone={context.status === 'active' ? 'neutral' : 'warn'}>Status: {GROUP_STATUS_LABELS[context.status]}</Pill>
-                        {context.can_manage_workspace && (context.status === 'inactive' || context.status === 'unknown')
-                            ? <GlassButton size="sm" disabled={resourceBusy || accessUnconfirmed}
-                                onClick={() => openClassic(`/groups/${encodeURIComponent(context.scope.id)}`)}>
-                                Manage group (classic)<ArrowUpRight size={14} />
-                            </GlassButton> : null}
                     </div>
                 ) : null}
                 {dirty ? <p role="status" className="text-xs text-warn">Save or cancel your group changes before switching groups.</p> : null}
@@ -429,10 +417,10 @@ export function GroupWorkspacePage() {
                     <GlassButton size="sm" disabled={dirty || resourceBusy || accessUnconfirmed} onClick={() => void selectGroup(context.scope.id)}>Make this group active</GlassButton>
                 </div>
             ) : null}
-            {state.loading || state.activating || externalTarget ? (
+            {state.loading || state.activating ? (
                 <div role="status" className="space-y-3">
                     <p className="flex items-center gap-2 text-sm text-text-2"><Loader2 size={16} className="animate-spin" />
-                        {externalTarget ? 'Opening the selected group in classic...' : state.activating ? 'Switching workspace...' : 'Loading workspace details...'}</p>
+                        {state.activating ? 'Switching workspace...' : 'Loading workspace details...'}</p>
                     <Skeleton className="h-20 w-full" /><Skeleton className="h-32 w-full" />
                 </div>
             ) : !groupId ? (
@@ -457,12 +445,13 @@ export function GroupWorkspacePage() {
                         : !selected.enabled ? <EmptyState icon={<Lock size={28} />} title={`${selected.section.label} is not available`} description={selected.reason ?? undefined} />
                             : section === 'members' && !resourceId ? (
                                 <GroupMembersSection groupId={context.scope.id} groupName={context.workspace.name}
+                                    groupStatus={context.status}
                                     viewerId={context.viewer_id} interactionDisabled={accessUnconfirmed}
                                     onBusyChange={reportDocumentBusy} onAccessChanged={revalidate} onLeft={leftGroup} />
                             )
                             : section === 'documents' && !resourceId ? (
                                 context.document_permissions.can_view ? <GroupDocumentsSection context={context}
-                                    interactionDisabled={accessUnconfirmed} onOpenClassic={() => openClassic('/group_workspaces')}
+                                    interactionDisabled={accessUnconfirmed}
                                     onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy}
                                     linkedDocumentId={linkedDocument.id} linkedDocumentError={linkedDocument.error}
                                     onClearLinkedDocument={clearDocumentLink} />
@@ -534,7 +523,7 @@ export function GroupWorkspacePage() {
                                         interactionDisabled={accessUnconfirmed}
                                         onBusyChange={reportDocumentBusy} onDirtyChange={reportDocumentDirty}
                                         onAccessChanged={revalidate} onSaved={refreshContextNow}
-                                        onOpenClassic={() => openClassic(`/groups/${encodeURIComponent(context.scope.id)}`)} />
+                                        onDeleted={deletedGroup} />
                                 ) : section === 'activity' && !resourceId && groupSettingsAdapter ? (
                                     <GroupActivitySection adapter={groupSettingsAdapter} />
                                 ) : section === 'statistics' && !resourceId && groupSettingsAdapter ? (
@@ -547,14 +536,13 @@ export function GroupWorkspacePage() {
                                 )}
                 </div>
             ) : !error ? <EmptyState title="Workspace details unavailable" description="Select another group or refresh workspace details." /> : null}
-            {blocker.state === 'blocked' || externalPrompt ? <WorkspaceLeavePrompt
+            {blocker.state === 'blocked' ? <WorkspaceLeavePrompt
                 saving={resourceBusy || state.activating}
                 switching={state.activating}
-                onStay={() => { if (blocker.state === 'blocked') blocker.reset(); setExternalPrompt(null); }}
+                onStay={() => blocker.reset()}
                 onDiscard={() => {
                     setDirty(false);
-                    if (externalPrompt) { setExternalTarget(externalPrompt); setExternalPrompt(null); }
-                    else if (blocker.state === 'blocked') blocker.proceed();
+                    blocker.proceed();
                 }} /> : null}
         </WorkspaceShell>
     );

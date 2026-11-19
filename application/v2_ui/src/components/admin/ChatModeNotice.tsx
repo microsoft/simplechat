@@ -9,10 +9,19 @@
 //
 // V2 deliberately does not carry the classic endpoint's fields. Being explicit about
 // which route is live, and pointing at where the other one is configured, is what keeps
-// that omission honest rather than hidden.
+// that omission honest rather than hidden. The switch that changes the route is a section
+// of this page, so it is one click away; only the classic endpoint's own fields are linked
+// out, to the tab that holds them.
 
-import { ExternalLink, Info, TriangleAlert } from 'lucide-react';
+import { ArrowRight, ExternalLink, Info, TriangleAlert } from 'lucide-react';
 import { clsx } from 'clsx';
+import { safeClassicAdminTabHref } from '../../lib/adminOperations';
+
+/** The section holding AI Connections and the switch that puts chat on them. */
+const CONNECTIONS_SECTION_ID = 'multi-endpoint-configuration';
+
+/** The classic tab whose Chat card holds the single endpoint's address, key and deployment. */
+const CLASSIC_CHAT_ENDPOINT_TAB = 'model-endpoints';
 
 interface ChatModeNoticeProps {
     /** Whether connections are in force, as currently stored. */
@@ -24,9 +33,11 @@ interface ChatModeNoticeProps {
      */
     pending?: boolean;
     help?: string;
+    /** Moves to another section of this page, so the switch is a click away. */
+    onNavigate?: (sectionId: string) => void;
 }
 
-export function ChatModeNotice({ enabled, pending, help }: ChatModeNoticeProps) {
+export function ChatModeNotice({ enabled, pending, help, onNavigate }: ChatModeNoticeProps) {
     // Switching to connections is one-way: the settings write coerces the flag to
     // "already on or newly on", so an attempt to turn it back off is refused rather
     // than stored. Only the on-switch is worth announcing.
@@ -64,16 +75,31 @@ export function ChatModeNotice({ enabled, pending, help }: ChatModeNoticeProps) 
                                 OpenAI or API Management endpoint whose address, credentials and
                                 deployment are set on the{' '}
                                 <a
-                                    href="/admin/settings#model-endpoints"
+                                    href={safeClassicAdminTabHref(CLASSIC_CHAT_ENDPOINT_TAB)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
                                     className="inline-flex items-center gap-1 text-accent underline"
                                 >
                                     classic admin page
-                                    <ExternalLink size={11} />
+                                    <ExternalLink size={11} aria-hidden="true" />
+                                    <span className="sr-only">(opens in a new tab)</span>
                                 </a>
-                                . Turn on <strong>Use connections for chat</strong> to switch.
+                                . Turn on <strong>Use AI Connections for chat</strong> to switch.
                             </>
                         )}
                     </p>
+                    {!enabled && onNavigate ? (
+                        <p className="mt-1.5">
+                            <button
+                                type="button"
+                                onClick={() => onNavigate(CONNECTIONS_SECTION_ID)}
+                                className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
+                            >
+                                Go to AI Connections
+                                <ArrowRight size={12} aria-hidden="true" />
+                            </button>
+                        </p>
+                    ) : null}
                     {switchingOn ? (
                         <p className="mt-1.5 font-medium text-text-1">
                             Saving will switch chat to the connections above, and that cannot

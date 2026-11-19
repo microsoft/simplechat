@@ -351,7 +351,7 @@ function sourceFromResponse(value: unknown): WorkspaceSyncSource {
     throw new Error('The file source response was malformed. Refresh and try again.');
 }
 
-function optionsFromResponse(value: unknown): FileSourceOptions {
+export function optionsFromResponse(value: unknown): FileSourceOptions {
     if (!isRecord(value) || !Array.isArray(value.source_types) || !isRecord(value.eligible_identity_ids)
         || !value.source_types.every((type) => isRecord(type) && typeof type.value === 'string'
             && typeof type.label === 'string' && typeof type.visible === 'boolean')
@@ -373,28 +373,28 @@ function optionsFromResponse(value: unknown): FileSourceOptions {
 }
 
 /** The identities picker source; the group route wraps the collection under `identities`. */
-function identitiesFromResponse(value: unknown): WorkspaceIdentity[] {
+export function identitiesFromResponse(value: unknown): WorkspaceIdentity[] {
     if (!isRecord(value) || !Array.isArray(value.identities)) {
         throw new Error('The identities response was malformed. Refresh and try again.');
     }
     return value.identities as WorkspaceIdentity[];
 }
 
-function runsFromResponse(value: unknown): WorkspaceSyncRun[] {
+export function runsFromResponse(value: unknown): WorkspaceSyncRun[] {
     if (isRecord(value) && Array.isArray(value.runs)) {
         return value.runs as WorkspaceSyncRun[];
     }
     throw new Error('The sync history response was malformed. Refresh and try again.');
 }
 
-function connectionFromResponse(value: unknown): FileSourceConnectionResult {
+export function connectionFromResponse(value: unknown): FileSourceConnectionResult {
     if (isRecord(value) && isRecord(value.connection) && value.connection.success === true) {
         return value.connection as FileSourceConnectionResult;
     }
     throw new Error('The connection test response was malformed. Try again.');
 }
 
-function browseFromResponse(value: unknown): FileSourceBrowseResult {
+export function browseFromResponse(value: unknown): FileSourceBrowseResult {
     if (isRecord(value) && isRecord(value.browse) && Array.isArray(value.browse.entries)) {
         return {
             path: String(value.browse.path ?? ''),
@@ -421,7 +421,7 @@ function requiredConfigRevision(source: WorkspaceSyncSource): string {
 }
 
 /** Strip anything the strict native routes reject; send only the documented write fields. */
-function groupWriteBody(write: FileSourceWrite): Record<string, unknown> {
+export function groupWriteBody(write: FileSourceWrite): Record<string, unknown> {
     const body: Record<string, unknown> = {};
     if (write.name !== undefined) body.name = write.name;
     if (write.source_type !== undefined) body.source_type = write.source_type;
@@ -454,7 +454,7 @@ function deleteOutcome(value: unknown): FileSourceDeleteOutcome {
     };
 }
 
-async function conditionalGroupUpdate(url: string, body: Record<string, unknown>): Promise<unknown> {
+export async function conditionalGroupUpdate(url: string, body: Record<string, unknown>): Promise<unknown> {
     try {
         const response = await requestWithStatus<unknown>(url, { method: 'PATCH', body });
         return response.data;
@@ -474,7 +474,7 @@ async function conditionalGroupUpdate(url: string, body: Record<string, unknown>
     }
 }
 
-async function deleteGroupSource(url: string, body: Record<string, unknown>): Promise<FileSourceDeleteOutcome> {
+export async function deleteGroupSource(url: string, body: Record<string, unknown>): Promise<FileSourceDeleteOutcome> {
     try {
         const response = await requestWithStatus<unknown>(url, { method: 'DELETE', body });
         const data = response.data;

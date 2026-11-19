@@ -190,12 +190,15 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
     endpoints_available, endpoints_reason = group_endpoints_available(user_id, settings)
     workflows_enabled = is_group_workflows_enabled_for_group(settings, group_id)
 
-    def section(enabled, can_manage=False, reason="This section is not enabled for this group."):
-        available = bool(view_allowed and enabled)
+    def section(enabled, can_manage=False, reason="This section is not enabled for this group.", *, viewable=None):
+        # ``viewable`` overrides the status gate for the Manage sections an Owner or Admin keeps in
+        # every status; every other section waits for a status that lets the caller view the group.
+        visible = view_allowed if viewable is None else viewable
+        available = bool(visible and enabled)
         return {
             "enabled": available,
             "can_manage": bool(available and active and can_manage),
-            "reason": None if available else (status_reason if not view_allowed else reason),
+            "reason": None if available else (status_reason if not visible else reason),
         }
 
     governance_reason = "Your administrator has restricted access to this capability."
@@ -233,30 +236,38 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
         entry["group"] = WORKSPACE_SECTION_GROUPS[section_id]
     # Members (M7B) is a group-only section in the "manage" group, so the personal section
     # registry and its groups are untouched. Every member may open it in any status that
-    # lets them view the group, like every other section; which membership controls it
-    # offers comes from the member list's own hints, never from this navigation entry.
+    # lets them view the group, like every other section, and the Owner and Admins keep it in
+    # every status: the classic manage page shows a locked or inactive group's members to them,
+    # and the membership routes check no status except to add a member, which the member list's
+    # own hint withholds. Which membership controls it offers comes from that hint, never from
+    # this navigation entry.
+    members_manager = role in GROUP_MEMBERSHIP_MANAGER_ROLES
     sections["members"] = {
-        **section(True, role in GROUP_MEMBERSHIP_MANAGER_ROLES),
+        **section(True, members_manager, viewable=bool(view_allowed or members_manager)),
         "group": GROUP_MANAGE_SECTION_GROUP,
     }
     # Settings, Activity and Statistics (M7C) join Members in the "manage" group. Their
     # availability is the native group settings decision, so the navigation, the settings
     # read and the routes agree on one gate: Settings and both insight views open to a
-    # manager (Owner or Admin), in any status that lets the caller view the group, and the
-    # controls each offers still come from settings_management, never from this entry.
+    # manager (Owner or Admin), in every status, because the settings and insight routes
+    # check none and the classic manage page keeps them too. A locked, inactive or
+    # unrecognized status instead closes the profile and logo inside Settings, through
+    # settings_management, so the view is read-only there. The controls each offers still
+    # come from settings_management, never from this entry.
     manage_manager = role in GROUP_SETTINGS_MANAGER_ROLES
+    manage_viewable = bool(view_allowed or manage_manager)
     manage_decisions = group_settings_decisions(role, group, settings, (user_info or {}).get("roles"))
     manage_reason = REFUSAL_MESSAGES[GROUP_MANAGER_REQUIRED]
     sections["settings"] = {
-        **section(manage_manager, manage_manager, manage_reason),
+        **section(manage_manager, manage_manager, manage_reason, viewable=manage_viewable),
         "group": GROUP_MANAGE_SECTION_GROUP,
     }
     sections["activity"] = {
-        **section(manage_decisions["view_activity"] is None, reason=manage_reason),
+        **section(manage_decisions["view_activity"] is None, reason=manage_reason, viewable=manage_viewable),
         "group": GROUP_MANAGE_SECTION_GROUP,
     }
     sections["statistics"] = {
-        **section(manage_decisions["view_stats"] is None, reason=manage_reason),
+        **section(manage_decisions["view_stats"] is None, reason=manage_reason, viewable=manage_viewable),
         "group": GROUP_MANAGE_SECTION_GROUP,
     }
 
@@ -431,24 +442,28 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
         settings, workspace_id, user_info=user_info, file_sync_enabled=file_sync_enabled,
     )
 
-    def section(enabled, can_manage=False, reason="This section is not available for public workspaces yet."):
-        available = bool(view_allowed and enabled)
+    def section(enabled, can_manage=False, reason="This section is not available for this public workspace.", *, viewable=None):
+        # ``viewable`` overrides the status gate for the Manage sections the classic manage page
+        # keeps for the people it names in every status; every other section waits for a status
+        # that lets the caller view the workspace.
+        visible = view_allowed if viewable is None else viewable
+        available = bool(visible and enabled)
         return {
             "enabled": available,
             "can_manage": bool(available and active and can_manage),
-            "reason": None if available else (status_reason if not view_allowed else reason),
+            "reason": None if available else (status_reason if not visible else reason),
         }
 
-    # Public workspaces offer read-only document browsing, a read-only prompts library
-    # (M9C), and -- from M10B -- read-only identities and file sources that a manager of
-    # an active workspace manages, both gated on File Sync for this workspace. Tags remain
-    # unavailable. Sections public workspaces will never have -- agents, actions, endpoints
-    # and workflows -- are left out of the registry entirely rather than shown as "not
-    # available yet".
+    # Public workspaces offer document browsing and management, a tag vocabulary a manager of an
+    # active workspace maintains and every reader browses (the group's Tags rule), a prompts
+    # library (M9C), and -- from M10B -- identities and file sources that a manager of an active
+    # workspace manages, both gated on File Sync for this workspace. Sections public workspaces
+    # will never have -- agents, actions, endpoints and workflows -- are left out of the registry
+    # entirely rather than shown as "not available yet".
     connections_manager_reason = "Your role does not permit managing this public workspace's connections."
     sections = {
         "documents": section(True, manager),
-        "tags": section(False),
+        "tags": section(True, manager),
         "prompts": section(True, manager),
         "identities": section(
             manager and identities_available, manager,
@@ -463,35 +478,48 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
         entry["group"] = WORKSPACE_SECTION_GROUPS[section_id]
     # Members (M10A) is a public management section in the "manage" group, mirroring the
     # group Members section (M7B). Every member may open it in any status that lets them
-    # view the workspace, like every other section; which membership controls it offers
-    # comes from membership_management and each member row's actions, never from this
-    # navigation entry. The public section registry keeps its own ids (M9A); "members"
-    # sits in the shared "manage" group without touching the personal or group registries.
+    # view the workspace, like every other section, and the Owner and Admins keep it in every
+    # status: the classic manage page shows a locked or inactive workspace's members to them, and
+    # the membership routes check no status except to add a member or change a role, which the
+    # member list's own hint withholds. Which membership controls it offers comes from
+    # membership_management and each member row's actions, never from this navigation entry.
+    # The public section registry keeps its own ids (M9A); "members" sits in the shared "manage"
+    # group without touching the personal or group registries.
+    members_manager = role in PUBLIC_MEMBERSHIP_MANAGER_ROLES
     sections["members"] = {
-        **section(True, role in PUBLIC_MEMBERSHIP_MANAGER_ROLES),
+        **section(True, members_manager, viewable=bool(view_allowed or members_manager)),
         "group": GROUP_MANAGE_SECTION_GROUP,
     }
     # Settings, Activity and Statistics (M10C) join Members in the "manage" group. Their
     # availability is the native public settings decision, so the navigation, the settings read
     # and the routes agree on one gate: Settings opens to the owner or an admin, Activity to the
-    # owner or an admin, and Statistics to any stored role, each in any status that lets the
-    # caller view the workspace. The controls each offers still come from settings_management,
-    # never from these entries.
+    # owner or an admin, and Statistics to any stored role, in every status, because the settings
+    # and insight routes check none and the classic manage page keeps them too. A locked,
+    # inactive or unrecognized status instead closes the profile and logo inside Settings, through
+    # settings_management, so the view is read-only there. Anyone the decision doesn't admit still
+    # meets the status's reason while the workspace can't be viewed. The controls each offers
+    # still come from settings_management, never from these entries.
     settings_decisions = public_settings_decisions(role, workspace, settings)
     settings_manager = role in PUBLIC_SETTINGS_MANAGER_ROLES
+    activity_allowed = settings_decisions["view_activity"] is None
+    statistics_allowed = settings_decisions["view_stats"] is None
     settings_manager_reason = PUBLIC_SETTINGS_REFUSAL_MESSAGES[PUBLIC_MANAGER_REQUIRED]
     sections["settings"] = {
-        **section(settings_manager, settings_manager, settings_manager_reason),
+        **section(
+            settings_manager, settings_manager, settings_manager_reason,
+            viewable=bool(view_allowed or settings_manager),
+        ),
         "group": GROUP_MANAGE_SECTION_GROUP,
     }
     sections["activity"] = {
-        **section(settings_decisions["view_activity"] is None, reason=settings_manager_reason),
+        **section(activity_allowed, reason=settings_manager_reason, viewable=bool(view_allowed or activity_allowed)),
         "group": GROUP_MANAGE_SECTION_GROUP,
     }
     sections["statistics"] = {
         **section(
-            settings_decisions["view_stats"] is None,
+            statistics_allowed,
             reason=PUBLIC_SETTINGS_REFUSAL_MESSAGES[PUBLIC_MEMBER_REQUIRED],
+            viewable=bool(view_allowed or statistics_allowed),
         ),
         "group": GROUP_MANAGE_SECTION_GROUP,
     }

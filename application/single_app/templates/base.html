@@ -12,6 +12,7 @@
 
 <head>
   <meta charset="UTF-8" />
+  <script src="{{ url_for('static', filename='js/ui-switch.js') }}" defer></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="screening-user-id" content="{{ session.get('user', {}).get('oid', '') }}" />
   <title>{% block title %}{{ app_settings.app_title }}{% endblock %}</title>

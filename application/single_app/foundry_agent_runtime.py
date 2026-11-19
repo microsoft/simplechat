@@ -39,6 +39,7 @@ from functions_keyvault import (
     retrieve_secret_from_key_vault_by_full_name,
     validate_secret_name_dynamic,
 )
+from agent_credential_contracts import AgentCredentialReentryRequired
 from functions_orchestration_invocation_capture import (
     OrchestrationInvocationDeniedError,
     require_invocation_capture,
@@ -2326,11 +2327,11 @@ def _build_async_credential(
     )
 
     if auth_type == "service_principal":
-        if not client_secret:
+        if not foundry_settings.get("client_secret"):
             raise FoundryAgentInvocationError(
                 "Foundry service principals require client_secret value."
             )
-        resolved_secret = _resolve_secret_value(client_secret)
+        resolved_secret = _resolve_secret_value(foundry_settings["client_secret"])
         if not tenant_id or not client_id:
             raise FoundryAgentInvocationError(
                 "Foundry service principals require tenant_id and client_id values."
@@ -2425,12 +2426,7 @@ def _resolve_foundry_scope(
 
 def _resolve_secret_value(value: str) -> str:
     if validate_secret_name_dynamic(value):
-        resolved = retrieve_secret_from_key_vault_by_full_name(value)
-        if not resolved:
-            raise FoundryAgentInvocationError(
-                f"Unable to resolve Key Vault secret '{value}' for Foundry credentials."
-            )
-        return resolved
+        raise AgentCredentialReentryRequired()
     return value
 
 

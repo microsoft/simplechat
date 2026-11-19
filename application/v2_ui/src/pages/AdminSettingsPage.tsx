@@ -43,6 +43,7 @@ import { ChatDefaultModel } from '../components/admin/ChatDefaultModel';
 import { CapabilityModelPicker } from '../components/admin/CapabilityModelPicker';
 import { ChatModeNotice } from '../components/admin/ChatModeNotice';
 import { ClassificationCategoriesEditor } from '../components/admin/ClassificationCategoriesEditor';
+import { ColorSchemeEditor } from '../components/admin/ColorSchemeEditor';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { ControlCenterAccessMatrix } from '../components/admin/ControlCenterAccessMatrix';
 import { ConversationCacheMetrics } from '../components/admin/ConversationCacheMetrics';
@@ -58,6 +59,7 @@ import { EnhancedExtractionEngine } from '../components/admin/EnhancedExtraction
 import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { FileProcessingLogCleanup } from '../components/admin/FileProcessingLogCleanup';
+import { FileSyncTargetManager } from '../components/admin/FileSyncTargetManager';
 import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
 import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
@@ -92,6 +94,7 @@ import { RelatedSectionLink } from '../components/admin/RelatedSectionLink';
 import { RestartStatus } from '../components/admin/RestartStatus';
 import { RetentionResetDefaults, RetentionRunNow } from '../components/admin/RetentionOperations';
 import { RetentionSchedule } from '../components/admin/RetentionSchedule';
+import { SupportExportPanel } from '../components/admin/SupportExportPanel';
 import { SectionGuide, hasSectionGuide } from '../components/admin/guides/sectionGuides';
 import { GovernanceDialogHost } from '../components/admin/governance/GovernanceDialogHost';
 import { GovernanceFeaturePolicies } from '../components/admin/governance/GovernanceFeaturePolicies';
@@ -150,7 +153,7 @@ import {
     type BrandingAssets,
     type BrandingUploadResponse,
 } from '../lib/adminFields';
-import { CONTROL_CENTER_ACCESS_KEYS, findNavLocation } from '../lib/adminOperations';
+import { CONTROL_CENTER_ACCESS_KEYS, findNavLocation, resolveAdminSectionLink } from '../lib/adminOperations';
 import { toast } from '../stores/toastStore';
 import { buildSectionDependents, computeSectionStatus, readSectionValue, type SectionStatus } from '../lib/adminSections';
 import {
@@ -186,6 +189,7 @@ import {
 import { useScaleStatusStore } from '../stores/scaleStatusStore';
 import type { CatalogConnectionTarget } from '../lib/modelCatalog';
 import type { AdminNavGroup, Json } from '../lib/types';
+
 
 /** One fallback row: an `enable_*` key with no declared field. */
 interface CapabilityRow {
@@ -1189,14 +1193,16 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
         if (!related || !data) {
             return null;
         }
-        const shownHere =
-            !related.classic_only && sections.some((section) => section.sectionId === related.section_id);
+        // A section V2 draws is reached on this page even while a condition hides it, which
+        // navigateToSetting handles. `classic_only` is for a section whose content V2 does not
+        // draw, and the only case left that sends the reader to the classic page.
+        const drawnHere = !related.classic_only && nativeSectionIds.has(related.section_id);
         return (
             <div className={clsx('pb-2', field.type === 'switch' && 'ml-14')}>
                 <RelatedSectionLink
                     label={related.label}
                     location={findNavLocation(data.admin_nav, related.section_id)}
-                    onNavigate={shownHere ? () => goToSection(related.section_id) : undefined}
+                    onNavigate={drawnHere ? () => navigateToSetting(related.section_id) : undefined}
                 />
             </div>
         );
@@ -1278,6 +1284,40 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
     const renderedSectionIds = useMemo(
         () => new Set(sections.map((section) => section.sectionId)),
         [sections],
+    );
+
+    /**
+     * Every section V2 has something to draw, whether or not a condition shows it now.
+     *
+     * A link to one stays on this page: `navigateToSetting` takes the reader to the section
+     * itself, or to whatever switches a hidden one on. A section missing from here -- Standard
+     * Citations, which has no controls -- has nothing to scroll to, so its links go to the
+     * classic tab that holds it.
+     */
+    const nativeSectionIds = useMemo(() => {
+        const ids = new Set<string>();
+        for (const [sectionId, fields] of Object.entries(schema)) {
+            if (fields.length) {
+                ids.add(sectionId);
+            }
+        }
+        for (const row of capabilityRows) {
+            ids.add(row.sectionId);
+        }
+        for (const group of data?.admin_nav ?? []) {
+            for (const tab of group.tabs) {
+                if (tab.render === LATEST_FEATURES_RENDER) {
+                    ids.add(tab.id);
+                }
+            }
+        }
+        return ids;
+    }, [schema, capabilityRows, data]);
+
+    /** Where a link to a section leads: this page, or the classic tab for one V2 does not draw. */
+    const sectionLink = useCallback(
+        (sectionId: string) => resolveAdminSectionLink(data?.admin_nav ?? [], sectionId, nativeSectionIds),
+        [data, nativeSectionIds],
     );
 
     /** Where a Latest Features shortcut lands: a card here, or the classic tab. */
@@ -1718,6 +1758,7 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                                     : undefined
                             }
                             help={field.help}
+                            onNavigate={goToSection}
                         />
                     );
                 }
@@ -1972,6 +2013,17 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                             onOpenSection={goToSection}
                         />
                     );
+                case 'color-scheme-editor':
+                    return (
+                        <ColorSchemeEditor
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
                 case 'document-classification-categories':
                     return (
                         <ClassificationCategoriesEditor
@@ -2046,6 +2098,25 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                             disabled={saving}
                         />
                     );
+                case 'file-sync-target-manager':
+                    // The server decides from the saved switches which kinds of workspace it will
+                    // act on, so the pickers read the saved values, not the draft.
+                    return (
+                        <FileSyncTargetManager
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            availability={{
+                                fileSync: readSwitch('enable_file_sync', false),
+                                redis: readSwitch('enable_redis_cache', false),
+                                personal: readSwitch('enable_file_sync_personal', false),
+                                group: readSwitch('enable_file_sync_group', false),
+                                public: readSwitch('enable_file_sync_public', false),
+                            }}
+                        />
+                    );
+                case 'support-log-export':
+                    return <SupportExportPanel key={key} />;
                 case 'endpoint-links':
                     return (
                         <EndpointLinks
@@ -2146,7 +2217,9 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
         );
     }
 
-    // Only groups that still rely on the fallback scan should point at the classic page.
+    // Only groups that still rely on the fallback scan show the note about switches listed by
+    // their setting name. Every other group is described in full, so there is nothing to add
+    // and nothing on the classic page to send the reader to for it.
     const activeGroupUsesFallback = sections.some(
         (section) =>
             section.capabilities.length > 0 && (!activeGroup || section.groupId === activeGroup),
@@ -2409,6 +2482,7 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                                         }
                                         runtimeFlags={runtimeFlags}
                                         onNavigate={navigateToSetting}
+                                        sectionLink={sectionLink}
                                         dependents={dependentsBySection.get(section.sectionId)}
                                         // While a search is filtering, a match inside a
                                         // collapsed group has to be shown or the card would
@@ -2461,13 +2535,8 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
 
                                 {!loading && activeGroupUsesFallback && (
                                     <p className="pb-6 text-center text-xs text-text-3">
-                                        Settings in this group that need more than a switch —
-                                        endpoints, keys, prompts and connection tests — are still on
-                                        the{' '}
-                                        <a href="/admin/settings" className="text-accent underline">
-                                            classic admin page
-                                        </a>
-                                        .
+                                        Switches listed by their setting name have no description yet.
+                                        Each one saves exactly as it is stored.
                                     </p>
                                 )}
 

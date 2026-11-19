@@ -4,29 +4,58 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.418"
+version: "0.261.446"
 ---
 
 ## How to use this reference
 
 Use this page when you can see a control in Chat but are not sure what it does or when to use it. The generated inventory lists 47 real controls plus 3 child sub-elements. The child elements `document-comparison-edit-btn-label`, `fork-conversation-button-label`, and `fork-conversation-button-spinner` are mentioned with their parent controls instead of receiving separate rows.
 
-### Native workbook evidence
+### Orchestration evidence, answer and delivery phases
 
-Fixed/Implemented in version: **0.261.417**
+Fixed/Implemented in version: **0.261.446**
+(`application/single_app/config.py`).
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| Quiet activity phase | Names the current purpose: Gather evidence, Prepare answer, or Deliver file, without exposing a machine-role wall. | Running or waiting orchestration |
+| Plan activity disclosure | Expands exact step names and settled/running/waiting states while keeping the current answer-first thread quiet. | Quiet activity row |
+| Run details | Opens the existing collapsed plan inspector; it does not create a second failure or progress card. | Running or saved orchestration |
+| Qualified calculation answer | States supported preparation facts and the unavailable determination without repeating a generic partial-work warning. | Complete preparation exists but the complete calculation bundle does not |
+
+Actionable transport, sign-in, approval, cancellation and actual file-delivery
+states remain visible. A qualified narrative answer is not a completed
+calculation, downloadable dataset or delivered report.
+
+### Native Word and workbook evidence
+
+Fixed/Implemented in version: **0.261.417**, extended in **0.261.422**
 (`application/single_app/config.py`).
 
 | Control | Purpose | Availability |
 | --- | --- | --- |
 | Native note/comment citation | Opens exact retained reviewer text and its worksheet/cell, author, reply metadata, and saved cell value. | A citation with an unambiguous retained native-evidence reference |
-| Open workbook preview (separate from annotation evidence) | Opens worksheet data independently; the preview is not presented as the cited reviewer text. | Successfully authorized native-evidence view |
+| Native Word comment citation | Shows the retained comment and linked replies, available author/date/resolution, and anchored text with its completeness limit. | Authorized native Word evidence from `.docx`, `.docm`, or `.dotx` |
+| Open workbook preview (separate from annotation evidence) | Opens worksheet data independently; the preview is not presented as the cited reviewer text. | Successfully authorized workbook evidence, not Word comments |
 
-Source access and the inspected workbook version are rechecked when evidence
+Source access and the inspected document version are rechecked when evidence
 opens. An unavailable historical reference stays unavailable rather than choosing
 a newer comment at the same cell. See
 [Inspect Excel data, comments, and structure]({{ '/guides/inspect-excel-workbooks/' | relative_url }}).
+Word comment evidence uses document anchors rather than invented page/cell
+locations. An absent resolution flag remains unavailable, not automatically
+unresolved. See [Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
 
 ## Conversation list
+
+### Account-menu interface switch
+
+Implemented in version: **0.261.449** (`application/single_app/config.py`).
+
+**Switch to modern UI** or **Switch to legacy UI** saves your account's preferred
+interface and opens the corresponding page, preserving the active conversation
+where supported. It is available only when administrators allow both interfaces.
+If saving fails, the page stays open and the menu explains the error.
 
 {% include media.html src="reference/chat-controls-conversation-list.png" alt="Conversation list showing selection actions and the new-chat button." title="Conversation list" capture="Capture the conversation list with selection actions and the new-chat button visible. Redact conversation titles and user names." %}
 
@@ -112,6 +141,28 @@ Fresh chats keep document search off. Old public-only launches become selected
 public workspace chips rather than a separate aggregate-public mode.
 See [Uploading and managing documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}).
 
+### React V2 workspace scope lock
+
+Implemented in version: **0.261.448** (`application/single_app/config.py`).
+A conversation locks itself to the workspaces behind its first grounded reply, and the
+**Documents** picker then lists only those workspaces. V2 shows that lock and, where it is
+allowed, lets you unlock it or lock it again, so a conversation that locked to the wrong
+workspace does not have to be abandoned. A conversation that has not used a workspace
+document yet has no lock to show.
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| Padlock beside the conversation title | Shows whether the workspace scope is locked or unlocked and opens the lock dialog. Its label states both, such as "Workspace scope is locked. Review or unlock it." | A conversation that has used workspace documents |
+| Workspace scope row in **Details** | Lists the locked workspaces beside a **Locked** or **Unlocked** chip, with **Unlock scope…**, **Lock scope…** or **View details**. | Same |
+| Locked-scope note in **Documents** | Says why only some workspaces are listed and offers **Manage** or **Details**. Selecting it closes the picker and opens the dialog. | A locked conversation |
+| Unlock scope / Lock scope dialog | Says what the lock does and which workspaces it covers, then applies the change at once. If the server refuses, the change is undone and the reason appears in the dialog. Locking warns that sources already added from other workspaces must be removed before you send. | The owner of a personal conversation, or anyone who can post in a shared one. Unlocking also needs [`enforce_workspace_scope_lock`]({{ '/admin/chat/' | relative_url }}) to be off |
+| Read-only scope dialog | Explains why nothing can be changed: the administrator enforces the lock, only the owner or people who can post may change it, or no workspace has been recorded to lock to. | Whenever the change is not allowed |
+
+Unlocking keeps the list of workspaces, so locking again returns to the same set. See
+[Lock workspace scope in chat]({{ '/guides/lock-workspace-scope/' | relative_url }}) for the
+steps. The control's rules are written up in
+`docs/explanation/features/V2_CONVERSATION_SCOPE_LOCK.md`.
+
 ### React V2 document-evidence status
 
 Implemented in version: **0.261.388** (`application/single_app/config.py`).
@@ -153,6 +204,35 @@ check. If the check cannot confirm sign-in, the notice stays visible.
 **Reconnect Microsoft 365** remains specific to a real Microsoft 365 action;
 a failed background outgoing-action lookup does not add an M365 banner to
 an unrelated conversation.
+
+### Agent credential recovery
+
+Fixed/Implemented in version: **0.261.429** (`application/single_app/config.py`).
+Recovery button presentation updated in version: **0.261.430**.
+Guided recovery implemented in version: **0.261.431**.
+When an agent cannot use its embedded connection credentials, the chat error
+explains that the agent needs updating. This is separate from entering your own
+credentials for a shared action.
+
+| Control or guidance | Purpose | Availability |
+| --- | --- | --- |
+| Guided recovery / Update agent credentials | Step 1 opens the affected agent's **Model & connection** settings in a new tab. Step 2 explains how to return and select **Retry** on your message, or start a new conversation. | A failed agent-credential request, and the server confirms current edit permission for that exact personal, group, or global agent |
+| Contact a group owner | Explains who can repair a shared group agent when your current group role, governance policy, or group status does not permit editing. | Group-agent credential failure without edit permission |
+| Contact a site administrator | Directs users to an authorized administrator instead of showing an unusable editor link. | Organization-wide agent failure without the Admin role, or unavailable personal authoring |
+
+After an authorized editor saves the replacement, return to chat and deliberately
+retry the message. Opening the editor or saving the agent never replays the failed
+request automatically. Editor entry and saving still recheck permissions.
+There is no in-chat agent-secret form or email notification.
+The two steps sit side by side on larger screens and stack on phones. Users
+without edit permission see **Request an update**, with the appropriate contact
+guidance, instead of an editor button.
+
+The comfortable chat layout uses the same 720-pixel maximum reading column for
+messages and the composer at the default text size. **Wide** retains its
+full-width layout; mobile message and composer margins remain aligned.
+
+See [Update agent credentials]({{ '/guides/workspace-agents-and-actions/' | relative_url }}#update-agent-credentials-after-a-security-update).
 
 ### Personal action credential cards
 
@@ -295,6 +375,12 @@ arrived during streaming. After granting access, send the message again.
 | `conversation-documents-toggle` | Opens the used-documents drawer for files and sources referenced by the conversation. | Use it to audit what grounded an answer or to get back to a cited source. | Always available |
 | `header-scope-lock-btn` | Shows that the conversation search/document scope is locked and opens the scope-lock modal. | Use it to confirm why a chat is constrained before asking broader questions. | Always available |
 | `confirm-scope-lock-toggle-btn` | Confirms a scope-lock change from the scope-lock modal. | Use it when you intentionally want to lock or unlock the conversation scope after reviewing the warning. | Always available |
+
+The V2 interface draws the same workflow activity control as an icon in its conversation header. Its scope-lock control is described under [React V2 workspace scope lock](#react-v2-workspace-scope-lock). These controls exist only in V2, so they are not part of the generated inventory above, which is taken from the classic chat page.
+
+| V2 control | What it does | Why you would use it | Available when |
+| --- | --- | --- | --- |
+| Open workflow activity (activity icon) | Opens the [Workflow activity page]({{ '/guides/view-workflow-activity/' | relative_url }}) in a new tab for the workflow that made this conversation, at `/v2/workflow-activity` with the conversation, workflow and scope carried in the address. | Follow a running workflow's timeline beside the chat, or see what a finished run did, without leaving the conversation. | The conversation was made by a workflow, and `allow_user_workflows` is on for a personal workflow or `enable_group_workspaces` is on for a group workflow |
 
 ## Chat tools and composer
 
@@ -690,8 +776,11 @@ also depends on configured storage and current source access.
 
 Implemented in version **0.261.109**. These response-specific controls appear in
 classic chat and React V2 when an assistant message has a saved Analyze result.
-They are rendered with the response rather than added to the always-visible
-toolbar. See [Read and discuss saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}).
+Since **0.261.424** (`application/single_app/config.py`), open the response's
+**Sources** control to read them instead of finding a separate analysis card
+under every answer. Sources remains available for saved analyses with no
+ordinary citations, zero records, or an unavailable-result explanation.
+See [Read and discuss saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}).
 
 The answer remains the readable overview, even after a supporting export finishes.
 The overview and download previews are not the full findings set. Ordinary
@@ -706,7 +795,8 @@ failed answer or promote partial findings to complete input.
 
 | Control or notice | What it does | Why you would use it | Available when |
 | --- | --- | --- | --- |
-| **Saved analysis** | Identifies the saved result and shows displayed-versus-total record counts, separate source counts, and its validation notice. | Distinguish a readable overview or one page from the full saved findings set. | The assistant message carries a saved result; an unavailable result shows a notice instead of result controls |
+| **Saved analysis** | Identifies the result inside Sources, with total saved findings, displayed-versus-total counts when expanded, separate source counts, and validation details. | Distinguish a readable overview or one page from the full saved findings set. | Sources is open and the assistant message carries a saved result; an unavailable result shows an explanation instead of result controls |
+| **Analysis limitation / View sources** | Keeps a compact warning below the answer for partial, pending, unvalidated, invalid, or unavailable saved analysis. | Notice a material qualification without displaying processing details under every successful answer. | A saved result has a limitation; ordinary structural success does not add a warning |
 | **Findings and limitations** | Expands accepted findings and any **Limitations and validation issues**, loading up to 25 complete records at a time. | Inspect details without downloading a file or displaying the whole result at once. | The saved result is available |
 | **Previous findings** / **Next findings** | Reads the preceding or following page of the same saved result. | Review records outside the currently displayed range. A page's source count may be smaller than the result's total source count. | A corresponding page exists and the current page has loaded |
 | **Evidence for finding …** | Loads that finding's saved supporting passages and any saved filename, page, or chunk location. The label includes the finding's identifier. | Understand what supports a finding without treating it as independently verified. | The finding has saved evidence references |
@@ -728,6 +818,12 @@ exhaustiveness. **Partial analysis**, **Validation pending**, **Validation faile
 and **Not validated** remain distinct notices; execution completion does not turn
 them into successful validation. Saved evidence and explanations do not imply a
 new independent check of the original sources.
+
+A completed native comment inventory can return zero comments and still support
+a cited absence claim. Since **0.261.424**, that is not classified as missing
+document evidence merely because the annotation count is zero. Incomplete
+inspection and missing body-text evidence remain separate limitations. A
+saved-finding count is not a native comment count.
 
 Since **0.261.232**, these results, their evidence, derived explanations, and
 original exports take their access from the originating conversation. A
@@ -820,6 +916,17 @@ for recorded context and associated documents.
 | Documents button badge | Counts the documents answers used plus every file and document the conversation produced, each once. Media is not counted. | Use it to see at a glance that a reply produced a file, even with the drawer closed. | Always available |
 | Generated (Documents drawer) | Lists every file the conversation produced, in conversation order. That covers the files an orchestration plan rendered (CSV, Excel, Word, PDF, PowerPoint, Markdown, text, JSON, XML and YAML), exports and Analyze or comparison files a reply wrote, and documents agents created with the SimpleChat upload actions. A file that is still rendering, failed, or waits for a shared conversation owner's approval is listed with its status. **Download** appears once the file is ready, and only where the workspace's download rules allow it for an agent's document. Markdown and files that carry a preview open in place, and **Show in conversation** scrolls to the reply that produced the file. | Use it to download or reopen a file a reply made, such as a CSV export, without scrolling back through the thread to find its card. | Always available; agent documents follow [`allow_personal_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) and [`allow_group_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) |
 | Media (Documents drawer) | Gathers every image, video and audio clip shown in the conversation, including signed links an action fetched from a remote service, grouped as **Images**, **Videos** and **Audio** with a count for each. Images and clips open one viewer that steps through all of them, with **Show in conversation** to scroll to the message. Recordings play in place and can be downloaded. | Use it to find a photo, clip or recording again in a long thread. | Always available |
+
+## Generated file actions (V2 interface)
+
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They sit on a generated-file card in the thread, beside **Download** and **View**, and carry over the classic card's **Add to Workspace** and **Create PowerPoint** buttons. Implemented in version **0.261.448** (`application/single_app/config.py`). The rules behind each control are written up in `docs/explanation/features/V2_GENERATED_ARTIFACT_ACTIONS.md`.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Add to workspace | Opens a dialog that names where the file will be saved, then saves it as a workspace document. A personal conversation saves to your personal workspace. A group or public conversation submits the file to that workspace for approval, and a conversation that does not name its workspace lets you choose from your own. It is not offered while a background export is still running or while the file waits for approval. | Use it to make a generated report searchable and reusable in a workspace instead of leaving it inside one conversation. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}), [`enable_group_workspaces`]({{ '/admin/workspaces/' | relative_url }}) or [`enable_public_workspaces`]({{ '/admin/workspaces/' | relative_url }}) for the destination; your role in the workspace and its approval rules are checked by the server |
+| Added to workspace / Pending approval | Replaces the button once the file is in your personal workspace or has been submitted to a group or public workspace. It stays while the page is open. | Use it to see at a glance which files have already gone, without a second copy being created by pressing again. | Same as Add to workspace |
+| Check again | Replaces **Add to workspace** when the server could not confirm that the publication finished, and the card says so. Choosing it sends the same request, and the server answers with the existing publication rather than creating a second copy. | Use it after a message that the publication could not be fully confirmed. | Same as Add to workspace |
+| Create PowerPoint | Builds a PowerPoint deck from a generated Markdown file and downloads it, showing a pending message while the slides are planned. The deck comes from the stored file, not from the reply's text. It is not offered on spreadsheet exports or in a shared conversation. | Use it to turn a generated outline or report into slides without copying it anywhere first. | Markdown files in your own conversations |
 
 ## Media in replies (V2 interface)
 

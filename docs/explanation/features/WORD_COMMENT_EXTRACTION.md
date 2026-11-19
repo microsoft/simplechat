@@ -1,7 +1,7 @@
 # Word Document Comment Extraction (`.docx`, `.docm`, `.doc`, `.dotx`)
 
 **Implemented in version: 0.261.390**  
-**Related config.py version: `0.261.390`**  
+**Related config.py version: `0.261.444`**
 **Related issue: [#1850](https://github.com/microsoft/simplechat/issues/1850)**
 
 ## 1. Overview and Purpose
@@ -55,6 +55,26 @@ Please extend the payment window to 60 days.
 - Reply by Bob Author (BA) [2025-02-10T15:30:00Z]: Updated in section 4.2.
 ```
 
+## Orchestrated disposition exports
+
+Fixed/Implemented in version: **0.261.444**
+(`application/single_app/config.py`).
+
+When a compose step produces a Word comment-disposition records table, its
+`annotation_provenance_input` names the complete prepared output of the native
+comments reader. The existing records CSV path projects `comment_author`,
+`comment_date`, `reply_ids`, and `comment_replies` from that authorized native
+inventory. Reply IDs and ordered reply metadata are canonical JSON strings in
+scalar cells, so exact-tabular renderers and their row/column checks remain
+unchanged.
+
+Rows match by exact native root ID and authorized source. Every expected root
+must occur once; unknown roots, duplicate roots, incomplete inventories and
+fabricated attribution are refused. Missing metadata stays qualified rather
+than being inferred, and the original disposition values are not replaced.
+This projection changes no Word parsing, source bytes, comment state or comment
+resolution.
+
 ---
 
 ## 4. Testing and Validation
@@ -63,5 +83,6 @@ Please extend the payment window to 60 days.
   - Validates OOXML `.docx` comment extraction, anchor text capture, reply threading (`commentsExtended.xml`), and resolved status.
   - Validates reading-order chunk placement into target document chunks without inventing duplicate page numbers.
   - Validates legacy `.doc` FIB (`FibRgLw97` / `FibRgFcLcb97`) comment extraction, author/initials decoding, bookmark anchor text, and clean separation of `ccpAtn` from body text.
+  - Validates deterministic author/date/reply projection and refusal of fabricated metadata for disposition CSV rows.
 - **Regression Test**: `functional_tests/test_legacy_doc_ole_extraction.py` and `functional_tests/test_figure_chunk_association.py`.
 - **Related Architecture**: See [Document Accessibility, Structure, and Comment Extraction](DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md) for the full Mermaid dissection and storage routing diagrams across PDF, Word (`.docx`, `.docm`, `.dotx`, `.doc`), and PowerPoint (`.pptx`).

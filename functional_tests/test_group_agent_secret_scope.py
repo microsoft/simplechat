@@ -1,8 +1,9 @@
 # test_group_agent_secret_scope.py
 """
 Functional test pinning the §2.1 agent Key Vault scope seam.
-Version: 0.261.138
+Version: 0.261.428
 Implemented in: 0.261.138
+Updated in: 0.261.428
 
 Before M4C the shared editor engine hardcoded every agent credential to the
 ``user`` Key Vault scope: ``_secret_scope`` returned ``(record_id, "agent",
@@ -14,8 +15,9 @@ read) or mint an orphan ``{agent_id}--agent--user--{name}`` secret that the lega
 
 This test pins the fix directly at the seam: for ``kind="agents"`` the resolved
 scope is ``group`` exactly when a ``group_id`` is present, and ``user`` otherwise,
-while the source stays ``agent`` and the scope value stays the agent id. Personal
-agents (no ``group_id``) are unchanged, and actions keep their own scoping.
+while the source stays ``agent``. Since 0.261.428 the scope value binds the owning
+workspace, agent and field instead of trusting an agent id alone. Actions keep
+their existing scoping.
 """
 
 import importlib.util
@@ -27,6 +29,7 @@ import pytest
 
 from test_support.agent_delegation import APP_ROOT
 from test_support.versioning import assert_app_version_at_least
+from agent_credential_contracts import agent_credential_scope
 
 
 @pytest.fixture
@@ -60,27 +63,29 @@ def test_version_at_least_implementation():
 
 def test_group_agent_secret_resolves_to_group_scope(secret_scope):
     assert secret_scope("agents", "user-1", AGENT_RECORD, KEY_PATH, group_id="group-a") == (
-        "agent-123", "agent", "group",
+        agent_credential_scope("group", "group-a", "agent-123", KEY_PATH), "agent", "group",
     )
 
 
 def test_personal_agent_secret_stays_user_scope(secret_scope):
     assert secret_scope("agents", "user-1", AGENT_RECORD, KEY_PATH) == (
-        "agent-123", "agent", "user",
+        agent_credential_scope("user", "user-1", "agent-123", KEY_PATH), "agent", "user",
     )
     assert secret_scope("agents", "user-1", AGENT_RECORD, KEY_PATH, group_id=None) == (
-        "agent-123", "agent", "user",
+        agent_credential_scope("user", "user-1", "agent-123", KEY_PATH), "agent", "user",
     )
 
 
-def test_agent_scope_value_is_the_agent_id_not_the_group_or_user(secret_scope):
-    # Whichever namespace it lives in, an agent secret is keyed by the agent id and
-    # the ``agent`` source, so the legacy save/delete helpers address the same name.
+def test_agent_scope_value_binds_owner_agent_and_field(secret_scope):
     group_value, group_source, _ = secret_scope(
         "agents", "user-1", AGENT_RECORD, KEY_PATH, group_id="group-a",
     )
     user_value, user_source, _ = secret_scope("agents", "user-1", AGENT_RECORD, KEY_PATH)
-    assert group_value == user_value == "agent-123"
+    assert group_value != user_value
+    assert group_value != secret_scope(
+        "agents", "user-1", AGENT_RECORD, KEY_PATH, group_id="group-b",
+    )[0]
+    assert user_value != secret_scope("agents", "user-2", AGENT_RECORD, KEY_PATH)[0]
     assert group_source == user_source == "agent"
 
 

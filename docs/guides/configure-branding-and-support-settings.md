@@ -104,6 +104,8 @@ Use **General > Branding** when you want the app header and landing experience t
 
 After saving, check both light and dark themes. Logos that look crisp on a white background can disappear on dark mode if they use transparent dark text.
 
+Starting in **0.261.441** on Development, each instance restores the saved custom favicon at startup and checks it again before serving the favicon image for the classic or V2 interface. The existing favicon version in the image URL prevents reuse of an older browser-cached icon after an upload. Redis shares settings, not generated image files; this restoration also works when settings are read directly from Cosmos without Redis. See [Custom Favicon Persistence Fix](../explanation/fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md).
+
 ## Home Page Text
 
 Use **General > Home Page Text** to control the copy users see before entering the app.
@@ -115,6 +117,12 @@ Use **General > Home Page Text** to control the copy users see before entering t
 5. Save and open the home page to confirm the final rendering.
 
 Good home page text usually answers three questions: who the app is for, what data handling expectations apply, and where users can get help. If you link to policy pages or internal guidance, use full URLs or application-relative paths that work in the deployed environment.
+
+### Where the home page text and branding appear
+
+The title, logo, home page text and classification banner you set here are shown on the home page for visitors who are signed out or signed in without a role, and on the Acceptable Use Policy and rate limited pages. A modern version of each of those pages exists, reads the same settings and follows the same rules, but it is not served yet: it is switched on only when the interface selector is released, so these pages do not change for your users today. See [V2 Modern Standalone Pages](../explanation/features/V2_MODERN_STANDALONE_PAGES.md) for what the modern pages show.
+
+The default home page text links to `acceptable_use_policy.html`, which is an example policy. To publish your own wording, change both `templates/acceptable_use_policy.html` and `templates/modern/acceptable_use_policy.html`, or point the home page text at a policy you host.
 
 ## Health Checks
 

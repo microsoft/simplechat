@@ -52,6 +52,14 @@ def is_mcp_action(manifest):
     return resolve_action_type(manifest) == "mcp"
 
 
+def is_document_search_action(manifest):
+    """Only registered native Document Search types can bind workspace sources."""
+    declared = resolve_action_type(manifest)
+    return re.sub(r"[\s_-]", "", declared).lower() in {
+        "documentsearch", "documentsearchplugin", "search",
+    }
+
+
 def is_retired_mcp_stdio(manifest):
     """Inspect historical records without running active-config normalization."""
     if not isinstance(manifest, dict):

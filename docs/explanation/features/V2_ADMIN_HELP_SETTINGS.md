@@ -125,7 +125,7 @@ features alone. This affects both interfaces.
 | Overview | Explains the email workflow, warns that the draft is text only, and links to the Support settings for end-user feedback |
 | Report a Bug / Request a Feature | Name and email prefilled from bootstrap. Inline validation, a POST, the mailto draft, and an "open the draft" fallback link. Typed text survives search and category changes. Never touches the save bar |
 | User-Facing Latest Features | Publication notice that jumps to Support, the documentation-links switch, and a release-grouped share checklist. Rows expand to a preview with details, steps, screenshots and filtered user shortcuts. Per-release Share all / Hide all |
-| Admin Latest Features | A synthetic `latest-features` card with a **New** badge. Releases collapse, rows expand to details, why it matters, rollout notes, screenshots and shortcuts. A shortcut jumps in-page when V2 draws the target and otherwise opens `/admin/settings#<tab>` |
+| Admin Latest Features | A synthetic `latest-features` card with a **New** badge. Releases collapse, rows expand to details, why it matters, rollout notes, screenshots and shortcuts. A shortcut jumps in-page when V2 draws the target and otherwise opens `/admin/settings?ui=classic#<tab>` |
 | Version banner | Registered / Unregistered pill and a registration dialog, kept outside the version live region |
 
 The Help category in the rail, and its option in the phone category picker, carry

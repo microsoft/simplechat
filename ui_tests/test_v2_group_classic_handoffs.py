@@ -1,17 +1,23 @@
 # test_v2_group_classic_handoffs.py
 """
 M8A classic handoff cleanup for the native V2 group workspace.
-Version: 0.261.323
+Version: 0.261.448
 Implemented in: 0.261.153
 A workflow's resource segment is its editor page, no longer a redirect to the workflow query: 0.261.271
+No hand-off to classic is left in the group workspace for any role or status: 0.261.448
 
 Every group workspace section is native now, so the V2 group pages must stop sending people to
 classic where classic offers nothing more. This suite pins that the "Classic" availability labels
 and the overview's Classic promise are gone, that a stray resource segment redirects to its own
 section (a workflow's segment opens its editor page) instead of a classic panel, that the actions-off surface keeps only
-the Call agent view, that Tags drops its classic button, and that Documents keeps a relabelled
-classic-tools link (classic still owns the legacy-document upgrade).
+the Call agent view, that Tags drops its classic button, and that Documents no longer offers a
+classic-tools link (the legacy-document upgrade is native: ui_tests/test_v2_legacy_document_upgrade.py).
+The header's "Manage group (classic)" button is gone for every role and status (an inactive or
+unknown group's managers keep their native Manage sections), and the Settings danger zone deletes
+the group natively instead of opening classic.
 """
+
+import re
 
 import pytest
 from playwright.sync_api import expect
@@ -135,14 +141,54 @@ def test_tags_section_has_no_classic_button(group_ui):
     ui.assert_clean()
 
 
-def test_documents_section_shows_the_relabelled_classic_link(group_ui):
+@pytest.mark.parametrize("role", ["Owner", "Admin", "User"])
+@pytest.mark.parametrize("raw_status", ["active", "locked", "upload_disabled", "inactive", "frozen"])
+def test_no_group_page_offers_a_classic_button_in_any_status(group_ui, role, raw_status):
+    ui = group_ui
+    ui.active_group = "group-a"
+    ui.groups["group-a"] = group_context("group-a", "Research group", role=role, status=raw_status)
+    ui.open("/groups/group-a")
+    expect(ui.page.get_by_text("About this group", exact=True)).to_be_visible()
+    # The header used to show "Manage group (classic)" for an inactive or unknown group. Nothing on the
+    # page -- header, rail, overview -- is named for classic any more, whatever the role or status.
+    expect(ui.page.get_by_role("button", name="Manage group (classic)", exact=True)).to_have_count(0)
+    main = ui.page.get_by_role("main")
+    expect(main.get_by_role("button", name=re.compile("classic", re.IGNORECASE))).to_have_count(0)
+    expect(main.get_by_role("link", name=re.compile("classic", re.IGNORECASE))).to_have_count(0)
+    expect(main.get_by_text("Classic", exact=True)).to_have_count(0)
+    assert not ui.classic_visits, "No status hands the group workspace off to a classic page."
+    ui.assert_clean()
+
+
+def test_settings_danger_zone_deletes_natively_not_through_classic(group_ui):
+    ui = group_ui
+    ui.group_file_count["group-a"] = 0
+    ui.open("/groups/group-a/settings")
+    danger = ui.page.get_by_test_id("group-settings-danger")
+    expect(danger).to_be_visible()
+    expect(ui.page.get_by_role("button", name="Delete group (classic)", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Open classic", exact=True)).to_have_count(0)
+    expect(danger.get_by_role("button", name="Delete group", exact=True)).to_be_visible()
+    ui.page.get_by_test_id("group-settings-delete").click()
+    # The confirmation is a native one: it names what the delete does, with no "Open classic" step.
+    confirm = ui.page.get_by_role("dialog", name="Delete this group?", exact=True)
+    expect(confirm).to_be_visible()
+    expect(confirm.get_by_role("button", name="Open classic", exact=True)).to_have_count(0)
+    confirm.get_by_role("button", name="Cancel", exact=True).click()
+    assert not ui.classic_visits and not ui.deleted_groups
+    ui.assert_clean()
+
+
+def test_documents_section_has_no_classic_tools_link(group_ui):
     ui = group_ui
     ui.open("/groups/group-a/documents")
-    link = ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True)
-    expect(link).to_be_visible()
-    expect(link).to_contain_text("Classic tools")
-    # The generic classic-group-workspace button is gone; only the documents-scoped tools link remains.
+    expect(ui.page.get_by_role("searchbox", name="Search documents. Press Enter to search immediately.", exact=True)).to_be_visible()
+    # Classic used to own the legacy-document upgrade, so Documents carried a classic-tools link. The
+    # upgrade is native now, so neither that link nor the generic classic-group-workspace button remains.
+    expect(ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_text("Classic tools", exact=True)).to_have_count(0)
     expect(ui.page.get_by_role("button", name=CLASSIC_BUTTON, exact=True)).to_have_count(0)
+    assert not ui.classic_visits, "Documents must never fall through to a classic page."
     ui.assert_clean()
 
 
@@ -152,7 +198,8 @@ def test_documents_section_shows_the_relabelled_classic_link(group_ui):
 def test_classic_cleanup_layout(group_ui, theme, width, height):
     ui = group_ui
     ui.open("/groups/group-a/documents", theme=theme, width=width, height=height)
-    expect(ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("searchbox", name="Search documents. Press Enter to search immediately.", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True)).to_have_count(0)
     ui.assert_no_overflow()
 
     ui.open("/groups/group-a", theme=theme, width=width, height=height)

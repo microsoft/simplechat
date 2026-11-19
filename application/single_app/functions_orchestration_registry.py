@@ -764,9 +764,10 @@ CAPABILITY_REGISTRY = (
             "The question asks about information likely held in the user's own documents, "
             "and no particular document has been named. Prefer this over analysing a whole "
             "document when a few passages would answer the question."
-            " For Excel Notes or threaded comments, use native_section=comments with explicit "
-            "document_ids. This reads the native inventory across pages, including available "
-            "authors, replies, dates, resolution, worksheet/cell and saved cell values. Bind "
+            " For Word review comments (.docx, .docm, .dotx), or Excel Notes/threaded comments, "
+            "use native_section=comments with document_ids. This reads the native inventory, "
+            "including available anchors, authors, replies, dates and resolution; Excel also "
+            "includes worksheet/cell and saved cell values. Bind "
             "prepared or evidence to compose; row analysis alone cannot read annotations."
         ),
         'settings_gates': (),
@@ -798,7 +799,7 @@ CAPABILITY_REGISTRY = (
                 'top_n': {'type': 'integer', 'minimum': 1, 'maximum': 50, 'default': 12},
                 'native_section': {
                     'type': 'string', 'enum': ['comments'],
-                    'description': 'Read actual Excel Notes/threaded comments instead of search excerpts.',
+                    'description': 'Read actual Word review comments or Excel Notes/threaded comments, not search excerpts.',
                 },
             },
             'required': ['query'],
@@ -982,11 +983,24 @@ CAPABILITY_REGISTRY = (
         'request_gate': None,
         'summary': "Compute over CSV or Excel data rather than reading it as prose.",
         'when_to_use': (
-            'Compute over exactly one authorized replayable CSV or workbook without publishing files. '
+            'Compute over authorized replayable CSV or workbook data without publishing files. '
             'Query requires a row-local query_expression and explicit columns; transformations require '
             'an executable transformation_spec or explicit schema. Analysis-only returns analysis, '
             'not implicit source rows. Declare exactly the selected result_output_variants outputs. '
-            'Mixed/multiple sources and bare prose aggregate plans are unsupported.'
+            'query/transform/analysis accept one file. For precise multi-file calculations or grouped '
+            'totals, use native_operation=prepare first to retain complete rule/context columns and '
+            'declared key profiles. A newly authored multi-file native_operation=relate must set '
+            'calculation_mode=prepared-v1, bind exactly that preparation context input, and omit '
+            'relational_spec; its native owner authors and executes the bounded deterministic program. '
+            'Direct trusted explicit-spec plans are a legacy compatibility path, not a new planner choice. '
+            'Each dataset column is alias.header. '
+            'datasets[].columns is an optional assertion of the complete ordered native header, '
+            'including unused fields, not a projection. Copy the inspected header or omit that '
+            'assertion; a project step selects fields. Never infer complete rows from schema samples. '
+            'Join how/cardinality/on are explicit; null keys never match. Aggregated sum/min/max are '
+            'decimal strings, not floats. Preparation declares context and coverage; calculation '
+            'declares records, lineage and coverage. '
+            'All bound datasets must contribute to the result. No prose-only calculation or narrative source is admitted.'
         ),
         'settings_gates': (),
         'settings_gates_any': (
@@ -1003,7 +1017,7 @@ CAPABILITY_REGISTRY = (
         'result_contract_version': 'native-tabular-result-v1',
         'result_outputs': {'coverage': 'structured-v1'},
         'optional_result_outputs': {'records': 'records-v1', 'analysis': 'structured-v1'},
-        'result_input_kinds': {},
+        'result_input_kinds': {'preparation': ('structured-v1',)},
         'partial_inputs_supported': False,
         'produces': (PRODUCES_RETAINED_RESULTS,),
         'cost_class': COST_CLASS_MEDIUM,
@@ -1472,6 +1486,11 @@ CAPABILITY_REGISTRY = (
             "The step can use the selected action's functions within execution limits. "
             "Use execution_intent operate for requested operations, following the action's policies. "
             "Bind earlier research or prepared content as named inputs. Do not duplicate agent work."
+            " When the action catalog says document_binding_supported, bind selected workspace "
+            "documents in arguments.document_ids. Native metadata inspection can then satisfy "
+            "the selected-source requirement without a redundant Search or Analyze step. "
+            "Declare document_read_mode=content for text, native for native properties/layout/comments, "
+            "or mixed for both; a native report is never a CSV data or calculation reader."
         ),
         'settings_gates': (
             'enable_chat_orchestration',
@@ -1497,6 +1516,23 @@ CAPABILITY_REGISTRY = (
                 'execution_intent': {
                     'type': 'string', 'enum': ['gather', 'operate'], 'default': 'gather',
                     'description': 'Gather information, or perform the requested operation under existing policies.',
+                },
+                'document_ids': {
+                    'type': 'array', 'minItems': 1, 'maxItems': 100, 'uniqueItems': True,
+                    'items': {'type': 'string', 'minLength': 1},
+                    'description': (
+                        'Exact selected workspace document IDs. Only an action whose catalog says '
+                        'document_binding_supported may use this field. Every read is confined to '
+                        'these sources and the action/user permissions.'
+                    ),
+                },
+                'document_read_mode': {
+                    'type': 'string', 'enum': ['content', 'native', 'mixed'],
+                    'description': (
+                        'Purpose of a document-bound action: content reads, native metadata inspection, '
+                        'or both. Requires document_ids and a Document Search action. '
+                        'Source format and current permissions still restrict every function.'
+                    ),
                 },
                 'visuals': {
                     'type': 'array', 'items': {'type': 'string', 'enum': [VISUAL_CHART]},
@@ -1627,6 +1663,36 @@ CAPABILITY_REGISTRY = (
                 'knowledge_basis': {'type': 'string', 'enum': list(KNOWLEDGE_BASES)},
                 'response_policy': {
                     'type': 'string', 'enum': ['available_information', 'complete_inputs'],
+                },
+                'tabular_requirement': {
+                    'type': 'object',
+                    'additionalProperties': False,
+                    'required': ['mode', 'document_ids'],
+                    'properties': {
+                        'mode': {'type': 'string', 'enum': [
+                            'overview', 'complete_records', 'calculation', 'calculation_answer',
+                        ]},
+                        'version': {'type': 'string', 'const': 'tabular-calculation-answer-v1'},
+                        'document_ids': {
+                            'type': 'array', 'minItems': 1, 'maxItems': 100,
+                            'uniqueItems': True,
+                            'items': {'type': 'string', 'minLength': 1, 'maxLength': 256},
+                        },
+                    },
+                    'description': (
+                        'Declare how named tabular evidence is used. complete_records requires '
+                        'complete retained rows; calculation requires complete native records, '
+                        'lineage and coverage from tabular_analyze relate.'
+                    ),
+                },
+                'annotation_provenance_input': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'maxLength': 128,
+                    'description': (
+                        'Name the bound native Word comments input that authorizes deterministic '
+                        'author, date, root and reply metadata for a single records-v1 output.'
+                    ),
                 },
                 'semantic_review': {
                     'type': 'string', 'enum': ['auto', 'on', 'off'],
@@ -2020,6 +2086,7 @@ def _resolve_descriptor(descriptor):
             for operation, task_type in (
                 ('query', 'structured_export'), ('transform', 'structured_export'),
                 ('analysis', 'hierarchical_analysis'), ('transform', 'combined'),
+                ('prepare', 'structured_export'), ('relate', 'structured_export'),
             )
         ]
     return capability
@@ -2421,6 +2488,28 @@ def build_planner_capability_projection(capabilities):
     """
     projection = []
     for capability in capabilities or ():
+        outputs = capability['result_outputs']
+        optional_outputs = capability.get('optional_result_outputs', {})
+        variants = capability.get('result_output_variants')
+        defaults = {}
+        if capability['id'] == CAPABILITY_DOCUMENT_ANALYZE:
+            # The analysis owner reaches bootstrap dependencies; load it only for planning,
+            # not while registering capabilities or reading their administrative projection.
+            from functions_document_analysis_results import narrative_analysis_options
+
+            defaults = {'analysis_options': narrative_analysis_options()}
+            outputs, optional_outputs = get_capability_result_outputs(capability, defaults)
+            variants = []
+            for options in (
+                {key: defaults['analysis_options'][key] for key in ('version', 'mode')},
+                {'version': 'analysis-options-v2', 'mode': 'reconciled_records'},
+                {'version': 'analysis-options-v1', 'mode': 'narrative_findings'},
+            ):
+                required, optional = get_capability_result_outputs(capability, {'analysis_options': options})
+                variants.append({
+                    'analysis_options': options,
+                    'result_outputs': required, 'optional_result_outputs': optional,
+                })
         projection.append({
             'id': capability['id'],
             'label': capability['label'],
@@ -2441,11 +2530,11 @@ def build_planner_capability_projection(capabilities):
             **({'optional_inputs_supported': True} if capability.get('optional_inputs_supported') else {}),
             **({'required_result_inputs': list(capability['required_result_inputs'])}
                if capability.get('required_result_inputs') else {}),
-            'result_outputs': capability['result_outputs'],
-            'optional_result_outputs': capability.get('optional_result_outputs', {}),
+            'result_outputs': outputs,
+            'optional_result_outputs': optional_outputs,
             'result_output_kinds': list(capability.get('result_output_kinds') or ()),
-            **({'result_output_variants': capability['result_output_variants']}
-               if 'result_output_variants' in capability else {}),
+            **({'default_arguments': defaults} if defaults else {}),
+            **({'result_output_variants': variants} if variants is not None else {}),
         })
     return projection
 

@@ -68,7 +68,7 @@ npm run build</code></pre>
     Container images build this automatically, so this message only appears for local
     development checkouts.
 </p>
-<p><a href="/chats">Return to the current SimpleChat interface</a></p>
+<p><a href="/chats?ui=classic">Return to the current SimpleChat interface</a></p>
 </body>
 </html>
 """

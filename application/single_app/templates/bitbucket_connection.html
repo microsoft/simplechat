@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect Bitbucket - SimpleChat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.min.css') }}" />
+    <script defer src="{{ url_for('static', filename='js/bitbucket-connection.js') }}"></script>
+</head>
+<body>
+    <main class="container py-5" data-bitbucket-reference="{{ action_ref }}">
+        <h1>Connect Bitbucket</h1>
+        <p>Connect your own Bitbucket account for this action. Bitbucket handles smart-card or SSO sign-in; SimpleChat does not copy your browser session.</p>
+        <p>Your connection is private. Repository and branch restrictions still apply. Disconnecting removes local access; revoke the grant in Bitbucket to remove provider-side authorization.</p>
+        <p id="bitbucket-status" role="status" class="alert alert-info">Checking your connection...</p>
+        <button id="bitbucket-connect" type="button" class="btn btn-primary" disabled>Connect Bitbucket</button>
+        <button id="bitbucket-disconnect" type="button" class="btn btn-outline-secondary" disabled>Disconnect</button>
+        <button id="bitbucket-refresh" type="button" class="btn btn-outline-secondary">Refresh status</button>
+        <p class="mt-3">After connecting, return to your conversation and retry the review.</p>
+    </main>
+</body>
+</html>

@@ -560,13 +560,12 @@ def test_legacy_link_and_lock_error(group_documents_ui):
     )
 
 
-def test_classic_handoff_and_tags(group_documents_ui):
+def test_documents_offer_no_classic_tools_and_tags_stay_read_only(group_documents_ui):
     ui = group_documents_ui
     open_documents(ui)
-    ui.active_group = "group-b"
-    ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True).click()
-    expect(ui.page).to_have_url(f"{ORIGIN}/group_workspaces")
-    assert ui.classic_visits == [("/group_workspaces", "group-a")]
+    # The legacy-document upgrade is native, so the Documents header no longer hands off to classic.
+    expect(ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True)).to_have_count(0)
+    assert not ui.classic_visits
     ui.open("/groups/group-a/tags")
     expect(ui.page.get_by_role("heading", name="Tags", exact=True)).to_be_visible()
     expect(ui.page.get_by_text("Tag management is not available with this workspace's current permissions.", exact=False)).to_be_visible()

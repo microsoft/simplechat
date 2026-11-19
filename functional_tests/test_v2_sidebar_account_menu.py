@@ -100,8 +100,9 @@ def test_account_menu_offers_both_settings_destinations():
     assert 'to="/admin"' in user_menu, "The account menu must reach Admin Settings"
     assert "Admin Settings" in user_menu, "The Admin Settings entry must be labelled"
     assert 'href="/logout"' in user_menu, "The account menu must still offer sign out"
-    assert "classicChatHref" in user_menu, (
-        "The way back to the classic interface must still carry the open conversation"
+    assert "classicBackHref" in user_menu, (
+        "The way back to the classic interface must still carry the open conversation, and now "
+        "the page on screen too"
     )
 
     print("Account menu entries test passed!")

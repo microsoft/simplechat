@@ -1,9 +1,11 @@
 # test_v2_group_settings.py
 """
 Production-SPA coverage for the native V2 group Settings, Activity and Statistics sections.
-Version: 0.261.188
+Version: 0.261.448
 Implemented in: 0.261.165
 An unrecognized status is explained with the server's own sentence: 0.261.188
+The danger zone deletes the group natively, and an inactive or unknown group's owner and admins keep
+these sections with no classic handoff: 0.261.448
 
 Exercises the real Settings, Activity and Statistics sections -- the M7C sections of the group
 WorkspaceShell's Manage group -- against closed synthetic HTTP. The fixture
@@ -21,8 +23,12 @@ presence, absence and edits, retention offered as the classic day choices with o
 period sent; every refusal the sections handle, including the CreateGroups-role refusal's explanation;
 the way a refocus preserves the open drafts and their leave guard (S1); a 400, 500 or network write
 failure that keeps every field (S2); a mid-session lock that re-gates the controls read-only (S3); the
-danger zone as owner-only with its file count and classic handoff; the header's classic button
-surviving only for an inactive or unknown group; the activity feed with its limits, empty and
+danger zone as owner-only with its file count and the native delete -- held while documents remain
+(including one that arrives while the confirmation is open), confirmed, refused with the server's
+words or a plain sentence for a 5xx or a dropped connection, retried, already deleted elsewhere,
+sent once however often it is clicked, and held back by unsaved edits; an inactive or unknown group,
+whose owner and admins keep a read-only Settings, Activity and Statistics with no "Manage group
+(classic)" button; the activity feed with its limits, empty and
 unavailable states; the statistics windows, custom range, CSV export and unavailable state; and both
 themes at both breakpoints.
 """
@@ -71,6 +77,13 @@ LOGO_PNG = {"name": "logo.png", "mimeType": "image/png", "buffer": LOGO_PNG_BYTE
 # the image and refuses it, so it exercises the bad-image path the extension check alone would miss.
 LOGO_NOT_AN_IMAGE = {"name": "logo.png", "mimeType": "image/png", "buffer": b"this is not an image"}
 
+# The native delete's route and the sentences the section shows for it (WorkspaceSettingsSection and
+# GroupSettingsSection own the wording; the apostrophes are the typographic ones the page renders).
+GROUP_DELETE_PATH = "/api/groups/group-a"
+GROUP_DELETE_HELD = "The group wasn\u2019t deleted because it still holds documents. Remove them first."
+GROUP_DELETE_FAILED = "The group couldn\u2019t be deleted. Try again."
+GROUP_DELETE_GONE = "This group no longer exists. It may already have been deleted."
+
 
 # --------------------------------------------------------------------------
 # Helpers.
@@ -110,6 +123,23 @@ def context_calls(ui, group="group-a"):
             if entry.method == "GET" and entry.path == f"/api/v2/workspaces/group/{group}"]
 
 
+def delete_calls(ui):
+    return [entry for entry in ui.requests if entry.method == "DELETE" and entry.path == GROUP_DELETE_PATH]
+
+
+def delete_group_dialog(ui):
+    return ui.page.get_by_role("dialog", name="Delete this group?", exact=True)
+
+
+def wait_for_delete(ui, timeout_ms=5000):
+    """Wait for the page's DELETE to reach the fixture, so a held response can be arranged around it."""
+    waited = 0
+    while not delete_calls(ui):
+        assert waited < timeout_ms, "The delete was never sent."
+        ui.page.wait_for_timeout(50)
+        waited += 50
+
+
 # --------------------------------------------------------------------------
 # Layout: the three sections render and stay within the viewport, light and dark.
 # --------------------------------------------------------------------------
@@ -123,7 +153,7 @@ def test_settings_layout(group_settings_ui, theme, width, height):
     for panel in ("group-settings-name", "group-settings-logo-upload",
                   "group-settings-downloads", "group-settings-retention", "group-settings-danger"):
         expect(by_testid(ui, panel)).to_be_visible()
-    # The header's classic button is withheld for an active group, whose Manage sections are native.
+    # The header carries no classic button for any status: every Manage section is native.
     expect(ui.page.get_by_role("button", name="Manage group (classic)")).to_have_count(0)
     ui.assert_no_overflow()
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
@@ -547,31 +577,280 @@ def test_admin_locked_is_read_only_without_danger_zone(group_settings_ui):
     assert insight_calls(ui, "file-count") == []
 
 
-def test_danger_zone_is_owner_only_with_file_count_and_classic(group_settings_ui):
+def test_danger_zone_is_owner_only_with_the_file_count(group_settings_ui):
     ui = group_settings_ui
     ui.set_file_count("group-a", 7)
     open_settings(ui)
     expect(by_testid(ui, "group-settings-file-count")).to_contain_text("holds 7 documents")
     assert len(insight_calls(ui, "file-count")) == 1
-    by_testid(ui, "group-settings-delete").click()
-    ui.page.get_by_role("button", name="Open classic", exact=True).click()
-    expect(ui.page).to_have_url(f"{ORIGIN}/groups/group-a")
-    assert ("/groups/group-a", "group-a") in ui.classic_visits
+    # Before anything is clicked the zone says what a delete does and what it leaves behind.
+    expect(by_testid(ui, "group-settings-danger")).to_contain_text("removes only the group and every member")
+    expect(by_testid(ui, "group-settings-danger")).to_contain_text(
+        "conversations, prompts, agents, actions and other saved items are left behind")
+    assert not delete_calls(ui) and not ui.classic_visits
 
 
 # --------------------------------------------------------------------------
-# The header's classic button survives only for an inactive or unknown group.
+# Deleting the group natively: the count gate, the confirmation, every refusal, one send.
 # --------------------------------------------------------------------------
 
-def test_classic_manage_button_shown_when_inactive(group_settings_ui):
+def test_delete_is_held_while_the_group_holds_documents(group_settings_ui):
     ui = group_settings_ui
-    ui.configure("group-a", role="Owner", status="inactive")
+    ui.set_file_count("group-a", 7)
+    open_settings(ui)
+    by_testid(ui, "group-settings-delete").click()
+    expect(by_testid(ui, "group-settings-danger-error")).to_have_text(GROUP_DELETE_HELD)
+    expect(delete_group_dialog(ui)).to_have_count(0)
+    # The count is read again at the click, as classic does, and nothing is ever sent to delete.
+    assert len(insight_calls(ui, "file-count")) == 2
+    assert not delete_calls(ui) and not ui.deleted_groups and not ui.classic_visits
+
+
+def test_a_document_that_arrives_while_the_confirmation_is_open_holds_the_delete(group_settings_ui):
+    ui = group_settings_ui
+    ui.set_file_count("group-a", 0)
+    open_settings(ui)
+    by_testid(ui, "group-settings-delete").click()
+    confirm = delete_group_dialog(ui)
+    expect(confirm).to_be_visible()
+    # The server checks nothing about documents, so the page reads the count once more before sending.
+    ui.set_file_count("group-a", 2)
+    confirm.get_by_role("button", name="Delete group", exact=True).click()
+    expect(confirm).to_have_count(0)
+    expect(by_testid(ui, "group-settings-danger-error")).to_have_text(GROUP_DELETE_HELD)
+    expect(by_testid(ui, "group-settings-file-count")).to_contain_text("holds 2 documents")
+    assert not delete_calls(ui) and not ui.deleted_groups
+
+
+def test_the_owner_deletes_an_empty_group_and_returns_to_the_list(group_settings_ui):
+    ui = group_settings_ui
+    ui.set_file_count("group-a", 0)
+    open_settings(ui)
+    expect(by_testid(ui, "group-settings-file-count")).to_have_text("This group holds no documents.")
+    by_testid(ui, "group-settings-delete").click()
+    confirm = delete_group_dialog(ui)
+    expect(confirm).to_be_visible()
+    expect(confirm).to_contain_text("Every member loses access to it right away")
+    expect(confirm).to_contain_text(
+        "conversations, prompts, agents, actions and other saved items are left behind")
+    assert not delete_calls(ui), "Nothing is sent until the confirmation."
+    confirm.get_by_role("button", name="Delete group", exact=True).click()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups")
+    expect(ui.page.get_by_text("Choose a group workspace", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text("Research group was deleted.", exact=True)).to_be_visible()
+    [removal] = delete_calls(ui)
+    assert removal.body is None and removal.query == {}
+    assert ui.deleted_groups == ["group-a"]
+    bootstrap_reads = [index for index, entry in enumerate(ui.requests) if entry.path == "/api/v2/bootstrap"]
+    assert bootstrap_reads[-1] > ui.requests.index(removal), "The groups are read again after the delete."
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+    assert not ui.classic_visits, "A native delete never visits the classic pages."
+
+
+def test_cancelling_the_confirmation_sends_nothing(group_settings_ui):
+    ui = group_settings_ui
+    ui.set_file_count("group-a", 0)
+    open_settings(ui)
+    by_testid(ui, "group-settings-delete").click()
+    confirm = delete_group_dialog(ui)
+    confirm.get_by_role("button", name="Cancel", exact=True).click()
+    expect(confirm).to_have_count(0)
+    expect(by_testid(ui, "group-settings-delete")).to_be_enabled()
+    assert not delete_calls(ui) and not ui.deleted_groups
+
+
+@pytest.mark.parametrize("status,payload,shown", [
+    pytest.param(
+        403, {"error": "Forbidden", "message": "Insufficient permissions (CreateGroups role required)"},
+        "Insufficient permissions (CreateGroups role required)", id="403-create-groups-role",
+    ),
+    pytest.param(
+        403, {"error": "Only the owner can delete the group"},
+        "Only the owner can delete the group", id="403-owner-only",
+    ),
+    pytest.param(
+        409, {"error": "The group changed while it was being deleted."},
+        "The group changed while it was being deleted.", id="409-conflict",
+    ),
+    pytest.param(
+        500, {"error": "Internal cosmos failure for partition 7"},
+        GROUP_DELETE_FAILED, id="500-never-raw",
+    ),
+])
+def test_a_refused_delete_says_why_keeps_the_group_and_can_be_retried(group_settings_ui, status, payload, shown):
+    ui = group_settings_ui
+    ui.set_file_count("group-a", 0)
+    open_settings(ui)
+    by_testid(ui, "group-settings-delete").click()
+    confirm = delete_group_dialog(ui)
+    error, *rest = payload.items()
+    ui.reject_next("DELETE", GROUP_DELETE_PATH, status=status, error=error[1], **dict(rest))
+    confirm.get_by_role("button", name="Delete group", exact=True).click()
+    # The server's words (or a plain sentence for a 5xx) appear in the dialog, which stays open.
+    expect(by_testid(ui, "group-settings-delete-error")).to_have_text(shown)
+    expect(confirm).to_be_visible()
+    expect(confirm.get_by_role("button", name="Delete group", exact=True)).to_be_enabled()
+    assert "Internal cosmos failure" not in ui.page.locator("body").inner_text()
+    assert not ui.deleted_groups and ui.page.url == f"{ORIGIN}/v2/groups/group-a/settings"
+    # Nothing was lost, so the same dialog can send the delete again, and it goes through.
+    confirm.get_by_role("button", name="Delete group", exact=True).click()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups")
+    assert ui.deleted_groups == ["group-a"]
+    assert len(delete_calls(ui)) == 2
+
+
+def test_a_dropped_connection_never_shows_a_raw_error_and_can_be_retried(group_settings_ui):
+    ui = group_settings_ui
+    ui.set_file_count("group-a", 0)
+    open_settings(ui)
+    by_testid(ui, "group-settings-delete").click()
+    confirm = delete_group_dialog(ui)
+
+    def _abort(route):
+        if route.request.method == "DELETE":
+            route.abort()
+        else:
+            route.fallback()
+
+    ui.page.route("**/api/groups/group-a", _abort)
+    confirm.get_by_role("button", name="Delete group", exact=True).click()
+    expect(by_testid(ui, "group-settings-delete-error")).to_have_text(GROUP_DELETE_FAILED)
+    expect(confirm).to_be_visible()
+    assert not ui.deleted_groups
+    # The aborted request never reaches the fixture, so drop its transport console error, as the
+    # profile network test does, to keep the shared teardown's console gate meaningful.
+    ui.console_errors[:] = [(text, url) for text, url in ui.console_errors if not url.endswith("/api/groups/group-a")]
+    ui.page.unroute("**/api/groups/group-a", _abort)
+    confirm.get_by_role("button", name="Delete group", exact=True).click()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups")
+    assert ui.deleted_groups == ["group-a"]
+
+
+def test_a_group_already_deleted_elsewhere_is_left_as_after_a_delete(group_settings_ui):
+    ui = group_settings_ui
+    ui.set_file_count("group-a", 0)
+    open_settings(ui)
+    by_testid(ui, "group-settings-delete").click()
+    confirm = delete_group_dialog(ui)
+    ui.defer_next("DELETE", GROUP_DELETE_PATH)
+    confirm.get_by_role("button", name="Delete group", exact=True).click()
+    wait_for_delete(ui)
+    # Another session deletes the group first, so the held DELETE meets the route's own 404.
+    ui.groups.pop("group-a")
+    ui.active_group = None
+    ui.release_responses()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups")
+    expect(ui.page.get_by_text(GROUP_DELETE_GONE, exact=True)).to_be_visible()
+    assert not ui.deleted_groups, "This session deleted nothing."
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+
+
+def test_a_second_click_while_the_delete_is_in_flight_sends_nothing(group_settings_ui):
+    ui = group_settings_ui
+    ui.set_file_count("group-a", 0)
+    open_settings(ui)
+    by_testid(ui, "group-settings-delete").click()
+    confirm = delete_group_dialog(ui)
+    submit = confirm.get_by_role("button", name="Delete group", exact=True)
+    ui.defer_next("DELETE", GROUP_DELETE_PATH)
+    submit.click()
+    wait_for_delete(ui)
+    expect(submit).to_be_disabled()
+    expect(confirm.get_by_role("button", name="Cancel", exact=True)).to_be_disabled()
+    submit.click(force=True)
+    ui.page.keyboard.press("Enter")
+    ui.page.keyboard.press("Escape")
+    ui.page.wait_for_timeout(200)
+    expect(confirm).to_be_visible()
+    assert len(delete_calls(ui)) == 1, "A delete in flight is never sent twice."
+    ui.release_responses()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups")
+    assert ui.deleted_groups == ["group-a"] and len(delete_calls(ui)) == 1
+
+
+def test_delete_waits_for_unsaved_profile_edits(group_settings_ui):
+    ui = group_settings_ui
+    ui.set_file_count("group-a", 0)
+    open_settings(ui)
+    by_testid(ui, "group-settings-name").fill("A half-finished rename")
+    expect(by_testid(ui, "group-settings-delete")).to_be_disabled()
+    expect(by_testid(ui, "group-settings-delete-unsaved")).to_have_text(
+        "Save or discard your profile and retention changes before deleting the group.")
+    by_testid(ui, "group-settings-discard-profile").click()
+    expect(by_testid(ui, "group-settings-delete")).to_be_enabled()
+    expect(by_testid(ui, "group-settings-delete-unsaved")).to_have_count(0)
+    assert not delete_calls(ui)
+
+
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+def test_the_delete_confirmation_fits_every_layout(group_settings_ui, theme, width, height):
+    ui = group_settings_ui
+    ui.set_file_count("group-a", 0)
+    open_settings(ui, theme=theme, width=width, height=height)
+    by_testid(ui, "group-settings-delete").click()
+    confirm = delete_group_dialog(ui)
+    expect(confirm).to_be_visible()
+    box = confirm.bounding_box()
+    assert box and box["x"] >= 0 and box["x"] + box["width"] <= width, "The dialog is clipped horizontally."
+    expect(confirm.get_by_role("button", name="Delete group", exact=True)).to_be_visible()
+    ui.assert_no_overflow()
+    SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    label = f'{"mobile" if width < 768 else "desktop"}-{theme}'
+    ui.page.screenshot(path=str(SCREENSHOTS / f"delete-confirmation-{label}.png"))
+
+
+# --------------------------------------------------------------------------
+# An inactive, locked or unknown group: the owner keeps a native, read-only Settings.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("status", ["inactive", "unknown"])
+def test_an_inactive_or_unknown_groups_owner_keeps_a_read_only_settings_and_no_classic_button(group_settings_ui, status):
+    ui = group_settings_ui
+    ui.configure("group-a", role="Owner", status=status)
     ui.open("/groups/group-a")
-    button = ui.page.get_by_role("button", name="Manage group (classic)")
-    expect(button).to_be_visible()
-    button.click()
-    expect(ui.page).to_have_url(f"{ORIGIN}/groups/group-a")
-    assert ("/groups/group-a", "group-a") in ui.classic_visits
+    # The header no longer carries "Manage group (classic)" for any status.
+    expect(ui.page.get_by_role("button", name="Manage group (classic)")).to_have_count(0)
+    open_settings(ui)
+    expect(by_testid(ui, "group-settings-name")).to_be_disabled()
+    expect(by_testid(ui, "group-settings-save-profile")).to_have_count(0)
+    sentence = (GROUP_STATUS_UNRECOGNIZED_MESSAGE if status == "unknown"
+                else GROUP_SETTINGS_REFUSAL_MESSAGES[GROUP_STATUS_UNAVAILABLE])
+    expect(ui.page.get_by_text(sentence, exact=True).first).to_be_visible()
+    # Downloads and retention follow the owner's own gates, and the danger zone stays the owner's.
+    expect(by_testid(ui, "group-settings-downloads-toggle")).to_be_enabled()
+    expect(by_testid(ui, "group-settings-danger")).to_be_visible()
+    assert not ui.classic_visits
+
+
+@pytest.mark.parametrize("status", ["inactive", "unknown"])
+def test_an_inactive_or_unknown_groups_owner_keeps_activity_and_statistics(group_settings_ui, status):
+    ui = group_settings_ui
+    ui.configure("group-a", role="Owner", status=status)
+    open_activity(ui)
+    expect(ui.page.get_by_text("Uploaded a document", exact=True)).to_be_visible()
+    open_statistics(ui)
+    by_testid(ui, "group-statistics-window-7").click()
+    expect(by_testid(ui, "group-statistics-window-7")).to_have_attribute("aria-pressed", "true")
+    assert insight_calls(ui, "stats")[-1].query["days"] == ["7"]
+    assert not ui.classic_visits
+
+
+@pytest.mark.parametrize("status", ["inactive", "unknown"])
+def test_an_inactive_groups_admin_keeps_settings_without_the_danger_zone(group_settings_ui, status):
+    ui = group_settings_ui
+    ui.configure("group-a", role="Admin", status=status)
+    open_settings(ui)
+    expect(by_testid(ui, "group-settings-name")).to_be_disabled()
+    expect(by_testid(ui, "group-settings-danger")).to_have_count(0)
+    assert insight_calls(ui, "file-count") == []
+
+
+def test_a_plain_member_of_an_inactive_group_still_gets_the_reason_not_settings(group_settings_ui):
+    ui = group_settings_ui
+    ui.configure("group-a", role="User", status="inactive")
+    ui.open("/groups/group-a/settings")
+    expect(ui.page.get_by_text("Settings is not available", exact=True)).to_be_visible()
+    assert settings_calls(ui, "GET") == []
 
 
 # --------------------------------------------------------------------------

@@ -90,6 +90,8 @@ from functions_authentication import (
 from functions_conversation_contents import is_conversation_contents_drawer_enabled
 from functions_custom_pages import get_custom_pages_nav
 from functions_governance import GOVERNANCE_AUDITED_SETTING_KEYS
+from functions_idle_timeout import build_idle_timeout_bootstrap
+from functions_ui_mode import get_ui_policy
 from document_source_selection import DocumentSourceSelectionError
 from functions_document_source_discovery import discover_document_sources
 from functions_group import (
@@ -409,6 +411,10 @@ def _build_navigation(raw_settings, user_roles):
                         "icon": page.get("icon") or "bi-file-earmark-text",
                         "url": url,
                         "open_in_new_tab": bool(page.get("open_in_new_tab", False)),
+                        # Whether V2 can show the page in its own shell. An item without the
+                        # field reads as False, so it falls back to the classic link rather
+                        # than to a frame the page cannot fill.
+                        "embeddable": bool(page.get("embeddable", False)),
                     }
                 )
         except Exception as exc:
@@ -703,6 +709,18 @@ def _build_workspace_uploads(public_settings):
             ),
         ),
     }
+
+
+def _build_session(public_settings):
+    """Describe how the signed-in session ends, for the V2 idle-session warning.
+
+    The server enforces the idle timeout in ``app.py`` and the classic pages learn the
+    values from template context. The SPA reads them here instead, normalized by the same
+    helper the server enforces with, so the warning it draws and the sign-out the server
+    performs cannot disagree about when. Built from the sanitized settings, and only the
+    four idle-timeout values leave this function.
+    """
+    return {"idle_timeout": build_idle_timeout_bootstrap(public_settings)}
 
 
 def register_route_backend_v2(bp):
@@ -1279,8 +1297,11 @@ def register_route_backend_v2(bp):
             timer.mark("notices")
             workspace_uploads = _build_workspace_uploads(public_settings)
             timer.mark("workspace_uploads")
+            session_block = _build_session(public_settings)
+            timer.mark("session")
 
             payload = {
+                "ui": get_ui_policy(settings, user_settings_dict),
                 "version": VERSION,
                 "user": {
                     "id": user_id,
@@ -1315,6 +1336,7 @@ def register_route_backend_v2(bp):
                 "workspace": workspace,
                 "workspace_uploads": workspace_uploads,
                 "safety_warnings": {"pending": pending_safety_warnings},
+                "session": session_block,
                 "settings": public_settings,
             }
 

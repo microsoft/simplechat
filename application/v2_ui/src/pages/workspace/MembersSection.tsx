@@ -12,14 +12,15 @@
 //
 // Every control still comes from the server, with no fallback: the workspace-level operations
 // (add, review requests) from the member list's `membership_management` hint, and each row's
-// controls from its own `member_actions`. Whether "leave" can appear is a scope capability *and*
-// the server's per-member action, never a client role check. Nothing is kept optimistically. A
-// write shows the server's own outcome and the list is read again, so a row, a role and the
-// offered controls always show what the server holds. A refusal shows the server's reviewed
-// message. A write conflict (only the group has one) keeps the state so the same action can be
-// tried again. A refusal that means the caller's own standing changed also re-reads the workspace
-// context, so the header and every other section follow. Leaving goes back to the scope's list,
-// because the workspace is no longer the caller's.
+// controls from its own `member_actions`; a role control needs the row's action and the hint's
+// `change_role`, because a status can close role changes without touching a row's action. Whether
+// "leave" can appear is a scope capability *and* the server's per-member action, never a client
+// role check. Nothing is kept optimistically. A write shows the server's own outcome and the list
+// is read again, so a row, a role and the offered controls always show what the server holds. A
+// refusal shows the server's reviewed message. A write conflict (only the group has one) keeps the
+// state so the same action can be tried again. A refusal that means the caller's own standing
+// changed also re-reads the workspace context, so the header and every other section follow.
+// Leaving goes back to the scope's list, because the workspace is no longer the caller's.
 //
 // The search, role filter and page live in the URL, so back, forward and a shared link reopen
 // the same view.
@@ -74,6 +75,13 @@ export interface MembersSectionScope {
     /** The write-conflict code that keeps state for a retry, or null when the scope has none. */
     writeConflictCode: string | null;
     /**
+     * Why adding and importing are unavailable, when the workspace's status closes them, and, where
+     * the server withholds it too, why roles can't be changed. Shown to a manager only when the
+     * server's own hint withholds `add_member`, so it explains a missing control rather than
+     * deciding one. Absent when the status takes members.
+     */
+    addBlockedNotice?: string;
+    /**
      * The role the current owner is left with after transferring ownership. The group demotes the
      * old owner to a plain member ('User'); the public workspace keeps them as a document manager
      * (decision 21), so the "you're now a …" copy names the right role per scope.
@@ -118,9 +126,12 @@ function readPage(value: string | null): number {
     return Math.min(parsed, MEMBERS_MAX_PAGE);
 }
 
-function isSelectable(member: GroupMember, viewerId: string): boolean {
+// A role control needs both the row's own `change_role` action and the member list's `change_role`
+// operation. The server's policy withholds the operation, but not each row's action, in a status
+// where it refuses a role change, so a control the server would refuse is never offered.
+function isSelectable(member: GroupMember, viewerId: string, roleChangeOpen: boolean): boolean {
     return member.userId !== viewerId
-        && (member.actions.includes('change_role') || member.actions.includes('remove'));
+        && ((roleChangeOpen && member.actions.includes('change_role')) || member.actions.includes('remove'));
 }
 
 function plural(count: number, one: string, many: string): string {
@@ -139,7 +150,7 @@ function MemberAvatar({ name }: { name: string }) {
 
 function MemberRow({
     member, isSelf, selectable, selected, pendingRole, disabled, busy, roleLabel, assignableOptions, supportsLeave,
-    onSelect, onRoleChange, onRemove, onLeave, onTransfer,
+    roleChangeOpen, onSelect, onRoleChange, onRemove, onLeave, onTransfer,
 }: {
     member: GroupMember;
     isSelf: boolean;
@@ -151,6 +162,8 @@ function MemberRow({
     roleLabel: (role: string) => string;
     assignableOptions: readonly { value: AssignableMemberRole; label: string }[];
     supportsLeave: boolean;
+    /** Whether the member list's own hint lets this caller change roles in the workspace's current status. */
+    roleChangeOpen: boolean;
     onSelect: (selected: boolean) => void;
     onRoleChange: (role: AssignableMemberRole) => void;
     onRemove: () => void;
@@ -158,7 +171,7 @@ function MemberRow({
     onTransfer: () => void;
 }) {
     const name = memberDisplayName(member);
-    const canChangeRole = member.actions.includes('change_role') && isAssignableMemberRole(member.role);
+    const canChangeRole = roleChangeOpen && member.actions.includes('change_role') && isAssignableMemberRole(member.role);
     return (
         <GlassPanel elevation="flat" className="flex flex-wrap items-center gap-3 p-3" data-member-id={member.userId}>
             <span className="flex w-4 shrink-0 justify-center">
@@ -374,8 +387,9 @@ export function MembersSection({
                 if (controller.signal.aborted) return;
                 setList(next);
                 // A selection only ever names rows on the page that can still be acted on.
+                const roleChangeOpen = next.operations.includes('change_role');
                 setSelection((current) => current.filter((id) => next.members.some(
-                    (member) => member.userId === id && isSelectable(member, viewerId),
+                    (member) => member.userId === id && isSelectable(member, viewerId, roleChangeOpen),
                 )));
                 if (requestsAfterList.current) {
                     requestsAfterList.current = false;
@@ -398,6 +412,9 @@ export function MembersSection({
     const operations = list?.operations ?? [];
     const canAdd = operations.includes('add_member');
     const canReview = operations.includes('review_requests');
+    const canChangeRoles = operations.includes('change_role');
+    // A manager is anyone the server lets change a role, remove a member or review requests.
+    const managesMembers = canReview || canChangeRoles || operations.includes('remove_member');
 
     useEffect(() => {
         if (!canReview) {
@@ -617,9 +634,9 @@ export function MembersSection({
 
     const members = list?.members ?? [];
     const selectedMembers = members.filter((member) => selection.includes(member.userId));
-    const selectable = members.filter((member) => isSelectable(member, viewerId));
+    const selectable = members.filter((member) => isSelectable(member, viewerId, canChangeRoles));
     const allSelected = selectable.length > 0 && selectable.every((member) => selection.includes(member.userId));
-    const bulkRoleTargets = selectedMembers.filter((member) => member.actions.includes('change_role'));
+    const bulkRoleTargets = canChangeRoles ? selectedMembers.filter((member) => member.actions.includes('change_role')) : [];
     const bulkRemoveTargets = selectedMembers.filter((member) => member.actions.includes('remove'));
     const writesDisabled = interactionDisabled || busyKey !== null || importing || loading;
 
@@ -770,6 +787,13 @@ export function MembersSection({
                 ) : null}
             </div>
 
+            {!canAdd && managesMembers && scope.addBlockedNotice ? (
+                <p role="status" data-testid="members-add-blocked"
+                    className="rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm break-words text-text-2">
+                    {scope.addBlockedNotice}
+                </p>
+            ) : null}
+
             {notice ? (
                 notice.tone === 'alert' ? (
                     <div role="alert" className="rounded-xl border border-danger/30 bg-danger-soft px-3 py-2 text-sm break-words text-danger">{notice.text}</div>
@@ -874,10 +898,11 @@ export function MembersSection({
                             return (
                                 <li key={member.userId}>
                                     <MemberRow member={member} isSelf={isSelf}
-                                        selectable={isSelectable(member, viewerId)} selected={selection.includes(member.userId)}
+                                        selectable={isSelectable(member, viewerId, canChangeRoles)} selected={selection.includes(member.userId)}
                                         pendingRole={pendingRoles[member.userId]} disabled={writesDisabled}
                                         busy={busyKey === `role:${member.userId}` || busyKey === `remove:${member.userId}`}
                                         roleLabel={scope.roleLabel} assignableOptions={scope.assignableOptions} supportsLeave={scope.supportsLeave}
+                                        roleChangeOpen={canChangeRoles}
                                         onSelect={(checked) => setSelection((current) => (checked
                                             ? [...current.filter((id) => id !== member.userId), member.userId]
                                             : current.filter((id) => id !== member.userId)))}

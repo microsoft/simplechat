@@ -242,6 +242,12 @@ where it was saved, a preview and a download.
 offers Continue or Cancel where the server allows them. It replaces itself with the finished
 files.
 
+**Keeping or reusing a finished file.** Since **0.261.448** a finished card also offers **Add to
+workspace**, which saves the file into a personal, group or public workspace, and, on a Markdown
+file, **Create PowerPoint**. These were first left out because they depended on the classic
+export module; they are described in
+[V2 Generated Artifact Actions](V2_GENERATED_ARTIFACT_ACTIONS.md).
+
 **A run being analysed.** Expand **N reasoning steps** to read the agent's tool activity or
 workbook-analysis details. The dropdown starts collapsed, with no extra thought-summary
 progress card. Details remain available on the finished response.
@@ -272,10 +278,6 @@ the [duplicate progress card fix](../fixes/V2_AGENT_TABULAR_DUPLICATE_PROGRESS_C
 
 ### Known limitations
 
-- **"Add to Workspace" and "Create PowerPoint" are not carried over.** The classic card offers
-  both. Promotion (`/api/chat_artifacts/promote`) and the Markdown-to-PowerPoint path depend
-  on the classic export module, and are better rebuilt with V2's own export machinery than
-  ported.
 - **The Markdown "View" opens the stored preview, not the full file.** The preview is what the
   metadata carries; the complete artifact is a download away.
 - **An uploaded file cannot be previewed in a shared conversation.** `/api/get_file_content`
@@ -291,5 +293,6 @@ the [duplicate progress card fix](../fixes/V2_AGENT_TABULAR_DUPLICATE_PROGRESS_C
 ## See also
 
 - [React V2 User Interface](REACT_V2_UI.md)
+- [V2 Generated Artifact Actions](V2_GENERATED_ARTIFACT_ACTIONS.md)
 - [Tabular Background Generated Exports](TABULAR_BACKGROUND_GENERATED_EXPORTS.md)
 - [Tabular Generated Output Exports](v0.241.120/TABULAR_GENERATED_OUTPUT_EXPORTS.md)

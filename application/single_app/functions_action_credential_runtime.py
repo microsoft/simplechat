@@ -99,6 +99,32 @@ def configure_action_credential_runtime():
             reference, user_id=user_id, settings=functions_settings.get_settings(),
         )
 
+    # Compose Bitbucket storage and secret owners only after web/scheduler bootstrap.
+    from config import cosmos_bitbucket_connections_container
+    from functions_action_manifest import bind_action_origin, get_action_origin
+    from functions_bitbucket_connections import BitbucketConnections, configure_bitbucket_connections
+    def bitbucket_manifest(user_id, reference):
+        # Secret owners are needed only when the initialized runtime resolves a Bitbucket action.
+        from functions_keyvault import SecretReturnType, keyvault_plugin_get_helper
+
+        manifest = resolve_manifest(user_id, reference)
+        if manifest.get("type") != "bitbucket":
+            raise PermissionError("The selected action is not a Bitbucket action.")
+        origin = get_action_origin(manifest)
+        manifest = keyvault_plugin_get_helper(
+            manifest, scope_value=origin.action_id if origin.scope_type == "global" else origin.scope_id,
+            scope="user" if origin.scope_type == "personal" else origin.scope_type,
+            return_type=SecretReturnType.VALUE,
+        )
+        manifest = identities.hydrate_action_identity_reference(
+            manifest, origin.scope_type, origin.scope_id, return_type=SecretReturnType.VALUE,
+        )
+        return bind_action_origin(manifest, origin.scope_type, origin.scope_id)
+
+    configure_bitbucket_connections(BitbucketConnections(
+        cosmos_bitbucket_connections_container, bitbucket_manifest,
+    ))
+
     def update_identity(*args, **kwargs):
         try:
             return identities.update_workspace_identity_conditional(*args, **kwargs)

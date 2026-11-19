@@ -21,10 +21,27 @@ def register_route_backend_notifications(bp):
         
         Query Parameters:
             page (int): Page number (default: 1)
-            per_page (int): Items per page (default: 20)
+            per_page (int): Items per page: 10, 20 or 50 (default: 20; any other value is
+                replaced by 20)
             include_read (bool): Include read notifications (default: true)
             include_dismissed (bool): Include dismissed notifications (default: false)
+            status (str): Which notifications to list: all, unread or read (default: all).
+                Any other value is refused with 400 rather than shown as "all", which would
+                list notifications the filter is meant to hide.
+            q (str): Only list notifications whose title or message contains this text,
+                ignoring case. At most the first 100 characters are used. Default: no search.
+
+        status and q narrow the list before it is paged, so total and has_more describe the
+        filtered list. The classic page sends neither and is answered exactly as before.
         """
+        try:
+            read_status = parse_notification_read_status(request.args.get('status'))
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid status. Use all, unread or read.'
+            }), 400
+
         try:
             user_id = get_current_user_id()
             user = session.get('user', {})
@@ -46,7 +63,9 @@ def register_route_backend_notifications(bp):
                 per_page=per_page,
                 include_read=include_read,
                 include_dismissed=include_dismissed,
-                user_roles=user_roles
+                user_roles=user_roles,
+                read_status=read_status,
+                search=request.args.get('q', '')
             )
             
             return jsonify({

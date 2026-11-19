@@ -83,6 +83,9 @@ def register_route_backend_models(bp):
     """
     Register backend routes for fetching Azure OpenAI models.
     """
+    # Deferred to registration: the update API imports the settings storage owner.
+    from route_backend_model_catalog_updates import register_catalog_update_routes
+    register_catalog_update_routes(bp)
 
     def catalog_response(settings, *, admin=False):
         profiles = get_effective_model_profiles(settings)

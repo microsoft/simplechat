@@ -1,6 +1,7 @@
 # functions_search_service.py
 """Shared search, retrieval, and summarization services for documents."""
 
+import hashlib
 import io
 import json
 import logging
@@ -46,6 +47,10 @@ from functions_excel_inventory import (
 )
 from functions_group import get_user_groups
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_office_media import extract_docx_comments
+from functions_native_document_inspection import has_retained_native_source, inspect_native_document
+from functions_native_audit import build_native_audit
+from native_document_evidence import NativeInspectionRequestError, validate_native_report_sections
 from model_endpoint_clients import build_openai_client_timeout_options
 from public_source_access import get_public_source_workspace_ids
 from public_source_policy import uses_all_public_sources
@@ -1109,6 +1114,7 @@ def get_document_chunks_payload(
 
 
 ACCESSIBILITY_REPORT_SECTIONS = ("accessibility", "style", "issues")
+NATIVE_WORD_COMMENT_EXTENSIONS = (".docx", ".docm", ".dotx")
 ACCESSIBILITY_REPORT_STYLE_KEY = "style_inventory"
 ACCESSIBILITY_REPORT_ISSUES_KEY = "issues"
 
@@ -1118,14 +1124,36 @@ def _normalize_accessibility_sections(sections):
         requested = [part.strip().lower() for part in sections.split(",")]
     else:
         requested = [str(part or "").strip().lower() for part in (sections or [])]
-    requested = [part for part in requested if part in ACCESSIBILITY_REPORT_SECTIONS]
+    requested = [part for part in requested if part in (*ACCESSIBILITY_REPORT_SECTIONS, "comments")]
     return requested or list(ACCESSIBILITY_REPORT_SECTIONS)
+
+
+def _read_word_comment_inspection(document_context, user_id):
+    """Reuse the ingestion parser over the existing authorized original-file reader."""
+    document, source_bytes = screening_access.read_available_document_bytes(
+        document_context["document"], user_id=user_id,
+        group_id=document_context.get("group_id"),
+        public_workspace_id=document_context.get("public_workspace_id"), purpose="accessibility",
+    )
+    document_context["document"] = document
+    comments, total_body_words = extract_docx_comments(io.BytesIO(source_bytes), strict=True)
+    return {
+        "section": "comments", "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "records": comments, "total_records": len(comments),
+        "total_replies": sum(len(comment["replies"]) for comment in comments),
+        "total_body_words": total_body_words, "inventory_complete": True,
+        "limitations": [
+            "Anchored text is limited to 300 characters; anchor_complete identifies a bounded or unavailable anchor.",
+            "Resolution is unknown unless resolution_available is true; a missing flag is not an unresolved comment.",
+            "Reply relationships come from the available Word commentsExtended part, not inferred from comment text.",
+        ],
+    }
 
 
 def _read_excel_inspection(
     document_context, user_id, *, native_section="comments", native_cursor=None,
     native_page_size=100, sheet_name=None, cell_range=None,
-    max_bytes=14000,
+    max_bytes=14000, _audit_records=None,
 ):
     document = document_context["document"]
     source_evidence = {PROVENANCE_FIELD: document_provenance(document)}
@@ -1133,10 +1161,10 @@ def _read_excel_inspection(
     def authorize():
         assert_evidence_available(source_evidence, user_id, cached=True)
 
-    if native_section not in EXCEL_INVENTORY_SECTIONS:
-        raise ValueError("The Excel inspection section is invalid.")
+    if native_section != "all" and native_section not in EXCEL_INVENTORY_SECTIONS:
+        raise NativeInspectionRequestError("native_section_invalid", field="native_section")
     if type(native_page_size) is not int or not 1 <= native_page_size <= 200:
-        raise ValueError("The Excel inspection page size must be between 1 and 200.")
+        raise NativeInspectionRequestError("native_page_size_invalid", field="native_page_size")
     storage = ScreeningStorage(
         client=CLIENTS.get("storage_account_office_docs_client"),
         container_name=storage_account_content_screening_container_name,
@@ -1166,7 +1194,10 @@ def _read_excel_inspection(
                 ),
             )
     metadata = inventory.metadata
-    page = inventory.page(native_section, cursor=native_cursor, page_size=native_page_size, max_bytes=max_bytes)
+    page = inventory.page(
+        native_section, cursor=native_cursor, page_size=native_page_size, max_bytes=max_bytes,
+        **({"_audit_records": _audit_records} if _audit_records is not None else {}),
+    )
     result = {"metadata": metadata, "page": page}
     if cell_range:
         low_column, low_row, high_column, high_row = bounded_range(cell_range)
@@ -1202,6 +1233,7 @@ def get_document_accessibility_payload(
     native_section="comments",
     native_cursor=None,
     native_page_size=100,
+    native_slide_number=None,
     sheet_name=None,
     cell_range=None,
     _native_max_bytes=14000,
@@ -1242,6 +1274,35 @@ def get_document_accessibility_payload(
     stored_metadata = current_document.get("accessibility_metadata")
     file_name = str(current_document.get("file_name") or "")
     extension = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+    requested_sections = _normalize_accessibility_sections(sections)
+    validate_native_report_sections(extension.lstrip("."), requested_sections)
+    native_inspection = None
+    native_source_records = None
+    if extension in (".pdf", ".pptx") and has_retained_native_source(current_document):
+        if cell_range or sheet_name:
+            raise ValueError("PDF and PowerPoint inspection does not accept worksheet filters.")
+        current_document, source_bytes = screening_access.read_available_document_bytes(
+            current_document, user_id=user_id, group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"), purpose="accessibility",
+        )
+        document_context["document"] = current_document
+        native_source_records = []
+        native_inspection = inspect_native_document(
+            current_document, source_bytes, extension, section=native_section,
+            cursor=native_cursor, page_size=native_page_size, max_bytes=_native_max_bytes,
+            native_slide_number=native_slide_number,
+            _audit_records=native_source_records,
+        )
+        stored_metadata = native_inspection["metadata"]
+    word_inspection = None
+    if "comments" in requested_sections and extension in NATIVE_WORD_COMMENT_EXTENSIONS:
+        if native_cursor or cell_range or sheet_name or native_section != "comments":
+            raise ValueError("Word comments do not accept Excel sections, cursors or cell filters.")
+        word_inspection = _read_word_comment_inspection(document_context, user_id)
+        current_document = document_context["document"]
+        stored_metadata = current_document.get("accessibility_metadata")
+        if not stored_metadata and all(section == "comments" for section in requested_sections):
+            stored_metadata = {"format": extension.lstrip(".")}
     if not stored_metadata and extension in (".xlsx", ".xlsm", ".xls") and (
         current_document.get("source_file_available") or current_document.get("enhanced_citations")
         or current_document.get("blob_path") or current_document.get("archived_blob_path")
@@ -1260,18 +1321,32 @@ def get_document_accessibility_payload(
         or current_document.get("blob_path") or current_document.get("archived_blob_path")
         or current_document.get("excel_native_inventory")
     ):
+        native_source_records = []
         excel_inspection = _read_excel_inspection(
             document_context, user_id, native_section=native_section,
             native_cursor=native_cursor, native_page_size=native_page_size,
             sheet_name=sheet_name, cell_range=cell_range,
-            max_bytes=_native_max_bytes,
+            max_bytes=_native_max_bytes, _audit_records=native_source_records,
         )
         stored_metadata = excel_inspection["metadata"]
-    elif native_cursor or cell_range:
+    elif (native_cursor or cell_range) and native_inspection is None:
         raise LookupError("The original workbook or full native inventory is unavailable for this inspection.")
 
-    requested_sections = _normalize_accessibility_sections(sections)
+    active_hash = ((current_document.get("content_screening") or {}).get("active_blob") or {}).get("content_hash")
+    native_hash = stored_metadata.get("source_sha256") or (stored_metadata.get("inventory_storage") or {}).get("source_sha256")
+    if active_hash and stored_metadata.get("format") in ("pdf", "pptx", "xlsx", "xlsm", "xls") and native_hash != active_hash:
+        if word_inspection is not None and requested_sections == ["comments"]:
+            stored_metadata = {"format": extension.lstrip(".")}
+        else:
+            raise LookupError("Native metadata is unavailable for the authorized active representation. Inspect or reprocess that representation.")
+
+    if "comments" in requested_sections and word_inspection is None and excel_inspection is None:
+        raise LookupError("The native comment inventory is unavailable for this document format.")
     report = {}
+    if word_inspection is not None:
+        report["word_inspection"] = word_inspection
+    if native_inspection is not None:
+        report["native_inspection"] = {"page": native_inspection["page"]}
     if "accessibility" in requested_sections:
         report["accessibility_metadata"] = {
             key: value
@@ -1334,6 +1409,12 @@ def get_document_accessibility_payload(
             payload["accessibility_metadata"]["comment_page"] = {
                 key: value for key, value in page.items() if key != "records"
             }
+    if payload.get("accessibility_metadata"):
+        audit = build_native_audit(
+            payload, **({"_source_records": native_source_records} if native_source_records is not None else {}),
+        )
+        if audit is not None:
+            payload["native_audit"] = audit
     return payload
 
 

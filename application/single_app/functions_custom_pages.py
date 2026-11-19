@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from azure.cosmos import exceptions
-from flask import has_app_context, session, url_for
+from flask import g, has_app_context, session, url_for
 
 from config import cosmos_custom_pages_container
 from custom_page_extension import CustomPageExtension
@@ -52,6 +52,13 @@ CUSTOM_PAGES_CATALOG_CACHE_KEY = "catalog"
 CUSTOM_PAGES_NAV_CACHE_KEY_PREFIX = "nav"
 CUSTOM_PAGES_CATALOG_CACHE_TTL_SECONDS = 300
 CUSTOM_PAGES_NAV_CACHE_TTL_SECONDS = 60
+# Bump when the shape of a cached navigation item changes, so a rolling deployment never
+# serves items written by the previous version to code that expects the new fields.
+CUSTOM_PAGES_NAV_SCHEMA_VERSION = 2
+# `/custom/<slug>?embed=1` asks for the chrome-less copy that the V2 interface frames.
+CUSTOM_PAGE_EMBED_QUERY_PARAM = "embed"
+CUSTOM_PAGE_EMBED_QUERY_VALUE = "1"
+SAME_ORIGIN_FRAMING_FLAG = "custom_page_same_origin_framing_allowed"
 
 
 def _get_shared_cache_redis_client():
@@ -417,6 +424,7 @@ def _build_custom_pages_nav(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
             "url": href,
             "href": href,
             "open_in_new_tab": bool(page.get("open_in_new_tab", False)),
+            "embeddable": is_custom_page_embeddable(page),
             "order": page.get("nav_order", 100),
         })
 
@@ -432,7 +440,7 @@ def get_custom_pages_nav(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
     version = _get_custom_pages_cache_version()
     cache_key = (
         f"{CUSTOM_PAGES_NAV_CACHE_KEY_PREFIX}:"
-        f"{_stable_hash({'roles': sorted(roles), 'enabled': is_custom_pages_enabled(settings)})}"
+        f"{_stable_hash({'roles': sorted(roles), 'enabled': is_custom_pages_enabled(settings), 'schema': CUSTOM_PAGES_NAV_SCHEMA_VERSION})}"
     )
     redis_client = _get_shared_cache_redis_client()
     cached = get_shared_cache_entry(
@@ -486,6 +494,33 @@ def is_custom_page_authorized(page: Dict[str, Any], roles: Optional[List[str]] =
     return "Admin" in role_set and "User" in required_role_set
 
 
+def is_custom_page_embeddable(page: Dict[str, Any]) -> bool:
+    """Return True when the V2 interface can show the page chrome-less inside its own shell.
+
+    Static pages are plain trusted HTML, so the host can always wrap them in the embed shell.
+    A Python-backed page owns its whole response, so it can only be framed when its extension
+    declares ``supports_embed`` and therefore knows how to render without the classic chrome.
+    """
+    if page.get("entry_type") == "python":
+        return bool(getattr(page.get("extension"), "supports_embed", False))
+    return True
+
+
+def allow_same_origin_framing() -> None:
+    """Let the current response be framed by this same origin, and by nothing else.
+
+    ``app.add_security_headers`` reads the flag and relaxes ``X-Frame-Options`` from ``DENY`` to
+    ``SAMEORIGIN`` for this one response. Set it only on the document that is meant to be shown
+    inside the V2 host, after it rendered, so an error response never carries it.
+    """
+    setattr(g, SAME_ORIGIN_FRAMING_FLAG, True)
+
+
+def is_same_origin_framing_allowed() -> bool:
+    """Return True when the current response was marked frameable by the same origin."""
+    return has_app_context() and bool(getattr(g, SAME_ORIGIN_FRAMING_FLAG, False))
+
+
 def resolve_custom_page_file(page: Dict[str, Any], folder: str, file_name: str) -> Tuple[Optional[str], Optional[str]]:
     """Resolve a custom page file reference to an absolute path if allowed."""
     errors = validate_custom_page_file_reference(folder, file_name)
@@ -506,13 +541,18 @@ def resolve_custom_page_file(page: Dict[str, Any], folder: str, file_name: str) 
     return candidate, None
 
 
-def build_custom_page_context(page: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, Any]:
-    """Build the safe request context passed to trusted custom page extensions."""
+def build_custom_page_context(page: Dict[str, Any], settings: Dict[str, Any], embed: bool = False) -> Dict[str, Any]:
+    """Build the safe request context passed to trusted custom page extensions.
+
+    ``embed`` is True only when the page is being shown chrome-less inside the V2 interface, and
+    only for an extension that declared ``supports_embed``.
+    """
     return {
         "page": {key: value for key, value in page.items() if key != "extension"},
         "settings": settings,
         "user": session.get("user", {}),
         "roles": _current_user_roles(),
+        "embed": bool(embed),
     }
 
 

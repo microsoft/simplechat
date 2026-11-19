@@ -1092,7 +1092,7 @@ def _waiting_summary(name, deadline, now):
 
 def _wait_deadline(context, settings, step_id, now):
     # Imported here: limits and timing read settings only, and neither is needed to plan a run.
-    from functions_orchestration_timing import positive_setting_int
+    from functions_orchestration_timing import step_timeout_seconds
     from functions_workflow_limits import get_chat_orchestration_workflow_run_wait_max_seconds
 
     return workflow_run_wait_deadline(
@@ -1100,7 +1100,7 @@ def _wait_deadline(context, settings, step_id, now):
             execution_deadline(context).isoformat() if getattr(context, 'execution_deadline_at', None) else None
         ),
         cap_seconds=get_chat_orchestration_workflow_run_wait_max_seconds(settings),
-        step_timeout_seconds=positive_setting_int(settings, 'chat_orchestration_step_timeout_seconds', 120),
+        step_timeout_seconds=step_timeout_seconds(settings),
         dependents=waited_run_dependents(getattr(context, 'plan_steps', None) or [], step_id),
     )
 

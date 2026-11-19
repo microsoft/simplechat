@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.411
+Version: 0.261.428
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -63,6 +63,8 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_collaboration": ("login_required", "user_required"),
     "backend_content_screening": ("login_required", "user_required"),
     "backend_control_center": ("login_required",),
+    "backend_support_exports": ("login_required", "admin_required"),
+    "backend_support_export_consents": ("login_required", "user_required"),
     "backend_conversation_export": ("login_required", "user_required"),
     "backend_conversation_handoffs": ("login_required", "user_required"),
     "backend_conversations": ("login_required", "user_required"),
@@ -87,6 +89,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_models": ("login_required", "user_required"),
     "backend_msgraph_pending_actions": ("login_required", "user_required"),
     "backend_m365": ("login_required", "user_required"),
+    "backend_bitbucket": ("login_required", "user_required"),
     "backend_notifications": ("login_required", "user_required"),
     "backend_orchestration": ("login_required", "user_required"),
     "backend_prompts": ("login_required", "user_required"),
@@ -168,6 +171,7 @@ EXPECTED_PUBLIC_PATHS = {
 SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_file_sync.py", "api_file_sync_personal_source_options"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_file_sync.py", "api_file_sync_personal_source_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_file_sync.py", "api_admin_file_sync_source_options"): ("login_required", "admin_required", "enabled_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_summary"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_insights"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_chat_readiness"): ("login_required", "control_center_required"),
@@ -197,6 +201,7 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_group_documents.py", "api_scoped_group_tag_update"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_scoped_group_tag_delete"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_scoped_group_documents_tag"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_upgrade_legacy"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_get_group_documents"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_get_group_document_facets"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_get_group_document_tags"): ("login_required", "user_required", "enabled_required"),
@@ -342,6 +347,7 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_public_document_management.py", "api_scoped_public_tag_update"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_management.py", "api_scoped_public_tag_delete"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_management.py", "api_scoped_public_documents_tag"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_documents_upgrade_legacy"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_collaboration.py", "api_scoped_public_document_publication"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_collaboration.py", "api_scoped_public_document_approve_artifact"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_collaboration.py", "api_scoped_public_document_reject_artifact"): ("login_required", "user_required", "enabled_required"),

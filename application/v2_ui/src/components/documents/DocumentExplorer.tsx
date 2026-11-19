@@ -23,6 +23,7 @@ import { isScreeningBusy } from '../../lib/contentScreening';
 import { ApiError } from '../../lib/apiClient';
 import type { CollaborationReceipt, DocumentCollaborationAdapter } from '../../lib/documentCollaboration';
 import { documentUploadUnavailable, sharedOperationRefusal } from '../../lib/documentAccessCopy';
+import { legacyUpdateNeeded } from '../../lib/documentLegacyUpgrade';
 import {
     documentExplorerScopeKey, documentSelectionReason, PERSONAL_DOCUMENT_READER,
     supportedDocumentQuery, type DocumentReadAdapter,
@@ -71,12 +72,15 @@ import {
     removeSavedView,
     upsertSavedView,
 } from '../../lib/documentSavedViews';
+import { workspaceAgreementScope } from '../../lib/userAgreement';
+import { useUserAgreementGate } from '../../lib/useUserAgreementGate';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { toast } from '../../stores/toastStore';
 import { EmptyState, GlassButton, Skeleton } from '../ui/primitives';
 import { Modal } from '../ui/Modal';
+import { UserAgreementDialog } from '../ui/UserAgreementDialog';
 import { errorMessage } from '../workspace/useSectionResource';
 import { ExplorerRail } from './ExplorerRail';
 import {
@@ -89,6 +93,7 @@ import { DEFAULT_DOCUMENT_COLUMNS, DocumentTable } from './DocumentTable';
 import { DocumentTiles } from './DocumentTiles';
 import { DocumentDetailsPane } from './DocumentDetailsPane';
 import { DocumentCollaborationDialog } from './DocumentCollaborationDialog';
+import { LegacyUpgradeBanner } from './LegacyUpgradeBanner';
 import {
     DeleteDialog,
     MetadataDialog,
@@ -256,13 +261,24 @@ function ScopedDocumentExplorer({
     const [detailsOpen, setDetailsOpen] = useState(false);
     const [dialogError, setDialogError] = useState<string | null>(null);
     const [feedback, setFeedback] = useState<{ title: string; errors: TagOperationError[] } | null>(null);
+    // The "update older documents" notice: what the latest list said, whether this visit hid it,
+    // whether an update was tried while it showed, and whether one is running.
+    const [needsLegacyUpdate, setNeedsLegacyUpdate] = useState(false);
+    const [legacyDismissed, setLegacyDismissed] = useState(false);
+    const [legacyAttempted, setLegacyAttempted] = useState(false);
+    const [upgradingLegacy, setUpgradingLegacy] = useState(false);
 
     // Dialogs disable their controls while any bulk work is running.
-    const busy = task !== null || collaborationBusy;
+    const busy = task !== null || collaborationBusy || upgradingLegacy;
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLFieldSetElement>(null);
+    const legacyBannerRef = useRef<HTMLElement>(null);
+    const legacyStatusRef = useRef<HTMLParagraphElement>(null);
+    const legacyFocusPending = useRef(false);
     const mounted = useRef(true);
+    // No file leaves the browser until the user agreement, when an administrator requires one, is settled.
+    const agreementGate = useUserAgreementGate();
     const listRequest = useRef<AbortController | null>(null);
     const sidebarRequest = useRef<AbortController | null>(null);
     const detailRequest = useRef<AbortController | null>(null);
@@ -518,6 +534,14 @@ function ScopedDocumentExplorer({
                 setDocuments(items);
                 setTotalCount(total);
                 setDownloadsEnabled(isPersonal && Boolean(response.file_downloads_enabled));
+                // Every list route says whether older documents remain, so the notice follows the server:
+                // an update that finished everything clears it, and one that did not leaves it showing.
+                const legacyRemains = legacyUpdateNeeded(response);
+                setNeedsLegacyUpdate(legacyRemains);
+                if (!legacyRemains) {
+                    setLegacyDismissed(false);
+                    setLegacyAttempted(false);
+                }
                 setSelection((current) => pruneSelection(current, items.filter((item) =>
                     !selectionReason(item) || failedSelection.current.has(documentId(item))).map(documentId)));
                 setInspectedId((current) => current === linkedDocumentId || items.some((item) => documentId(item) === current) ? current : null);
@@ -1008,6 +1032,10 @@ function ScopedDocumentExplorer({
             const validationErrors = tooLarge.map((file) => ({
                 document_id: file.name, message: `Exceeds the ${maxSizeMb} MB upload limit.`,
             }));
+            // The user agreement is asked about only the files that will really be sent. Access is checked
+            // again afterwards because the answer can take as long as the person needs to read it.
+            if (!(await agreementGate.confirm(workspaceAgreementScope(captured.adapter.scope), accepted))
+                || !operationTargets('upload')) return;
             beginMutation('Uploading files', files.length);
             setUploading(true);
             try {
@@ -1033,7 +1061,7 @@ function ScopedDocumentExplorer({
                 finishMutation();
             }
         },
-        [operationTargets, beginMutation, finishMutation, refreshAll, settings, allowedExtensions],
+        [operationTargets, beginMutation, finishMutation, refreshAll, settings, allowedExtensions, agreementGate.confirm],
     );
 
     const onDownload = useCallback(async (targets: WorkspaceDocument[]) => {
@@ -1221,6 +1249,69 @@ function ScopedDocumentExplorer({
             finishMutation();
         }
     }, [operationTargets, beginMutation, finishMutation, loadSidebar]);
+
+    /**
+     * Bring the workspace's older documents up to date, then read the list again.
+     *
+     * The explorer is held still while the request runs, exactly as for any bulk work, and the list is
+     * read again whatever the outcome: a failure part-way through may still have updated some documents,
+     * so the notice follows what the server then says remains. Each outcome is reported in the status
+     * line as well as a toast, because a toast alone is gone before everyone has read it.
+     */
+    const onUpgradeLegacy = useCallback(async () => {
+        const current = operationContext.current;
+        if (!mounted.current || !current.operations.canUpgradeLegacy || current.interactionDisabled
+            || mutationBusy.current || collaborationBusyRef.current) return;
+        const adapter = current.operations;
+        mutationBusy.current = true;
+        onBusyChange?.(true);
+        setUpgradingLegacy(true);
+        setLegacyAttempted(true);
+        setFeedback(null);
+        legacyFocusPending.current = true;
+        try {
+            const outcome = await adapter.upgradeLegacy();
+            if (!mounted.current) return;
+            const failures = outcome.failures.map((failure) => ({
+                // Shown as the name of what failed, so a file the page is not on is still named.
+                document_id: failure.file_name ?? failure.document_id, message: failure.message,
+            }));
+            setFeedback({ title: outcome.message, errors: failures });
+            if (failures.length) toast.error(outcome.message);
+            else if (outcome.remaining) toast.info(outcome.message);
+            else toast.success(outcome.message);
+            await refreshAll();
+        } catch (cause) {
+            if (mounted.current) {
+                const title = 'The update did not finish. Some documents may already have been updated.';
+                const message = errorMessage(cause, 'The update was not confirmed.');
+                setFeedback({ title, errors: [{ document_id: 'Update', message }] });
+                toast.error(`${title} ${message}`);
+                await refreshAll();
+            }
+        } finally {
+            mutationBusy.current = false;
+            if (mounted.current) {
+                setUpgradingLegacy(false);
+                onBusyChange?.(false);
+            }
+        }
+    }, [onBusyChange, refreshAll]);
+
+    // The controls the update held still come back with it, and the notice may be gone, so a keyboard
+    // user is returned to the notice while it stays and to the status line once it is gone.
+    const showLegacyBanner = needsLegacyUpdate && !legacyDismissed && !error
+        && operations.canUpgradeLegacy && !interactionDisabled;
+    useEffect(() => {
+        if (upgradingLegacy || !legacyFocusPending.current) return;
+        legacyFocusPending.current = false;
+        (legacyBannerRef.current?.querySelector<HTMLElement>('button') ?? legacyStatusRef.current)?.focus();
+    }, [upgradingLegacy, showLegacyBanner]);
+    // Dismissing removes the focused button, so keyboard focus moves to the explorer's search box.
+    const onDismissLegacy = useCallback(() => {
+        containerRef.current?.querySelector<HTMLElement>('input[type="search"]')?.focus();
+        setLegacyDismissed(true);
+    }, []);
 
     const onSaveView = useCallback(() => {
         if (!requirePersonalFeature()) return;
@@ -1421,6 +1512,7 @@ function ScopedDocumentExplorer({
                     void onUploadFiles(files);
                 }}
             /> : null}
+            <UserAgreementDialog gate={agreementGate} />
 
             <ExplorerCommandBar
                 searchDraft={searchDraft}
@@ -1463,6 +1555,12 @@ function ScopedDocumentExplorer({
                 }}
             />
 
+            {showLegacyBanner ? (
+                <LegacyUpgradeBanner ref={legacyBannerRef} scope={reader.scope} busy={upgradingLegacy}
+                    incomplete={legacyAttempted} onUpgrade={() => void onUpgradeLegacy()}
+                    onDismiss={onDismissLegacy} />
+            ) : null}
+
             {uploadCategories ? (
                 <details className="shrink-0 text-sm text-text-2">
                     <summary className="w-fit cursor-pointer rounded px-1 py-1 text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
@@ -1499,7 +1597,7 @@ function ScopedDocumentExplorer({
             {!isPersonal && !canChat ? <p role="status" className="text-xs text-text-3">{isGroup ? 'Chat is not available for this group. You can still inspect its documents.' : 'Chat is not available for this public workspace. You can still inspect its documents.'}</p> : null}
             {feedback && !dialog ? <div className="space-y-1">
                 {feedback.errors.length ? <OperationFeedback {...feedback} documents={documents} />
-                    : <p role="status" className="text-xs text-text-3">{feedback.title}</p>}
+                    : <p ref={legacyStatusRef} tabIndex={-1} role="status" className="text-xs text-text-3">{feedback.title}</p>}
             </div> : null}
             {sidebarError || pollError ? (
                 <div className="space-y-1 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">

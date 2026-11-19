@@ -135,7 +135,7 @@
             }
           }
         },
-        "then": {"properties": {"type": {"const": "yamcs"}}},
+        "then": {"properties": {"type": {"enum": ["yamcs", "bitbucket"]}}},
         "else": {"properties": {"auth": {"allOf": [
             { "if": { "properties": { "type": { "const": "NoAuth" } } }, "then": { "required": ["type"] } },
             { "if": { "properties": { "type": { "const": "key" } } }, "then": { "required": ["type", "key"] } },

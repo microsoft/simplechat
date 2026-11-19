@@ -1,7 +1,7 @@
 # test_m365_routes.py
 """
 Functional tests for Microsoft 365 Profile, approval, and audit routes.
-Version: 0.261.423
+Version: 0.261.454
 Implemented in: 0.261.029
 Workflow authorization names and visibility implemented in: 0.261.374
 Notification fixture import parity repaired in: 0.261.423
@@ -114,6 +114,10 @@ class M365RouteTests(unittest.TestCase):
         }
         with patch.dict(sys.modules, dependencies):
             spec.loader.exec_module(self.routes)
+        # These callback fixtures exercise classic pages, independently of UI policy storage.
+        ui_mode = patch("functions_ui_mode.get_ui_mode", return_value="classic")
+        ui_mode.start()
+        self.addCleanup(ui_mode.stop)
         # The real templates and static files, so callbacks render the actual result page.
         self.app = Flask(
             __name__, template_folder=str(APP_DIR / "templates"), static_folder=str(APP_DIR / "static"),

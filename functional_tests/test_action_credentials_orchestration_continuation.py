@@ -1,7 +1,7 @@
 # test_action_credentials_orchestration_continuation.py
 """Real orchestration leases/checkpoints and independent credential waits.
 
-Version: 0.261.343
+Version: 0.261.450
 Implemented in: 0.261.333
 Worker authorization and durable outcome regressions added in: 0.261.343
 
@@ -40,6 +40,9 @@ def configure_real_credentials(harness, monkeypatch, raw):
                         lambda: deepcopy(harness.settings))
     monkeypatch.setattr(credentials, "_services", credentials._services)
     monkeypatch.setattr(continuation, "_services", continuation._services)
+    monkeypatch.setattr(harness.config, "cosmos_bitbucket_connections_container", CredentialContainer("user_id"), raising=False)
+    bitbucket = importlib.import_module("functions_bitbucket_connections")
+    monkeypatch.setattr(bitbucket, "_service", bitbucket._service)
     runtime.configure_action_credential_runtime()
     identity = {"id": "fixture-identity", "_etag": "identity-etag", "name": "Mission",
                 "auth": {"auth_type": "api_key"}, "usage_contexts": ["action"],

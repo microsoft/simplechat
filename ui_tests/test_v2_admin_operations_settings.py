@@ -154,7 +154,7 @@ def test_every_operations_section_renders_real_controls(operations_ui):
     debug.get_by_role("button", name=re.compile("^Feature diagnostics")).click()
     expect(debug.get_by_text("Document Access Index diagnostics", exact=True)).to_be_visible()
     expect(debug.get_by_role("link", name=re.compile("^Open DAI Metrics on the classic admin page"))).to_have_attribute(
-        "href", "/admin/settings#cosmos"
+        "href", "/admin/settings?ui=classic#cosmos"
     )
     operations_ui.capture("all-sections-1440", ARTIFACTS)
 
@@ -190,6 +190,10 @@ def test_the_refresh_schedule_reads_in_both_timezones_and_adopts_mine(operations
     expect(schedule.get_by_text(re.compile(r"^Last refreshed "))).to_be_visible()
     expect(schedule.get_by_role("link", name=re.compile("^Open Control Center"))).to_have_attribute(
         "target", "_blank"
+    )
+    # The V2 Control Center, which has the refresh action itself, not the classic page.
+    expect(schedule.get_by_role("link", name=re.compile("^Open Control Center"))).to_have_attribute(
+        "href", "/v2/control-center"
     )
 
     schedule.get_by_role("button", name="Use my timezone (Europe/Paris)").click()

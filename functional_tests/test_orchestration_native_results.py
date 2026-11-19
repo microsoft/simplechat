@@ -1,10 +1,11 @@
 # test_orchestration_native_results.py
 """
 Native computation, retained results and authorized export-source integration.
-Version: 0.261.232
+Version: 0.261.444
 Implemented in: 0.261.127
 Replay-location identity failure mapping added in: 0.261.141
 Retained native results limited to container access in: 0.261.232
+Explicit turn correlation and safe native locations added in: 0.261.444
 
 Only external storage, document metadata, model and telemetry I/O are doubled.
 The native engine, RunContext, bridge, result store, readers and export bridge
@@ -740,9 +741,10 @@ def test_replay_location_of_another_revision_is_a_clean_access_failure(monkeypat
         )
         runtime.native.patcher.setattr(
             runtime.module, "workflow_log_context",
-            lambda step_id=None, run_id=None, conversation_id=None: {
+            lambda step_id=None, run_id=None, conversation_id=None, turn_id=None: {
                 "step_id_hash": f"hash:{step_id}", "run_id_hash": f"hash:{run_id}",
                 "conversation_id_hash": f"hash:{conversation_id}",
+                "turn_id_hash": f"hash:{turn_id}",
             },
         )
         result = execute(runtime)

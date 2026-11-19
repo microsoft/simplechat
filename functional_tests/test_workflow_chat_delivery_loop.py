@@ -2,7 +2,7 @@
 # test_workflow_chat_delivery_loop.py
 """
 Functional test for the workflow chat delivery background loop.
-Version: 0.261.227
+Version: 0.261.425
 Implemented in: 0.261.227
 
 This test ensures that the delivery loop binds the worker's services once with the distributed
@@ -36,6 +36,7 @@ from azure.core import MatchConditions  # noqa: E402
 
 import functions_workflow_chat_delivery as delivery_contract  # noqa: E402
 import functions_workflow_chat_delivery_worker as delivery_worker  # noqa: E402
+from model_catalog_runtime import catalog_scope  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from test_support.workflow_chat_delivery_fakes import FakeContainer, make_world  # noqa: E402
 
@@ -125,6 +126,7 @@ class LoopHarness:
         return {
             "time": types.SimpleNamespace(monotonic=lambda: self.now, sleep=self.sleep),
             "nullcontext": nullcontext,
+            "catalog_scope": catalog_scope,
             "logging": logging,
             "log_event": lambda message, **kwargs: self.logs.append((message, kwargs)),
             "acquire_distributed_task_lock": self.acquire_lock,

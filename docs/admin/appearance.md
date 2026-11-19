@@ -43,12 +43,20 @@ The Home Page Text section belongs to the Branding tab. Use it with the adjacent
 
 ### Appearance {#appearance-section}
 
+Implemented in version: **0.261.449** (`application/single_app/config.py`).
+Use the interface controls to stage a modern rollout, keep a legacy deployment,
+or let people choose. The restriction applies to administrators as well as users.
+The default only applies when both interfaces are allowed and an account has not
+made its own choice. See [Interface selection]({{ '/explanation/features/UI_INTERFACE_SELECTION/' | relative_url }}).
+
 The Appearance section belongs to the Branding tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
+| Available interfaces | Restricts everyone, including admins, to modern, legacy, or both. When both are allowed, the account menu can switch interfaces. | Legacy and modern | `ui_mode_policy`; implemented in 0.261.449 |
+| Default interface | Chooses the initial interface for accounts without an explicit preference when both interfaces are allowed. Saved user choices take precedence. | Modern | `ui_default_mode`; a missing modern bundle temporarily falls back to legacy with a server warning |
 | Application Title | Provides displayed text that users see in the affected interface. | Simple Chat | `app_title` |
 | Show Logo | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `show_logo` |
 | Hide Application Title | Provides displayed text that users see in the affected interface. | Off | `hide_app_title` |
@@ -75,7 +83,16 @@ The Terms of Use section belongs to the Notices & Agreements tab. Use it with th
 
 ### User Agreement {#user-agreement-section}
 
-The User Agreement section belongs to the Notices & Agreements tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+The User Agreement makes people accept an agreement before they upload files. It is separate from Terms of Use, which people accept before they use SimpleChat at all: the user agreement appears only at the moment of an upload, and only for the places you select.
+
+When it is enabled, the agreement appears before a file is sent from:
+
+- **Personal Workspaces**, **Group Workspaces** and **Public Workspaces**: the Upload command, the file picker and dragging files onto the document list.
+- **Chat**: attaching, pasting or dropping a file into the message box, and retrying a failed attachment.
+
+People choose **Accept** to record their acceptance and continue, or **Cancel** to stop, and nothing is uploaded until they accept. With **Allow users to accept once per day**, an acceptance is remembered for the day (counted in UTC) instead of being asked for on every upload, separately for personal uploads, chat uploads and each group or public workspace. Acceptances are written to the activity log as `user_agreement_accepted`.
+
+The classic and React V2 interfaces both ask, and an acceptance recorded in one counts in the other. The control runs in the browser; the upload routes themselves do not check it. Where a check or an acceptance fails, V2 holds the upload and tells the person, while classic lets the upload carry on. The agreement text is Markdown, up to 200 words; V2 shows raw HTML as plain text, where classic renders a sanitized version. See [V2 user agreement gate](../explanation/features/V2_USER_AGREEMENT_GATE.md).
 
 #### Settings
 
@@ -95,19 +112,21 @@ The User Agreement section belongs to the Notices & Agreements tab. Use it with 
 | Cancel Redirect URL | Use a local path such as / or an admin-approved HTTP(S) URL. Signed-in users are locally logged out before this redirect. | / | `terms_of_use_decline_redirect_url` |
 | Accept Button Text | Provides displayed text that users see in the affected interface. | Accept and continue | `terms_of_use_accept_button_text` |
 | Cancel Button Text | Provides displayed text that users see in the affected interface. | Cancel | `terms_of_use_decline_button_text` |
-| Enable User Agreement | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_user_agreement`; capability toggle |
-| Personal Workspaces | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `user_agreement_apply_personal` |
-| Group Workspaces | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `user_agreement_apply_group` |
-| Public Workspaces | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `user_agreement_apply_public` |
-| Chat | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `user_agreement_apply_chat` |
-| Agreement Text * (Markdown supported) | Provides displayed text that users see in the affected interface. | Empty | `user_agreement_text` |
-| Allow users to accept once per day | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_user_agreement_daily`; capability toggle |
+| Enable User Agreement | Requires an agreement to be accepted before files are uploaded to the places selected below. Applies in classic and V2. | Off | `enable_user_agreement`; capability toggle |
+| Personal Workspaces | Asks before an upload to a person's own workspace. | On | `user_agreement_apply_personal` |
+| Group Workspaces | Asks before an upload to a group workspace. Each group counts separately for once-per-day acceptance. | On | `user_agreement_apply_group` |
+| Public Workspaces | Asks before an upload to a public workspace. Each public workspace counts separately for once-per-day acceptance. | On | `user_agreement_apply_public` |
+| Chat | Asks before a file is attached to a chat message. A chat upload that is saved into a group workspace is still asked about as chat. | Off | `user_agreement_apply_chat` |
+| Agreement Text * (Markdown supported) | What people read and accept. Markdown, up to 200 words. | Empty | `user_agreement_text` |
+| Allow users to accept once per day | Asks once per day for each place instead of on every upload. The day is counted in UTC. | Off | `enable_user_agreement_daily`; capability toggle |
 
 ## Pages & Links {#custom-pages}
 
 ### Static Pages {#custom-pages-section}
 
-The Static Pages section belongs to the Pages & Links tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Static Pages publishes pages from the deployed `custom_pages` folder in SimpleChat's navigation. Each page has metadata that decides who sees it and how: its navigation label, access level, allowed roles, whether it opens in a new tab, and the HTML, CSS, JavaScript, asset, and JSON files it declares. The files themselves are deployed with the application, and the designer only manages the metadata.
+
+In the classic interface a custom page opens inside the classic layout. In the V2 interface it opens inside V2's own content area at `/v2/custom/<slug>`, so the navigation rail stays on screen. A page set to **Open in New Tab**, and a Python-backed page that has not opted in to V2, opens in its own tab instead. The Developer Guide in this section explains how a Python-backed page opts in.
 
 ### External Links {#external-links-section}
 

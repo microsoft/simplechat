@@ -150,6 +150,28 @@ def queue_result(*document_ids, errors=(), extraction_mode=None):
     }
 
 
+def upgrade_failure(document_id, file_name):
+    """One older document the legacy upgrade could not update, as its receipt names it."""
+    return {
+        "document_id": document_id, "file_name": file_name,
+        "error": "legacy_upgrade_failed", "message": "Unable to update this document.",
+    }
+
+
+def upgrade_legacy_result(upgraded, *, errors=(), remaining=False, public_workspace_id="pub-a"):
+    """The receipt for the public workspace legacy document upgrade: what it upgraded, each document it
+    could not update, and whether it stopped at its per-request limit with older documents still to do."""
+    message = f"Upgraded {upgraded} public workspace document(s) to the new format."
+    if errors:
+        message += f" {len(errors)} could not be updated."
+    if remaining:
+        message += " More older documents remain; update again to continue."
+    return {
+        "message": message, "upgraded_count": upgraded, "remaining": remaining,
+        "errors": copy.deepcopy(list(errors)), "public_workspace_id": public_workspace_id,
+    }
+
+
 def upload_refusal(file_name, error=DOCUMENT_OPERATION_FAILED_ERROR):
     """An upload names each refused file with the reason, as one sentence."""
     return f"{file_name}: {error}"
@@ -394,6 +416,10 @@ class PublicDocumentManagementFixture(PublicDocumentsFixture):
             self._validate_delete_options(entry.query, query=True)
             return
         assert not entry.query, f"Operation scope/options must not use query aliases: {entry}"
+        if resource == "upgrade_legacy":
+            # The V2 legacy document upgrade names its workspace in the path and sends nothing else.
+            assert method == "POST" and body is None, entry
+            return
         if resource == "upload":
             assert method == "POST" and isinstance(body, str), entry
             return

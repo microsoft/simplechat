@@ -1,0 +1,18 @@
+{# templates/modern/terms_of_use.html #}
+{% extends "modern/standalone_base.html" %}
+{% block title %}{{ terms.title }} - {{ ms_app_title }}{% endblock %}
+{% block page_class %}ms-page-wide{% endblock %}
+{% block content %}
+<article class="ms-panel" aria-labelledby="terms-of-use-title">
+    <h1 id="terms-of-use-title" class="ms-title">{{ terms.title }}</h1>
+    <div class="ms-prose ms-terms-message" tabindex="0" role="region" aria-label="Agreement text">{{ terms.message }}</div>
+    <div class="ms-actions">
+        <form method="post" action="{{ url_for('frontend_terms_of_use.decline_terms_of_use') }}">
+            <button type="submit" class="ms-button ms-button-secondary">{{ terms.decline_button_text }}</button>
+        </form>
+        <form method="post" action="{{ url_for('frontend_terms_of_use.accept_terms_of_use') }}">
+            <button type="submit" class="ms-button ms-button-primary">{{ terms.accept_button_text }}</button>
+        </form>
+    </div>
+</article>
+{% endblock %}

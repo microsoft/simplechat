@@ -45,16 +45,18 @@ export function UserAvatar({
     const user = useBootstrapStore((state) => state.data?.user);
     const profileImage = useUserSettingsStore((state) => state.settings.profileImage);
     /**
-     * Set when the stored picture fails to decode.
+     * The picture that failed to decode, if one did.
      *
      * The data URI is cached indefinitely and never re-validated, so a truncated or
      * unsupported one would otherwise leave a permanently empty circle with no way to tell
-     * that a picture was even meant to be there.
+     * that a picture was even meant to be there. It is remembered as the picture that failed
+     * rather than as a yes/no, so a photo fetched afterwards by "Refresh photo" is tried
+     * instead of being hidden by the failure of the one it replaced.
      */
-    const [imageFailed, setImageFailed] = useState(false);
+    const [failedSrc, setFailedSrc] = useState('');
 
     const src = typeof profileImage === 'string' ? profileImage.trim() : '';
-    const showImage = Boolean(src) && !imageFailed;
+    const showImage = Boolean(src) && failedSrc !== src;
 
     return (
         <span
@@ -74,7 +76,7 @@ export function UserAvatar({
                 <img
                     src={src}
                     alt=""
-                    onError={() => setImageFailed(true)}
+                    onError={() => setFailedSrc(src)}
                     className="h-full w-full object-cover"
                 />
             ) : (

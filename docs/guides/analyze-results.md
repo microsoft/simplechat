@@ -4,15 +4,21 @@ title: "Read and discuss saved Analyze results"
 description: "Read the answer first, browse saved findings and evidence, and ask follow-up questions without requesting another source pass."
 section: "Guides"
 audience: user
-version: "0.261.398"
+version: "0.261.424"
 ---
 
 ## What this does
 
 Analyze reviews selected documents according to your question and saves the
 accepted findings for later review. Both classic chat and React V2 keep the
-readable answer in the conversation, with a compact **Saved analysis** section
-under it. A supporting file becoming ready does not replace that answer.
+readable answer and inline citations in the conversation. Open that response's
+**Sources** control to inspect its saved findings; an analysis card is not
+appended to every answer. A supporting file becoming ready does not replace
+the answer.
+
+The Sources placement was implemented in version: **0.261.424**, tracked in
+`application/single_app/config.py`. A compact warning remains visible when an
+analysis is partial, pending, not validated, invalid, or unavailable.
 
 {% include media.html id="slide-analyze-and-compare" %}
 
@@ -38,7 +44,8 @@ Use the existing source-selection and Analyze flow:
   **Analyze** in **Action**, rather than **Search**.
 - In React V2, **Documents** selects context. When an **Orchestrate** plan includes
   Analyze, use the existing plan-review and approval controls; the saved-result
-  view appears with its answer. **Documents** is not a separate Analyze button.
+  view is available through the answer's **Sources** control. **Documents** is
+  not a separate Analyze button.
 
 Since **0.261.115**, pinning documents does not also require a Search step. Ask
 for Analyze in the message and review the proposed operation. All selected
@@ -72,20 +79,23 @@ The assistant's answer is the readable overview. It can explain the main themes
 without displaying every saved finding. Do not treat that overview, or a file
 preview, as the complete set of records.
 
-1. Read the answer and the validation notice under **Saved analysis**.
-2. Expand **Findings and limitations** to load a page of accepted findings.
-3. Use **Next findings** and **Previous findings** to move through the saved set.
+1. Read the answer and its inline citations.
+2. Open **Sources** on that response and read the saved analysis's validation notice.
+3. Expand **Findings and limitations** to load a page of accepted findings.
+4. Use **Next findings** and **Previous findings** to move through the saved set.
    Pages contain up to **25 complete records**; the last page may be shorter.
-4. Compare the displayed count with the total. For example,
+5. Compare the displayed count with the total. For example,
    `Showing 1–25 of 60 records` means that 35 records are on other pages.
 
-A closed findings section reports zero records displayed, not zero records saved.
-Source counts are separate: the sources represented on one page can be fewer than
-the sources in the saved analysis. One source can contribute several findings.
-Neither count proves that every possible issue was discovered.
+A closed findings section shows the total number of saved findings. An expanded
+section shows the displayed range and the full total. Source counts are separate:
+the sources represented on one page can be fewer than the sources in the saved
+analysis. One source can contribute several findings. These are not counts of
+native comments or citation chips, and they do not prove that every possible
+issue was discovered.
 
 Since **0.261.398**, a new orchestration reply can show several retained analyses
-when a later step could not finish. Their headings identify the producing
+when a later step could not finish. Open **Sources** to see them. Their headings identify the producing
 steps; each has its own count, findings, evidence, and diagnostic link. Read
 their validation notices separately. A usable source review does not mean the
 overall answer was delivered.
@@ -127,6 +137,10 @@ The **Limitations and validation issues** section appears when the saved result
 includes those notices. Read it alongside the findings, particularly when the
 analysis is incomplete.
 
+Routine structural-success notices stay in Sources rather than competing with
+the answer. A material limitation still gets a compact warning below the answer;
+select **View sources** to inspect it.
+
 | Notice | How to interpret it |
 | --- | --- |
 | **Structural checks passed.** | Structural checks completed successfully. This is not independent factual verification or proof that the findings are exhaustive. |
@@ -139,14 +153,29 @@ Findings remain model judgments. Inspecting a saved quotation helps you understa
 its support; it does not reread the original source or independently verify the
 conclusion.
 
-For an audit, **View diagnostics (JSON)** opens the separately saved processing
+For an audit, **View diagnostics (JSON)** in Sources opens the separately saved processing
 data in a new tab. It is not the final findings or a readable report. The response
 is bounded; `next_offset` identifies another byte page when the audit is larger
 than one response. Ordinary reading and follow-up questions do not use this data.
+In V2, expand **Findings and limitations**, then **Advanced analysis details**
+to reach this link.
+
+### An empty comment inventory is not an evidence failure
+
+A successfully completed native Word or Excel comment inspection can find zero
+comments. Its saved inventory is still citable evidence for that absence. Since
+**0.261.424**, that result does not receive a missing-evidence warning merely
+because no annotation records were returned.
+
+An unavailable or incomplete inspection cannot establish that there are no
+comments. Missing body-text evidence also remains separate: checking comments
+does not establish the document's current wording. Likewise, an Analyze result
+with zero saved findings does not, by itself, establish a native comment count.
 
 ## Ask about the saved analysis
 
-1. Select **Ask about this analysis** on the result you want to discuss.
+1. Open **Sources** on the response and select **Ask about this analysis** on
+   the result you want to discuss.
 2. Check the composer notice:
 
    > Saved analysis selected. Explaining the saved analysis — not running a new pass over the original sources.
@@ -208,3 +237,7 @@ Local functional and browser-fixture coverage is separate from live acceptance.
 Use a matching backend and V2 build, a new conversation, and currently authorized
 sources when evaluating a deployment. Reopening an old conversation does not
 re-analyze its documents or retrofit new saved-result metadata.
+
+The Sources placement applies when existing saved results are displayed again.
+Stored historical evidence warnings are not rewritten or dismissed merely
+because an answer has citations.

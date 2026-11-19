@@ -1,8 +1,9 @@
 # test_orchestration_adapter_contract.py
 """
 Functional test for the orchestration adapter contract.
-Version: 0.261.139
+Version: 0.261.445
 Implemented in: 0.261.087
+Harness hint retention coverage added in: 0.261.445
 Single orchestration contract updated in: 0.261.139
 
 Every executable capability must resolve to the callable shape the dependency executor
@@ -29,6 +30,11 @@ ROUTE = 'route_backend_orchestration.py'
 
 EXPECTED_POSITIONAL = ['step', 'context']
 EXPECTED_KEYWORD = {'settings', 'user_id', 'emit', 'cancel_requested'}
+DYNAMIC_ADAPTER_CAPABILITIES = {
+    'document_create_from_reference',
+    'document_inspect',
+    'document_refresh',
+}
 
 
 def _tree(module):
@@ -103,7 +109,10 @@ def test_every_executable_capability_resolves_to_an_adapter_or_executor_extensio
                 assert callable(adapter), f'{capability_id} did not resolve to an adapter'
         assert get_adapter('compose', contract_version=1) is None
 
-    missing = sorted(set(ids) - registered_ids - {'compose', 'generate_image', 'render_file'})
+    missing = sorted(
+        set(ids) - registered_ids - DYNAMIC_ADAPTER_CAPABILITIES
+        - {'compose', 'generate_image', 'render_file'}
+    )
     assert not missing, f'these capabilities have no adapter path: {missing}'
 
 
@@ -141,6 +150,19 @@ def test_dependency_executor_passes_the_expected_adapter_keywords():
     assert calls, 'executor no longer calls a resolved adapter'
     keywords = {keyword.arg for keyword in calls[0].keywords}
     assert EXPECTED_KEYWORD <= keywords
+
+
+def test_failed_adapter_result_retains_only_its_bounded_replan_hint():
+    with stubbed_app_imports():
+        from functions_orchestration_adapters import _failed_result
+
+        result = _failed_result(
+            "PRIVATE_FAILURE_SUMMARY", RuntimeError("PRIVATE_PROVIDER_DETAIL"),
+            replan_hint="The retained source changed; request a fresh selection.",
+        )
+    assert result["status"] == "failed"
+    assert result["replan_hint"] == "The retained source changed; request a fresh selection."
+    assert "PRIVATE_" not in result["failure"]["message"]
 
 
 def test_adapters_never_touch_flask_state():

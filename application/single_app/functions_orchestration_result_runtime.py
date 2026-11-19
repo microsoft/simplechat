@@ -1,26 +1,30 @@
 # functions_orchestration_result_runtime.py
 """Typed runtime handoffs; no clients, model calls, publication, or new storage.
 
-Version: 0.261.365
+Version: 0.261.424
 """
 
 from copy import deepcopy
 from dataclasses import replace
+import hashlib
 import json
+import re
 
 from content_screening.contracts import DocumentHeldError, ScreeningError
+from functions_action_manifest import is_document_search_action
+from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_analysis_access import analysis_source_snapshot
 from functions_evidence_status import evidence_status_from_sources
 from functions_orchestration_invocation_capture import (
     OrchestrationInvocationCancelledError, OrchestrationInvocationControlError, OrchestrationInvocationServiceError,
 )
 from functions_orchestration_registry import (
-    DEPENDENCY_PLAN_CONTRACT_VERSION, get_capability, get_capability_result_outputs,
+    CAPABILITY_ACTION_INVOKE, DEPENDENCY_PLAN_CONTRACT_VERSION, get_capability, get_capability_result_outputs,
 )
 from functions_orchestration_result_contracts import (
     IMAGE_ASSET_KIND, MAX_DESCRIPTOR_BYTES, MAX_EXTERNAL_SOURCES, Completeness, Coverage, ExternalSourceRef,
-    InputBinding, PartialInputNotAcceptedError, ResultContractError, ResultNotReadyError, ResultRef, TaskResult,
-    canonical_bytes, canonical_digest, output_name,
+    InputBinding, PartialInputNotAcceptedError, NARRATIVE_READY_CHECK, ResultContractError, ResultNotReadyError,
+    ResultRef, TaskResult, canonical_bytes, canonical_digest, narrative_result_ready, output_name,
 )
 from functions_orchestration_results import (
     MAX_LINEAGE_RESULTS, MAX_VALUE_BYTES, NamedOutput, OrchestrationResults, ResultUnavailableError, _reference,
@@ -105,6 +109,195 @@ def resolve_step_inputs(step, context):
     return readers
 
 
+def validate_tabular_requirement_readers(step, readers, service):
+    requirement = (step.get('arguments') or {}).get('tabular_requirement')
+    if requirement is None:
+        return
+    required_ids = set(requirement['document_ids'])
+    covered_ids = set()
+    complete_record_ids = set()
+    calculation_records = []
+    calculation_outputs = {}
+    preparation_readers = []
+    for reader in readers.values():
+        source_ids = {
+            source.get('document_id') for source in reader.lineage_sources()
+            if isinstance(source, dict) and source.get('document_id')
+        }
+        covered_ids.update(source_ids)
+        producer = reader.reference.producer
+        if (
+            reader.result_kind == 'records-v1'
+            and reader.reference.output_name == 'records'
+            and reader.completeness.status == 'complete'
+            and producer.capability_id in ('tabular_analyze', 'tabular_merge')
+        ):
+            complete_record_ids.update(source_ids)
+            if producer.capability_id == 'tabular_analyze':
+                calculation_records.append((reader, source_ids))
+        if producer.capability_id == 'tabular_analyze':
+            calculation_outputs.setdefault(producer.step_id, set()).add(reader.reference.output_name)
+            if (
+                reader.reference.output_name == 'context'
+                and reader.result_kind == 'structured-v1'
+                and reader.completeness.status == 'complete'
+            ):
+                preparation_readers.append((reader, source_ids))
+    if not required_ids <= covered_ids:
+        raise ResultContractError('result_tabular_sources_incomplete')
+    if requirement['mode'] == 'overview':
+        return
+    if requirement['mode'] == 'calculation_answer':
+        if (
+            requirement.get('version') != 'tabular-calculation-answer-v1'
+            or len(preparation_readers) != 1
+            or not required_ids <= preparation_readers[0][1]
+        ):
+            raise ResultContractError('result_tabular_preparation_incomplete')
+        preparation_reader, preparation_sources = preparation_readers[0]
+        if preparation_sources != required_ids:
+            raise ResultContractError('result_tabular_preparation_incomplete')
+        preparation = read_complete_input(preparation_reader)
+        if (
+            type(preparation) is not dict
+            or preparation.get('version') != 'tabular-calculation-context-v1'
+            or preparation.get('complete') is not True
+            or not isinstance(preparation.get('analytical_request_sha256'), str)
+            or not re.fullmatch(r'[a-f0-9]{64}', preparation['analytical_request_sha256'])
+            or type(preparation.get('datasets')) is not list
+            or {
+                item.get('document_id') for item in preparation['datasets']
+                if isinstance(item, dict)
+            } != required_ids
+            or any(
+                not isinstance(item, dict)
+                or not re.fullmatch(r'[a-f0-9]{64}', item.get('content_sha256') or '')
+                for item in preparation['datasets']
+            )
+        ):
+            raise ResultContractError('result_tabular_preparation_incomplete')
+        authoritative_sources = []
+        for source in preparation.get('source_snapshots') or []:
+            if not isinstance(source, dict):
+                raise ResultContractError('result_tabular_preparation_incomplete')
+            authoritative_sources.append({
+                key: value for key, value in source.items() if key != 'content_sha256'
+            })
+        if (
+            authoritative_sources != analysis_source_snapshot(
+                preparation_reader.lineage_sources(),
+            )
+            or {
+                source.get('document_id') for source in authoritative_sources
+            } != required_ids
+        ):
+            raise ResultContractError('result_tabular_preparation_incomplete')
+        expected_profile = hashlib.sha256(canonical_bytes({
+            'datasets': preparation['datasets'],
+            'source_snapshots': preparation.get('source_snapshots'),
+            'analytical_request_sha256': preparation['analytical_request_sha256'],
+        })).hexdigest()
+        if preparation.get('profile_sha256') != expected_profile:
+            raise ResultContractError('result_tabular_preparation_incomplete')
+        calculation_readers = [
+            reader for reader in readers.values()
+            if reader.reference.producer.capability_id == 'tabular_analyze'
+            and reader.reference.output_name in {'records', 'lineage', 'coverage'}
+        ]
+        if not calculation_readers:
+            return
+        if {reader.reference.output_name for reader in calculation_readers} != {
+            'records', 'lineage', 'coverage',
+        } or len(calculation_readers) != 3:
+            raise ResultContractError('result_tabular_calculation_incomplete')
+        producer = calculation_readers[0].reference.producer
+        if (
+            any(reader.reference.producer != producer for reader in calculation_readers)
+            or any(
+                reader.completeness.status != 'complete'
+                or {
+                    source.get('document_id') for source in reader.lineage_sources()
+                    if isinstance(source, dict)
+                } != required_ids
+                for reader in calculation_readers
+            )
+        ):
+            raise ResultContractError('result_tabular_calculation_incomplete')
+        values = {
+            reader.reference.output_name: read_complete_input(reader)
+            for reader in calculation_readers
+        }
+        coverage = values.get('coverage')
+        if (
+            type(values.get('records')) is not list
+            or type(values.get('lineage')) is not list
+            or len(values['records']) != len(values['lineage'])
+            or type(coverage) is not dict
+            or coverage.get('complete') is not True
+            or (coverage.get('operation_spec') or {}).get('version')
+            not in {'tabular-relate-v1', 'tabular-relate-v2'}
+            or coverage.get('source_snapshots') != preparation.get('source_snapshots')
+            or coverage.get('preparation_profile_sha256') != preparation.get('profile_sha256')
+        ):
+            raise ResultContractError('result_tabular_calculation_incomplete')
+        manifest = service._load_manifest(calculation_readers[0].reference)
+        outputs = manifest.get('outputs') or {}
+        if any(
+            outputs.get(name, {}).get('kind') != kind
+            or (outputs.get(name, {}).get('completeness') or {}).get('status') != 'complete'
+            for name, kind in (
+                ('records', 'records-v1'), ('lineage', 'records-v1'),
+                ('coverage', 'structured-v1'),
+            )
+        ):
+            raise ResultContractError('result_tabular_calculation_incomplete')
+        return
+    if not required_ids <= complete_record_ids:
+        raise ResultContractError('result_tabular_records_incomplete')
+    if requirement['mode'] == 'complete_records':
+        return
+    qualifying = [
+        (reader, source_ids) for reader, source_ids in calculation_records
+        if required_ids <= source_ids
+    ]
+    if len(qualifying) != 1:
+        raise ResultContractError('result_tabular_calculation_incomplete')
+    reader = qualifying[0][0]
+    if not {'records', 'lineage', 'coverage'} <= calculation_outputs.get(reader.reference.producer.step_id, set()):
+        raise ResultContractError('result_tabular_calculation_incomplete')
+    manifest = service._load_manifest(reader.reference)
+    outputs = manifest.get('outputs') or {}
+    if any(
+        not isinstance(outputs.get(name), dict)
+        or outputs[name].get('kind') != kind
+        or (outputs[name].get('completeness') or {}).get('status') != 'complete'
+        for name, kind in (
+            ('records', 'records-v1'), ('lineage', 'records-v1'), ('coverage', 'structured-v1'),
+        )
+    ):
+        raise ResultContractError('result_tabular_calculation_incomplete')
+    coverage_reader = next((
+        candidate for candidate in readers.values()
+        if candidate.reference.producer == reader.reference.producer
+        and candidate.reference.output_name == 'coverage'
+    ), None)
+    if coverage_reader is None:
+        raise ResultContractError('result_tabular_calculation_incomplete')
+    coverage = read_complete_input(coverage_reader)
+    if (
+        type(coverage) is not dict
+        or coverage.get('complete') is not True
+        or (coverage.get('operation_spec') or {}).get('version')
+        not in {'tabular-relate-v1', 'tabular-relate-v2'}
+        or {
+            snapshot.get('document_id')
+            for snapshot in coverage.get('source_snapshots') or []
+            if isinstance(snapshot, dict) and snapshot.get('document_id')
+        } != required_ids
+    ):
+        raise ResultContractError('result_tabular_calculation_incomplete')
+
+
 def read_complete_input(reader, *, max_bytes=MAX_VALUE_BYTES):
     """Exhaust the authoritative reader, including its final integrity/access checks."""
     if reader.reference.size_bytes > max_bytes:
@@ -123,6 +316,63 @@ def read_complete_input(reader, *, max_bytes=MAX_VALUE_BYTES):
             raise ResultContractError('result_requires_streaming')
         values.append(item)
     return values
+
+
+def qualified_calculation_answer_ready(plan, reference, execution_steps):
+    """A partial narrative may replace only its one failed prepared calculation's prose."""
+    if (
+        type(plan) is not dict or not isinstance(reference, ResultRef)
+        or not narrative_result_ready(reference) or reference.completeness.status != 'partial'
+        or type(execution_steps) is not list
+        or NARRATIVE_READY_CHECK not in reference.completeness.checks
+    ):
+        return False
+    final_binding = plan.get('final_response')
+    if type(final_binding) is not dict:
+        return False
+    try:
+        final_binding = InputBinding.from_dict(final_binding)
+    except ResultContractError:
+        return False
+    steps = [
+        value for value in plan.get('steps') or []
+        if type(value) is dict and value.get('enabled', True)
+    ]
+    by_id = {step.get('step_id'): step for step in steps}
+    final_step = by_id.get(final_binding.step_id)
+    if (
+        final_step is None
+        or final_step.get('capability_id') != 'compose'
+        or (final_step.get('arguments') or {}).get('tabular_requirement', {}).get('mode')
+        != 'calculation_answer'
+        or reference.producer.step_id != final_binding.step_id
+        or reference.output_name != final_binding.output_name
+    ):
+        return False
+    calculation_step_ids = {
+        spec.binding.step_id for spec in step_input_specs(final_step)
+        if spec.binding.step_id is not None
+        and spec.binding.output_name in {'records', 'lineage', 'coverage'}
+        and (by_id.get(spec.binding.step_id, {}).get('arguments') or {}).get('native_operation') == 'relate'
+        and (by_id.get(spec.binding.step_id, {}).get('arguments') or {}).get('calculation_mode') == 'prepared-v1'
+    }
+    if len(calculation_step_ids) != 1:
+        return False
+    statuses = {
+        item.get('step_id'): item.get('status') for item in execution_steps
+        if isinstance(item, dict)
+    }
+    calculation_step_id = next(iter(calculation_step_ids))
+    if (
+        statuses.get(final_binding.step_id) != 'partial'
+        or statuses.get(calculation_step_id) not in {'failed', 'skipped', 'cancelled'}
+    ):
+        return False
+    return all(
+        step['step_id'] in {final_binding.step_id, calculation_step_id}
+        or statuses.get(step['step_id']) == 'completed'
+        for step in steps
+    )
 
 
 def _search_evidence_citations(reader, prepared):
@@ -160,7 +410,23 @@ def read_result_document_citations(context, reference, *, evidence_status_out=No
     """Project document provenance from the exact final result, never ambient work."""
     service = require_result_service(context)
     with service.read_operation():
-        return _read_result_document_citations(service, reference, evidence_status_out=evidence_status_out)
+        citations = _read_result_document_citations(service, reference, evidence_status_out=evidence_status_out)
+    if is_debug_enabled():
+        producer = reference.producer
+        consumer = workflow_log_context(run_id=getattr(context, 'run_id', None))
+        log_event('[ORCHESTRATION_EXECUTOR] Retained document citation projection verified.', extra={
+            **workflow_log_context(
+                conversation_id=producer.conversation_id, run_id=producer.run_id, step_id=producer.step_id,
+            ),
+            **({'consumer_run_id_hash': consumer['run_id_hash']} if consumer else {}),
+            'stage': 'retained_citation_projection', 'capability_id': producer.capability_id,
+            'citation_count': len(citations),
+            'located_citation_count': sum(
+                bool(citation.get('citation_id')) and citation.get('location_value', citation.get('page_number'))
+                not in (None, '') for citation in citations
+            ),
+        })
+    return citations
 
 
 def read_result_evidence_status(context, reference):
@@ -256,13 +522,39 @@ def read_result_source_coverage(context, reference):
     return None
 
 
+def _native_inventory_evidence_state(prepared, document_id):
+    """An inspected empty inventory is evidence of absence, not missing excerpts."""
+    coverage = prepared.get('coverage')
+    inventories = coverage.get('native_inspection') if type(coverage) is dict else None
+    if type(inventories) is not list:
+        return 'unknown'
+    matches = [
+        item for item in inventories
+        if type(item) is dict and item.get('document_id') == document_id
+    ]
+    if len(matches) != 1:
+        return 'unknown'
+    inventory = matches[0]
+    if inventory.get('execution_mode') != 'native_inspection' or inventory.get('section') != 'comments':
+        return 'unknown'
+    total, returned = inventory.get('total_records'), inventory.get('returned_records')
+    if type(total) is not int or type(returned) is not int or not 0 <= returned <= total:
+        return 'unknown'
+    flags = ('partial', 'has_more', 'limit_reached')
+    if returned < total or any(inventory.get(flag) is True for flag in flags):
+        return 'partial'
+    if inventory.get('inventory_complete') is True and all(inventory.get(flag) is False for flag in flags):
+        return 'complete'
+    return 'unknown'
+
+
 def _read_result_document_citations(service, reference, *, evidence_status_out=None):
     root = service.open_result(reference, allow_partial=True, require_current_sources=True)
     if root.metadata()['source_count'] == 0:
         return []
     sources, citations, visited, expanded = {}, {}, set(), set()
     coverage_values = {}
-    search_counts, source_names = {}, {}
+    search_counts, source_names, source_outcomes = {}, {}, {}
     citation_fields = (
         'citation_id', 'chunk_id', 'file_name', 'title', 'page_number', 'chunk_sequence',
         'sheet_name', 'location_label', 'location_value', 'classification', 'document_classification', 'score',
@@ -309,6 +601,7 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                 visit(ResultRef.from_dict(parent))
         retained_citations = []
         native_reference = None
+        producer_counts = {}
         if (
             producer.capability_id == 'document_search'
             and (current.output_name, current.kind) in (
@@ -329,7 +622,9 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                     or type(prepared) is not dict
                     or prepared.get('version') != 'orchestration-gathered-content-v1'
                     or prepared.get('capability_id') != 'document_search'
-                    or prepared.get('content_scope') not in ('returned_excerpts', 'native_excel_annotations')
+                    or prepared.get('content_scope') not in (
+                        'returned_excerpts', 'native_excel_annotations', 'native_document_annotations',
+                    )
                     or type(prepared.get('citations')) is not list
                 ):
                     raise ResultContractError('result_citations_invalid')
@@ -337,10 +632,26 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                     _search_evidence_citations(reader, prepared)
                     if current.output_name == 'evidence' else prepared['citations']
                 )
-                if prepared['content_scope'] == 'native_excel_annotations':
+                if prepared['content_scope'] in ('native_excel_annotations', 'native_document_annotations'):
                     native_reference = prepared_reader.reference.to_dict()
                 for source in lineage['sources']:
-                    search_counts.setdefault(source_key(source), set())
+                    identity = source_key(source)
+                    search_counts.setdefault(identity, set())
+                    producer_counts[identity] = set()
+        elif producer.capability_id == CAPABILITY_ACTION_INVOKE and lineage['sources']:
+            prepared = read_complete_input(reader)
+            if (
+                current.output_name != 'prepared' or current.kind != 'structured-v1'
+                or type(prepared) is not dict
+                or prepared.get('version') != 'orchestration-gathered-content-v1'
+                or prepared.get('capability_id') != CAPABILITY_ACTION_INVOKE
+                or type(prepared.get('citations')) is not list
+            ):
+                raise ResultContractError('result_citations_invalid')
+            # The tool citation adapter reads config defaults; keep it out of bootstrap.
+            from functions_agent_document_citations import build_document_citations_from_agent_citations
+
+            retained_citations = build_document_citations_from_agent_citations(prepared['citations'])
         elif producer.capability_id in ('document_analyze', 'document_compare'):
             # Coverage is this producer's citation sidecar, not an implicit input from
             # another task. Reopen the exact committed digest, including after recovery.
@@ -385,14 +696,21 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                 producer.capability_id == 'document_search' and identity_key in search_counts
                 and citation.get('evidence_kind') != 'native_annotation_coverage'
             ):
-                search_counts[identity_key].add((
+                evidence_key = (
                     producer, current.manifest_sha256,
                     canonical_digest({name: value for name, value in projected.items() if name != 'evidence_id'}),
-                ))
+                )
+                search_counts[identity_key].add(evidence_key)
+                producer_counts[identity_key].add(evidence_key)
             identity = {key: value for key, value in projected.items() if key != 'evidence_id'}
             citations.setdefault(source_key(matches[0]), {}).setdefault(
                 canonical_digest(identity), projected,
             )
+        for identity, counts in producer_counts.items():
+            state = _native_inventory_evidence_state(prepared, identity[2]) if native_reference is not None else (
+                'complete' if counts else 'missing'
+            )
+            source_outcomes.setdefault(identity, {})[key] = state
         reader.recheck()
 
     visit(reference)
@@ -406,15 +724,20 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
         rows = []
         for index, (identity, source) in enumerate(sources.items(), start=1):
             count = len(search_counts[identity]) if identity in search_counts else None
+            outcome = evidence_status_from_sources([
+                {'state': state} for state in source_outcomes.get(identity, {}).values()
+            ])
             row = {
                 "name": str(source_names.get(identity) or source.get("file_name") or f"Selected source {index}")[:160],
                 "document_id": source["document_id"],
-                "state": "missing" if count == 0 else "complete" if count is not None else "unknown",
+                "state": outcome["state"] if outcome is not None else "unknown",
             }
             if count is not None:
                 row["evidence_count"] = count
             rows.append(row)
-        evidence_status_out["value"] = evidence_status_from_sources(rows)
+        evidence_status_out["value"] = evidence_status_from_sources(
+            rows, partial=root.completeness.status == 'partial',
+        )
     return projected
 
 
@@ -422,7 +745,7 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     """Resolve an exact committed annotation, with current source access and version.
 
     Unlike ordinary retained-result inspection, a source citation also authorizes the
-    workbook it offers to preview. Never search a current inventory by cell or decode
+    document it offers to preview. Never search a current inventory by location or decode
     a document identity from the synthetic citation ID.
     """
     if (
@@ -433,7 +756,9 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     reader = service.open_result(reference, allow_partial=True, require_current_sources=True)
     prepared = read_complete_input(reader)
     if (
-        type(prepared) is not dict or prepared.get('content_scope') != 'native_excel_annotations'
+        type(prepared) is not dict or prepared.get('content_scope') not in (
+            'native_excel_annotations', 'native_document_annotations',
+        )
         or type(prepared.get('citations')) is not list or type(prepared.get('search_results')) is not list
     ):
         raise ResultContractError('native_citation_reference_invalid')
@@ -457,6 +782,7 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     if type(value) is not dict:
         raise ResultContractError('native_citation_evidence_invalid')
     annotation = value.get('excel_annotation')
+    word_annotation = value.get('word_annotation')
     coverage = value.get('native_coverage')
     if type(annotation) is dict:
         citation = citations[0]
@@ -465,6 +791,13 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
         )):
             raise ResultContractError('native_citation_evidence_invalid')
         response = {'native_annotation': deepcopy(annotation), 'cited_text': annotation.get('text') or ''}
+    elif type(word_annotation) is dict:
+        if (
+            citations[0].get('annotation_id') != word_annotation.get('id')
+            or citations[0].get('evidence_kind') != 'native_word_annotation'
+        ):
+            raise ResultContractError('native_citation_evidence_invalid')
+        response = {'native_annotation': deepcopy(word_annotation), 'cited_text': word_annotation.get('text') or ''}
     elif type(coverage) is dict:
         response = {'native_coverage': deepcopy(coverage), 'cited_text': ''}
     else:
@@ -474,7 +807,10 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     return {
         **response, 'citation_id': citation_id, 'document_id': document_id,
         'file_name': hits[0].get('file_name') or '', 'source_version': sources[0]['source_version'],
-        'evidence_kind': 'native_excel_annotation' if annotation is not None else 'native_annotation_coverage',
+        'evidence_kind': (
+            'native_word_annotation' if type(word_annotation) is dict
+            else 'native_excel_annotation' if type(annotation) is dict else 'native_annotation_coverage'
+        ),
     }
 
 
@@ -595,8 +931,8 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
     partial = bool(native_coverage and any(item.get('partial') for item in native_coverage))
     if native_coverage:
         limitations = (
-            'Native annotation evidence contains saved workbook records, not recalculated worksheet data.',
-            'Reviewer feedback is distinct from the saved cell value; missing metadata must not be inferred.',
+            'Native annotation evidence contains saved document records, not inferred or recalculated data.',
+            'Reviewer feedback is distinct from document text or a saved cell value; missing metadata must not be inferred.',
         )
         if partial:
             limitations += ('The native annotation inventory is partial; remaining records were not inspected.',)
@@ -634,7 +970,11 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
         },
     }
     if native_coverage:
-        prepared['content_scope'] = 'native_excel_annotations'
+        prepared['content_scope'] = (
+            'native_excel_annotations' if all(
+                item.get('format') in (None, 'xlsx', 'xlsm', 'xls') for item in native_coverage
+            ) else 'native_document_annotations'
+        )
         prepared['coverage']['native_inspection'] = deepcopy(native_coverage)
     return service.persist_task_result(
         producer=context.result_producer(step), role='gather', status='partial' if partial else 'complete',
@@ -675,6 +1015,17 @@ def retain_gather_result(step, context, result, *, source_manifest):
     service = require_result_service(context)
     capability_id = step['capability_id']
     sources = analysis_source_snapshot(source_manifest)
+    producer = context.result_producer(step)
+    trace = workflow_log_context(
+        conversation_id=producer.conversation_id, turn_id=getattr(context, 'turn_id', None),
+        run_id=producer.run_id, step_id=producer.step_id,
+    )
+    if is_debug_enabled():
+        log_event('[ORCHESTRATION_EXECUTOR] Gather retention started.', extra={
+            **trace, 'stage': 'gather_retention', 'capability_id': capability_id,
+            'workspace_source_count': len(sources),
+            'document_binding_declared': 'document_ids' in (step.get('arguments') or {}),
+        })
     evidence = deepcopy(result.get('evidence') or [])
     citations = deepcopy(result.get('citations') or [])
     notes = deepcopy(result.get('notes') or [])
@@ -723,8 +1074,21 @@ def retain_gather_result(step, context, result, *, source_manifest):
         ))
     else:
         admission = getattr(context, 'external_source_admission', None)
+        arguments = step.get('arguments') or {}
+        bound_action = (
+            capability_id == CAPABILITY_ACTION_INVOKE
+            and bool(arguments.get('document_ids'))
+            and arguments['document_ids'] == [source['document_id'] for source in sources]
+            and all(source.get('scope') in ('personal', 'group', 'public') for source in sources)
+            and any(
+                action.get('action_ref') == arguments.get('action_ref') and is_document_search_action(action)
+                for action in (getattr(context, 'action_catalog', None) or ()) if isinstance(action, dict)
+            )
+        )
         if (
-            sources or not callable(admission)
+            ((sources or (capability_id == CAPABILITY_ACTION_INVOKE and 'document_ids' in arguments))
+             and not bound_action)
+            or not callable(admission)
             or not callable(service.access.external_source_authorizer)
         ):
             raise ResultContractError('result_external_lineage_unsupported')
@@ -744,11 +1108,18 @@ def retain_gather_result(step, context, result, *, source_manifest):
         service.access.external_source_catalog.update(admitted)
         external_sources = tuple(admitted)
     outputs.append(NamedOutput('prepared', 'structured-v1', prepared, _complete(1, limitations, partial=partial)))
-    return service.persist_task_result(
-        producer=context.result_producer(step), role='gather', status='partial' if partial else 'complete',
+    task = service.persist_task_result(
+        producer=producer, role='gather', status='partial' if partial else 'complete',
         outputs=outputs, sources=sources, origin='grounded' if sources or external_sources else 'generated',
         guard_token=context.result_guard_token_for_step(step['step_id']),
         input_fingerprint=context.result_input_fingerprint_for_step(step['step_id']),
         upstream=tuple(dict.fromkeys(reader.reference for reader in readers.values())),
         **({'external_sources': external_sources} if external_sources else {}),
     )
+    if is_debug_enabled():
+        log_event('[ORCHESTRATION_EXECUTOR] Gather result retained.', extra={
+            **trace, 'stage': 'gather_retained', 'capability_id': capability_id,
+            'workspace_source_count': len(sources), 'external_source_count': len(external_sources),
+            'output_count': len(outputs), 'upstream_input_count': len(readers), 'partial': partial,
+        })
+    return task

@@ -1,7 +1,7 @@
 # test_oauth_error_responses.py
 """
 Functional HTTP regressions for the registered OAuth callback error responses.
-Version: 0.261.423
+Version: 0.261.454
 Implemented in: 0.261.423
 
 Real Flask callback registration exercises hostile provider parameters, unchanged
@@ -74,7 +74,7 @@ def callbacks():
     load_cache = Mock(return_value=cache)
     save_cache = Mock()
     scopes = Mock(return_value=["User.Read"])
-    settings = Mock(return_value={})
+    settings = Mock(return_value={"ui_mode_policy": "classic"})
     login_activity = Mock()
     dependencies = {
         "config": route_fixtures.module_stub(

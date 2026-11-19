@@ -1,9 +1,10 @@
 # test_v2_orchestration_actions.py
 """
 Browser coverage for action identity and tool citations in orchestration.
-Version: 0.261.321
+Version: 0.261.423
 Implemented in: 0.261.098
 Operation intent added in: 0.261.321
+Document action source binding coverage added in: 0.261.419
 
 Use the existing orchestration harness and real stores/components. Serve its
 local bundle through request interception so local and Azure Playwright browsers
@@ -15,7 +16,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -60,6 +61,13 @@ def action_page(page):
             route.fulfill(path=str(hb.BUNDLE), content_type="application/javascript")
         elif f"{parsed.scheme}://{parsed.netloc}" == ORIGIN and parsed.path == "/favicon.ico":
             route.fulfill(status=204)
+        elif (
+            f"{parsed.scheme}://{parsed.netloc}" == ORIGIN
+            and route.request.method == "GET"
+            and parsed.path == "/api/v2/orchestration/questions"
+            and parse_qs(parsed.query).get("conversation_id") == [CONVERSATION]
+        ):
+            route.fulfill(json={"questions": [], "csrf_token": "fixture-token"})
         elif f"{parsed.scheme}://{parsed.netloc}" == ORIGIN and is_pending_actions_list(
             route.request.method, parsed.path
         ):
@@ -72,7 +80,7 @@ def action_page(page):
     page.goto(ORIGIN, wait_until="domcontentloaded")
     page.wait_for_function("() => Boolean(window.OrchHarness)")
     yield page
-    assert not errors, errors
+    assert not errors, {"errors": errors, "unexpected_requests": unexpected_requests}
     assert not unexpected_requests, unexpected_requests
 
 
@@ -281,6 +289,29 @@ def test_action_step_keeps_existing_narrowing_controls(action_page):
     assert disabled["disabled_step_ids"] == ["lookup"]
     row.get_by_role("checkbox").click()
     expect(row.get_by_text("Run Look up the ticket", exact=True)).to_be_visible()
+
+
+def test_native_action_bound_sources_are_visible_and_can_be_narrowed(action_page):
+    plan = _plan()
+    plan["intent"]["summary"] = "Inspect native document evidence"
+    plan["inputs"]["documents"] = [
+        {"document_id": "native-pdf", "display_name": "Selected PDF.pdf", "selected_by_user": True},
+        {"document_id": "native-word", "display_name": "Selected Word.docx", "selected_by_user": True},
+    ]
+    step = plan["steps"][0]
+    step["arguments"]["document_ids"] = ["native-pdf", "native-word"]
+    step["outputs"] = [{"name": "prepared", "kind": "structured-v1"}]
+    _seed(action_page, plan)
+    row = _action_row(action_page)
+    expect(row.get_by_text("Selected PDF.pdf", exact=True)).to_be_visible()
+    expect(row.get_by_text("Selected Word.docx", exact=True)).to_be_visible()
+    row.get_by_role("button", name="Remove document native-pdf from this step", exact=True).click()
+    edits = action_page.evaluate("""({conversation, turn}) => {
+        const api = window.OrchHarness.stores.orchestration;
+        return api.selectEdits(api.useOrchestrationStore.getState(), conversation, turn);
+    }""", {"conversation": CONVERSATION, "turn": TURN})
+    assert edits["removed_document_ids"] == {"lookup": ["native-pdf"]}
+    expect(row.get_by_text("Selected Word.docx", exact=True)).to_be_visible()
 
 
 @pytest.mark.parametrize("status,summary", [

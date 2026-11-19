@@ -754,7 +754,7 @@ def _extract_docx_comment_paragraph_text(paragraph_elem):
     return '\n'.join(line for line in lines if line).strip()
 
 
-def build_docx_comment_anchors_and_offsets(archive):
+def build_docx_comment_anchors_and_offsets(archive, *, strict=False, anchor_completeness=None):
     """Return ``(comment_word_offsets, comment_anchors, total_body_words)`` from ``word/document.xml``.
 
     Walking ``word/document.xml`` in document order captures both the reading-order word offset
@@ -768,16 +768,22 @@ def build_docx_comment_anchors_and_offsets(archive):
         archive, DOCX_MAIN_DOCUMENT_PART, OFFICE_DOCUMENT_PART_MAX_BYTES
     )
     if document_bytes is None:
+        if strict:
+            raise ValueError('word_comment_anchors_unavailable')
         return comment_word_offsets, completed_anchors, 0
-
     try:
         document_root = defused_fromstring(document_bytes)
     except (DefusedParseError, ValueError):
+        if strict:
+            raise ValueError('word_comment_anchors_invalid') from None
         return comment_word_offsets, completed_anchors, 0
+    if strict and _xml_local_name(document_root.tag) != 'document':
+        raise ValueError('word_comment_anchors_invalid')
 
     word_count = 0
     active_ranges = {}
     active_range_lengths = {}
+    clipped_ranges = set()
 
     for element in document_root.iter():
         local_name = _xml_local_name(element.tag)
@@ -788,6 +794,8 @@ def build_docx_comment_anchors_and_offsets(archive):
                 if comment_id not in completed_anchors and comment_id not in active_ranges:
                     active_ranges[comment_id] = []
                     active_range_lengths[comment_id] = 0
+                    if anchor_completeness is not None:
+                        anchor_completeness[comment_id] = False
             continue
 
         if local_name == 'commentRangeEnd':
@@ -799,6 +807,9 @@ def build_docx_comment_anchors_and_offsets(archive):
                     completed_anchors.setdefault(
                         comment_id, anchor_text[:OFFICE_COMMENT_ANCHOR_MAX_CHARS]
                     )
+                    if anchor_completeness is not None:
+                        anchor_completeness[comment_id] = comment_id not in clipped_ranges
+                clipped_ranges.discard(comment_id)
             continue
 
         if local_name == 'commentReference':
@@ -814,6 +825,8 @@ def build_docx_comment_anchors_and_offsets(archive):
                 for comment_id, parts in active_ranges.items():
                     current_len = active_range_lengths.get(comment_id, 0)
                     remaining = OFFICE_COMMENT_ANCHOR_MAX_CHARS - current_len
+                    if len(text_value) > remaining:
+                        clipped_ranges.add(comment_id)
                     if remaining > 0:
                         snippet = text_value[:remaining]
                         parts.append(snippet)
@@ -826,6 +839,8 @@ def build_docx_comment_anchors_and_offsets(archive):
                 if current_len < OFFICE_COMMENT_ANCHOR_MAX_CHARS:
                     parts.append(' ')
                     active_range_lengths[comment_id] = current_len + 1
+                else:
+                    clipped_ranges.add(comment_id)
 
     for comment_id, parts in active_ranges.items():
         anchor_text = re.sub(r'\s+', ' ', ''.join(parts)).strip()
@@ -835,19 +850,25 @@ def build_docx_comment_anchors_and_offsets(archive):
     return comment_word_offsets, completed_anchors, word_count
 
 
-def _parse_docx_comments_extended(archive):
+def _parse_docx_comments_extended(archive, *, strict=False):
     """Parse ``word/commentsExtended.xml`` for reply parent links and resolved state."""
     extended_by_para_id = {}
     extended_bytes = _read_zip_entry_bounded(
         archive, DOCX_COMMENTS_EXTENDED_PART, OFFICE_COMMENTS_PART_MAX_BYTES
     )
     if extended_bytes is None:
+        if strict and DOCX_COMMENTS_EXTENDED_PART in archive.namelist():
+            raise ValueError('word_comment_threads_unavailable')
         return extended_by_para_id
 
     try:
         extended_root = defused_fromstring(extended_bytes)
     except (DefusedParseError, ValueError):
+        if strict:
+            raise ValueError('word_comment_threads_invalid') from None
         return extended_by_para_id
+    if strict and _xml_local_name(extended_root.tag) != 'commentsEx':
+        raise ValueError('word_comment_threads_invalid')
 
     for elem in extended_root.iter():
         if _xml_local_name(elem.tag) != 'commentEx':
@@ -860,28 +881,38 @@ def _parse_docx_comments_extended(archive):
         extended_by_para_id[para_id] = {
             'parent_para_id': parent_para_id or None,
             'done': done_raw in ('1', 'true', 'on'),
+            'done_available': done_raw in ('1', 'true', 'on', '0', 'false', 'off'),
         }
 
     return extended_by_para_id
 
 
-def extract_docx_comments(file_path):
+def extract_docx_comments(file_path, *, strict=False):
     """Extract structured review comments from an OOXML Word package (``.docx``, ``.docm``, ``.dotx``).
 
     Returns ``(comments, total_body_words)`` where ``comments`` is a list of top-level comment
     dicts (with nested ``replies`` when ``word/commentsExtended.xml`` links reply threads).
+    Native inspection uses ``strict`` to distinguish an inspected empty package from
+    unavailable, malformed or over-limit parts; legacy ingestion behavior is unchanged.
     """
     if not file_path or not zipfile.is_zipfile(file_path):
+        if strict:
+            raise ValueError('word_comment_package_invalid')
         return [], 0
 
     try:
         with zipfile.ZipFile(file_path) as archive:
             entry_names = archive.namelist()
             if len(entry_names) > OFFICE_ZIP_MAX_ENTRIES:
+                if strict:
+                    raise ValueError('word_comment_package_limit')
                 return [], 0
 
+            anchor_completeness = {}
             comment_word_offsets, comment_anchors, total_body_words = (
-                build_docx_comment_anchors_and_offsets(archive)
+                build_docx_comment_anchors_and_offsets(
+                    archive, strict=strict, anchor_completeness=anchor_completeness,
+                )
             )
             if DOCX_COMMENTS_PART not in entry_names:
                 return [], total_body_words
@@ -890,14 +921,20 @@ def extract_docx_comments(file_path):
                 archive, DOCX_COMMENTS_PART, OFFICE_COMMENTS_PART_MAX_BYTES
             )
             if comments_bytes is None:
+                if strict:
+                    raise ValueError('word_comments_unavailable')
                 return [], total_body_words
 
             try:
                 comments_root = defused_fromstring(comments_bytes)
             except (DefusedParseError, ValueError):
+                if strict:
+                    raise ValueError('word_comments_invalid') from None
                 return [], total_body_words
+            if strict and _xml_local_name(comments_root.tag) != 'comments':
+                raise ValueError('word_comments_invalid')
 
-            extended_by_para_id = _parse_docx_comments_extended(archive)
+            extended_by_para_id = _parse_docx_comments_extended(archive, strict=strict)
 
             raw_comments = []
             comments_by_id = {}
@@ -907,11 +944,17 @@ def extract_docx_comments(file_path):
                 if _xml_local_name(element.tag) != 'comment':
                     continue
                 if len(raw_comments) >= OFFICE_COMMENTS_MAX_COUNT:
+                    if strict:
+                        raise ValueError('word_comment_inventory_limit')
                     break
 
                 comment_id = _xml_attr_by_local_name(element, 'id').strip()
                 if not comment_id:
+                    if strict:
+                        raise ValueError('word_comment_identity_invalid')
                     comment_id = str(len(raw_comments) + 1)
+                if strict and comment_id in comments_by_id:
+                    raise ValueError('word_comment_identity_invalid')
 
                 author = _xml_attr_by_local_name(element, 'author').strip()
                 initials = _xml_attr_by_local_name(element, 'initials').strip()
@@ -936,7 +979,7 @@ def extract_docx_comments(file_path):
                         paragraph_texts.append(fallback_text)
 
                 comment_text = '\n'.join(paragraph_texts).strip()
-                if not comment_text:
+                if not comment_text and not strict:
                     continue
 
                 word_offset = comment_word_offsets.get(comment_id)
@@ -950,9 +993,14 @@ def extract_docx_comments(file_path):
                     'word_offset': word_offset,
                     'position_known': word_offset is not None,
                     'parent_id': None,
-                    'done': False,
+                    'done': None if strict else False,
                     'replies': [],
                     '_para_ids': para_ids,
+                    **({
+                        'resolution_available': False,
+                        'anchor_complete': bool(comment_anchors.get(comment_id)) and anchor_completeness.get(comment_id, False),
+                        'anchor_character_limit': OFFICE_COMMENT_ANCHOR_MAX_CHARS,
+                    } if strict else {}),
                 }
                 raw_comments.append(comment_record)
                 comments_by_id[comment_id] = comment_record
@@ -962,7 +1010,10 @@ def extract_docx_comments(file_path):
                     ext_info = extended_by_para_id.get(para_id)
                     if not ext_info:
                         continue
-                    if ext_info.get('done'):
+                    if strict and ext_info.get('done_available'):
+                        comment_record['done'] = ext_info['done']
+                        comment_record['resolution_available'] = True
+                    elif not strict and ext_info.get('done'):
                         comment_record['done'] = True
                     parent_para_id = ext_info.get('parent_para_id')
                     if parent_para_id:
@@ -976,6 +1027,8 @@ def extract_docx_comments(file_path):
                 while current.get('parent_id') and current['parent_id'] in comments_by_id:
                     parent_id = current['parent_id']
                     if parent_id in visited:
+                        if strict:
+                            raise ValueError('word_comment_thread_cycle')
                         break
                     visited.add(parent_id)
                     current = comments_by_id[parent_id]
@@ -994,15 +1047,20 @@ def extract_docx_comments(file_path):
                         'date': comment_record['date'],
                         'text': comment_record['text'],
                         'done': comment_record['done'],
+                        **({
+                            'resolution_available': comment_record['resolution_available'],
+                        } if strict else {}),
                     })
-                    if root_comment.get('word_offset') is None and comment_record.get('word_offset') is not None:
+                    if not strict and root_comment.get('word_offset') is None and comment_record.get('word_offset') is not None:
                         root_comment['word_offset'] = comment_record['word_offset']
                         root_comment['position_known'] = True
-                    if not root_comment.get('anchor_text') and comment_record.get('anchor_text'):
+                    if not strict and not root_comment.get('anchor_text') and comment_record.get('anchor_text'):
                         root_comment['anchor_text'] = comment_record['anchor_text']
 
             return top_level_comments, total_body_words
     except (zipfile.BadZipFile, FileNotFoundError, OSError):
+        if strict:
+            raise ValueError('word_comment_package_unavailable') from None
         return [], 0
 
 

@@ -1,5 +1,5 @@
 // AnalysisResult.tsx
-// Lazy, complete-record pages supporting the readable answer above them.
+// Lazy, complete-record pages in a message's Sources disclosure.
 
 import { useCallback, useEffect, useState } from 'react';
 import { fetchAnalysisEvidence, fetchAnalysisRecords } from '../../lib/endpoints';
@@ -99,9 +99,11 @@ function Evidence({
 export function AnalysisResult({
     descriptor,
     onUnavailable,
+    knownUnavailable,
 }: {
     descriptor: SavedAnalysisDescriptor;
-    onUnavailable: (descriptor: SavedAnalysisDescriptor) => void;
+    onUnavailable?: (descriptor: SavedAnalysisDescriptor, message: string) => void;
+    knownUnavailable?: string;
 }) {
     const [open, setOpen] = useState(false);
     const [offset, setOffset] = useState(0);
@@ -113,12 +115,12 @@ export function AnalysisResult({
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const selectAnalysisResult = useChatStore((state) => state.selectAnalysisResult);
     const belongsHere = descriptor.conversation_id === activeConversationId;
-    const blocked = descriptor.available === false || !belongsHere || Boolean(unavailable);
+    const blocked = descriptor.available === false || !belongsHere || Boolean(unavailable || knownUnavailable);
 
     const reportUnavailable = useCallback((message: string) => {
         setUnavailable(message);
         setPage(null);
-        onUnavailable(descriptor);
+        onUnavailable?.(descriptor, message);
         const store = useChatStore.getState();
         if (sameAnalysis(store.analysisResultContext, descriptor)) {
             store.clearAnalysisResultContext();
@@ -158,11 +160,11 @@ export function AnalysisResult({
 
     return (
         <section aria-label={descriptor.label ? `Saved analysis: ${descriptor.label}` : 'Saved analysis'}
-            className="mt-3 min-w-0 rounded-xl border border-edge p-3">
-            <p className="break-words text-sm font-medium text-text-1">{descriptor.label || 'Saved analysis'}</p>
+            className="min-w-0 border-b border-edge pb-4">
+            <h4 className="break-words text-sm font-medium text-text-1">{descriptor.label || 'Saved analysis'}</h4>
             {blocked ? (
                 <p role="status" aria-live="polite" className="mt-1 text-sm text-text-2">
-                    {unavailable || analysisUnavailableMessage()}
+                    {unavailable || knownUnavailable || analysisUnavailableMessage()}
                 </p>
             ) : (
                 <>

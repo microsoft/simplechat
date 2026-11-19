@@ -2,8 +2,9 @@
 # test_orchestration_workflow_run_wait_execution.py
 """
 Functional test for a chat plan step that waits for the saved workflow run it started.
-Version: 0.261.309
+Version: 0.261.445
 Implemented in: 0.261.309
+Timeout fallback alignment added in: 0.261.445
 
 This test ensures that a workflow_run step the server marked as waitable holds the run's chat
 post-back while it waits, uses the run's result when the run finishes within the bound, and hands
@@ -321,13 +322,13 @@ def test_the_post_back_waits_out_a_live_hold(env):
 
 
 def test_the_bound_is_the_plan_budget_when_that_ends_first(env):
-    # One step reads the run: 90 s reserve plus one 120 s step timeout come off the plan's budget.
+    # One step reads the run: 90 s reserve plus one 180 s step timeout come off the plan's budget.
     env.context.execution_deadline_at = (T0 + timedelta(seconds=360)).isoformat()
 
     result = _waiting(env)
 
-    assert result['wait']['wait_deadline'] == (T0 + timedelta(seconds=150)).isoformat()
-    assert result['summary'] == f'Waiting for "{WORKFLOW_NAME}" to finish (up to 3 min).'
+    assert result['wait']['wait_deadline'] == (T0 + timedelta(seconds=90)).isoformat()
+    assert result['summary'] == f'Waiting for "{WORKFLOW_NAME}" to finish (up to 2 min).'
 
 
 def _not_waitable(env_, label):

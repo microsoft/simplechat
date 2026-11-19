@@ -8,9 +8,9 @@ audience: user
 
 ## What this does
 
-The Notifications page lists app notifications, filters read and unread items, searches the list, and opens notification details. You can mark everything read or follow a link when one is provided.
+The Notifications page lists your app notifications, filters them by read and unread, searches them, and follows a notification's link when it has one. You can mark everything read at once.
 
-In the V2 interface, a bell in the navigation rail shows how many notifications are unread and opens the same notifications in a panel, where you can follow, read, and dismiss them without leaving the page you are on. Workflow alerts that need attention now also pop up in V2, from the bell.
+In the V2 interface, a bell in the navigation rail shows how many notifications are unread and opens the same notifications in a panel, where you can follow, read, and dismiss them without leaving the page you are on. V2 also has its own Notifications page, whose filter and search cover your whole list rather than only the page on screen. Workflow alerts that need attention now also pop up in V2, from the bell.
 
 {% include media.html type="video"
                       title="Manage notifications walkthrough"
@@ -29,9 +29,11 @@ Use notifications to catch workflow activity, shared conversation events, approv
 
 ## Steps
 
-1. Open **Notifications**.
+These steps use the classic Notifications page. The V2 interface has its own page, described below.
+
+1. Open **Notifications** from the account menu. A number beside it shows how many notifications are unread.
 2. Use **All**, **Unread**, or **Read** to filter.
-3. Choose **10 per page**, **20 per page**, or **50 per page**.
+3. Choose **10 per page**, **20 per page**, or **50 per page**. The page remembers your choice.
 
 {% include media.html src="guides/manage-notifications-step-3.png"
                       alt="The Notifications page showing the All, Unread, and Read filter buttons, the per-page selector, and a search box narrowing the list to document-ready notifications, with paging beneath."
@@ -39,15 +41,17 @@ Use notifications to catch workflow activity, shared conversation events, approv
                       capture="Capture the manage notifications task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. Type in **Search notifications...** to narrow the list.
-5. Select a notification to open the **Notification** modal.
-6. Use **Go to Link** when it appears.
+5. Select a notification to go where it points. This also marks it read. A notification with no link is only marked read, a workflow alert that needs acknowledgment is acknowledged, and a notification for a group makes that group your active group before the page opens.
+6. To deal with a notification without opening it, use the check button on its row to mark it read, or the X button to dismiss it. A workflow alert that needs acknowledgment also has an **Acknowledge** button.
 
 {% include media.html src="guides/manage-notifications-step-6.png"
                       alt="Screenshot showing manage notifications step 6."
                       title="Manage notifications step 6"
                       capture="Capture the manage notifications task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
-7. Select **Mark All Read** after reviewing the queue, or refresh the list.
+7. Select **Mark All Read** after reviewing the queue, or **Refresh** to load the list again.
+
+In the classic interface only **Unread** is worked out across every page. **Read** and the search box narrow the notifications on the page you are viewing, so a search can come back empty while a later page holds a match, and the page numbers don't change. The V2 Notifications page filters and searches your whole list.
 
 ## Use the bell in the V2 interface
 
@@ -64,9 +68,9 @@ application's name or logo. Its badge counts unread notifications up to **9+**. 
 is collapsed to icons, a dot on the bell shows that something is unread.
 
 1. Select the bell to open **Notifications**. The newest are first; select **Load more** for older ones.
-2. Select a notification's title to go where it points. Chat notifications open the conversation in V2. Approvals and workflow activity open in the classic interface until V2 has those pages. Opening a notification marks it read.
+2. Select a notification's title to go where it points. Chat notifications open the conversation in V2, approval notices open the V2 Approvals page, and workflow notices open the run on the [Workflow activity]({{ '/guides/view-workflow-activity/' | relative_url }}) page. Opening a notification marks it read.
 3. Use **Mark as read** or **Dismiss** on one notification, or **Mark all read** in the panel's header.
-4. Select **Open all in the classic interface** when you need search or the read and unread filters.
+4. Select **View all notifications** at the bottom of the panel to open the Notifications page when you need search, the read and unread filters, or notifications older than the panel shows.
 
 {% include media.html src="guides/manage-notifications-v2-panel.png"
                       alt="The V2 navigation rail with the notification bell beside the application name and its panel open, listing an AI responded notice, a workflow alert, and a document notice with Mark as read and Dismiss buttons, and Mark all read in the header."
@@ -83,6 +87,23 @@ then **Preferences**, and turn on **Notify me when a reply is ready** under
 **Desktop notifications**. The browser asks for permission in the same click. The
 notification names the conversation, never the reply, and clicking it opens that
 conversation.
+
+## Use the Notifications page in the V2 interface
+
+Since **0.261.448** (`application/single_app/config.py`), V2 has a full Notifications page for finding a notification the bell's panel no longer shows. Open it from **View all notifications** at the bottom of the bell's panel, or from **Notifications** at the top of the account menu at the foot of the navigation rail, where a badge shows how many are unread. On a phone, open the navigation menu first.
+
+1. Choose **All**, **Unread**, or **Read**.
+2. Type in **Search notifications** to find a notification by words in its title or message. The list updates a moment after you stop typing, or when you press Enter. Select the X in the box to clear it.
+3. Choose how many notifications to show with **Per page**: 10, 20, or 50. V2 remembers your choice, and the classic page uses the same one.
+4. Move through the list with **Previous**, **Next**, or a page number. The line above the list says where you are, for example "Showing 21–40 of 45 notifications."
+5. Select a notification's title to go where it points, which also marks it read. Or use **Mark as read** or **Dismiss** on its row, or **Acknowledge** for a workflow alert that needs it. **Mark all read** and **Refresh** are at the top of the page.
+
+{% include media.html src="guides/manage-notifications-v2-page.png"
+                      alt="The V2 Notifications page with the All, Unread, and Read buttons, a search box, the Per page selector, a line reading Showing 1 to 20 of 45 notifications, a list of notifications with Mark as read and Dismiss buttons, and numbered pages beneath."
+                      title="V2 Notifications page"
+                      capture="Capture the V2 Notifications page over realistic sample notifications with the page numbers visible. Redact conversation titles and names." %}
+
+Unlike the classic page, V2 asks the server to filter and search, so the total and the page numbers describe the notifications that match. The filter, search, page and page size are kept in the address, so you can bookmark a view or return to it with the browser's Back button.
 
 ## Workflow alerts that pop up in V2
 
@@ -213,7 +234,7 @@ anyone clicking first.
 
 ## Verify it worked
 
-Unread notifications lose unread styling after being marked read. Filters and search update the list without changing unrelated notifications.
+Unread notifications lose unread styling after being marked read. Filters and search update the list without changing unrelated notifications. On the V2 Notifications page, the line above the list and the page numbers match the filter and search you chose.
 
 ## Troubleshooting
 
@@ -221,6 +242,8 @@ Unread notifications lose unread styling after being marked read. Filters and se
 | --- | --- | --- |
 | Desktop pop-ups do not show | Browser permission or profile preference is off | Enable browser notifications and save the profile setting, or turn the preference on in V2 **Preferences**. |
 | Older items are hard to find | Search or status filters are narrowing the list | Clear search and choose **All**. |
+| A search or **Read** finds nothing in the classic interface, but the notification exists | The classic page narrows only the notifications on the page you are viewing | Look at the other pages, or use the V2 Notifications page, which searches the whole list. |
+| The V2 page says "No notifications match your search" | The words aren't in any notification's title or message. A notification's type label and its link aren't searched | Clear the search, or try other words from the notification's text. |
 | V2 **Preferences** has no **Desktop notifications** section | An administrator has not enabled desktop notifications | Ask an administrator about **Enable Desktop Conversation Notifications**. |
 | V2 **Preferences** says the browser is blocking notifications | Permission was denied for this site | Allow notifications in the browser's site settings, then return to the tab. |
 | A workflow alert didn't pop up in V2 | It is set to go to the bell only, it is more than 24 hours old, or another V2 tab already showed it | Open the bell, where it is still unread. To make a rule pop up, set its delivery to **Pop-up alert**. |

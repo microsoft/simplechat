@@ -27,6 +27,7 @@ import { ApprovalsDashboard } from '../components/approvals/ApprovalsDashboard';
 import { GenericApprovalsPanel } from '../components/approvals/GenericApprovalsPanel';
 import { PausedRequestsPanel } from '../components/approvals/PausedRequestsPanel';
 import { PendingActionsPanel } from '../components/approvals/PendingActionsPanel';
+import { SupportExportConsentPanel } from '../components/approvals/SupportExportConsentPanel';
 import { CategoryRailPage } from '../components/layout/CategoryRail';
 import {
     CONTENT_SCREENING_TYPE,
@@ -54,6 +55,7 @@ function buildCategories(contentScreening: boolean, isAdmin: boolean, safetyReme
         { id: 'all', label: 'All requests', description: 'Every approval request you can see.', Icon: Inbox, types: null },
         { id: 'group', label: 'Group requests', description: 'Changes to groups that need an owner or admin to agree.', Icon: Users, types: GROUP_REQUEST_TYPES },
         { id: 'm365', label: 'Microsoft 365', description: 'Requests to read, share, or act in Microsoft 365.', Icon: Cloud, types: M365_REQUEST_TYPES },
+        { id: 'support-exports', label: 'Support data', description: 'Personal-conversation snapshots that an administrator asked you to release.', Icon: ShieldCheck },
     ];
     if (safetyRemediation) {
         categories.push({
@@ -112,7 +114,10 @@ export function ApprovalsPage() {
         }
         const m365Approval = searchParams.get('m365_approval');
         const approvalId = searchParams.get('approval_id');
-        if (m365Approval) {
+        const supportExport = searchParams.get('support_export');
+        if (supportExport) {
+            navigate(`/approvals/support-exports/${encodeURIComponent('consent-' + supportExport)}`, { replace: true });
+        } else if (m365Approval) {
             navigate(`/approvals/m365/${encodeURIComponent(m365Approval)}`, { replace: true });
         } else if (approvalId) {
             const groupId = searchParams.get('group_id');
@@ -143,7 +148,9 @@ export function ApprovalsPage() {
     const activeCount = count?.category === active.id ? count.value : null;
 
     let panel;
-    if (active.id === 'dashboard') {
+    if (active.id === 'support-exports') {
+        panel = <SupportExportConsentPanel selectedId={selectedId} reloadKey={reloadKey} onCountChange={reportCount} />;
+    } else if (active.id === 'dashboard') {
         panel = <ApprovalsDashboard reloadKey={reloadKey} />;
     } else if (active.id === 'outgoing') {
         panel = <PendingActionsPanel selectedId={selectedId} reloadKey={reloadKey} onCountChange={reportCount} />;

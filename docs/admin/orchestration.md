@@ -684,7 +684,8 @@ without calling the integration again.
 Since **0.261.293**, what a plan gathers always reaches the user. Every gather step's
 results must be read by a step that writes the answer or prepares a file or image, and a
 chart or diagram must end up in the answer or a file. Starting a saved workflow is the one
-exception. A plan that breaks the rule gets the planner's usual single correction. A chart
+exception. Since **0.261.422**, recognized plan errors share at most two planner
+corrections without widening source permissions. A chart
 an action drew is always shown, and one the answer doesn't show is listed in the delivery
 notes and makes the run partially completed, so **Retry from failed step** can draw it
 again. Retrying runs the action again, so the user confirms it first.
@@ -714,7 +715,7 @@ context.
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Maximum steps in a plan | Caps how much work one plan may describe. Supported range is 1-30. | 8 | `chat_orchestration_max_steps` |
-| Maximum re-plans per run | Limits how often a step may send the plan back to be reconsidered after discovering something. Supported range is 0-5. | 2 | `chat_orchestration_max_replans` |
+| Maximum retained runtime hints | Limits recovery hints collected in run-summary metadata. Zero disables summary hint collection; hints never revise or run a plan automatically. Supported range is 0-5. | 2 | `chat_orchestration_max_replans` |
 | Step timeout | How long a single step may run before it is abandoned. Since **0.261.141** it also bounds file rendering: a render still producing its file at the limit is stopped before the file is saved, and the step's failure message points admins to this setting. A step whose work had already finished when the limit passed, such as a file already being saved, keeps its result. Raise it when large Word, PowerPoint, or PDF files routinely stop at the limit. Supported range is 30-1800 seconds. | 180 | `chat_orchestration_step_timeout_seconds` |
 | Run timeout | How long a whole run may take before it is abandoned. Supported range is 60-7200 seconds. | 900 | `chat_orchestration_total_timeout_seconds` |
 | Earlier runs shown to the planner | How many previous run summaries the planner can see. Zero disables the activity ledger, not recent message history. Supported range is 0-50. | 10 | `chat_orchestration_ledger_max_runs` |

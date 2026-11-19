@@ -27,7 +27,8 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.140
+Version: 0.261.437
+Referenced failed-turn source continuation added in: 0.261.437
 """
 
 import hashlib
@@ -1523,10 +1524,11 @@ def resolve_candidate_documents(
 class CatalogResolutionError(RuntimeError):
     """A user-safe catalog failure, distinct from an empty authorized catalog."""
 
-    def __init__(self, message, *, code='catalog_unavailable'):
+    def __init__(self, message, *, code='catalog_unavailable', continuation_candidates=None):
         super().__init__(message)
         self.message = message
         self.code = code
+        self.continuation_candidates = list(continuation_candidates or [])
 
 
 def enrich_planner_candidates(
@@ -1796,6 +1798,220 @@ def resolve_action_catalog(user_id, seeds=None, settings=None, user_groups=None,
     )
 
 
+def _requested_source_context(run):
+    """Keep requested identities independently of which reads eventually succeeded."""
+    seeds = run.get('seeds') if isinstance(run.get('seeds'), dict) else {}
+    plan = run.get('plan') if isinstance(run.get('plan'), dict) else {}
+    inputs = plan.get('inputs') if isinstance(plan.get('inputs'), dict) else {}
+    document_ids = _string_list([
+        *_string_list(seeds.get('document_ids')),
+        *(item.get('document_id') for item in inputs.get('documents') or [] if isinstance(item, dict)),
+    ])
+    result = {'document_ids': document_ids, 'source_count': len(document_ids), 'truncated': False}
+    if not document_ids:
+        return result
+    result['selection'] = {
+        'doc_scope': seeds.get('doc_scope') or 'all',
+        'document_filter_mode': seeds.get('document_filter_mode') or 'intersection',
+        **{
+            key: _string_list(seeds.get(key)) for key in (
+                'tags', 'active_group_ids', 'active_public_workspace_ids',
+            )
+        },
+    }
+    result['references'] = [
+        {
+            'kind': item['kind'], 'id': item['id'],
+            'scope': {key: item['scope'].get(key) for key in ('kind', 'id')},
+        }
+        for item in seeds.get('elicitation_references') or []
+        if isinstance(item, dict) and item.get('kind') in ('document', 'chat_attachment')
+        and item.get('id') in document_ids and isinstance(item.get('scope'), dict)
+    ]
+    resolved_attachments = set(seeds.get('resolved_attachment_ids') or [])
+    result['attachments'] = [
+        {key: item.get(key) for key in ('document_id', 'message_id')}
+        for item in seeds.get('conversation_attachments') or []
+        if isinstance(item, dict) and item.get('document_id') in resolved_attachments.intersection(document_ids)
+    ]
+    result['planning_revisions'] = {
+        document_id: seeds['planning_source_revisions'][document_id]
+        for document_id in document_ids
+        if isinstance(seeds.get('planning_source_revisions'), dict)
+        and isinstance(seeds['planning_source_revisions'].get(document_id), str)
+    }
+    if (
+        len(document_ids) > ELICITATION_REFERENCE_LIMIT
+        or any(len(identifier) > ELICITATION_IDENTIFIER_LIMIT for identifier in document_ids)
+        or _byte_length(result) > ELICITATION_CONTEXT_BYTE_LIMIT
+    ):
+        return {'source_count': len(document_ids), 'truncated': True}
+    return result
+
+
+def _unordered(items):
+    """Members of an unordered selection in one canonical order, whatever JSON was stored."""
+    return sorted(json.dumps(item, sort_keys=True) for item in (items if isinstance(items, list) else []))
+
+
+def _source_set_parts(requested):
+    """One requested source set's identity, per dimension.
+
+    Only the order in which the same members were listed is ignored. A different member, workspace
+    scope, filter, reference or attachment message remains a different set.
+    """
+    selection = requested.get('selection') if isinstance(requested.get('selection'), dict) else {}
+    return {
+        'document_ids': _unordered(requested.get('document_ids')),
+        'selection': {
+            key: _unordered(value) if isinstance(value, list) else value for key, value in selection.items()
+        },
+        'references': _unordered(requested.get('references')),
+        'attachments': _unordered(requested.get('attachments')),
+        'planning_revisions': sorted((requested.get('planning_revisions') or {}).items()),
+    }
+
+
+def exact_requested_source_matches(resolution, ledger):
+    """The one server-ledger set referenced by exact historical message identities."""
+    message_ids = set(resolution.get('message_ids') or [])
+    return [
+        entry for entry in (ledger or {}).get('runs') or []
+        if message_ids.intersection(entry.get('source_message_ids') or [])
+        and (entry.get('requested_sources') or {}).get('source_count')
+    ]
+
+
+def _log_source_continuation_conflict(
+    matches, parts, distinct_sets, *, conversation_id=None, turn_id=None,
+):
+    """Say how competing source selections differ, never which documents they name."""
+    requested = [entry['requested_sources'] for entry in matches]
+    sets = [set(_string_list(item.get('document_ids'))) for item in requested]
+    log_event(
+        '[ORCHESTRATION_CONTEXT] A follow-up matches more than one previous source selection.',
+        level=logging.WARNING, extra={
+            **workflow_log_context(conversation_id=conversation_id, turn_id=turn_id),
+            'reason': 'source_continuation_ambiguous',
+            'match_count': len(matches), 'distinct_set_count': distinct_sets,
+            'shared_document_count': len(set.intersection(*sets)),
+            'smallest_set_size': min(len(item) for item in sets), 'largest_set_size': max(len(item) for item in sets),
+            **{
+                f'{name}_differ': len({json.dumps(part[name], sort_keys=True) for part in parts}) > 1
+                for name in ('document_ids', 'selection', 'references', 'attachments')
+            },
+        },
+    )
+
+
+def continue_requested_sources(
+    seeds, resolution, ledger, *, user_id, conversation_id, settings=None, turn_id=None,
+):
+    """Restore one clearly referenced source set, never historical access or arbitrary context.
+
+    The ledger owner must already have checked conversation ownership and source-message
+    visibility. Returned document IDs still require the normal current manifest resolution.
+    """
+    resolved = deepcopy(seeds or {})
+    source_required = (
+        resolution.get('requires_retrieval') is not False
+        or resolution.get('source_requirement') == 'historical_originals'
+    )
+    if (
+        resolution.get('relationship') not in ('follow_up', 'clarification')
+        or not source_required
+        or any(resolved.get(key) for key in (
+            'document_ids', 'tags', 'document_source_selection', 'conversation_references',
+            'image_references', 'image_generation',
+        ))
+    ):
+        return resolved
+    message_ids = set(resolution.get('message_ids') or [])
+    matches = exact_requested_source_matches(resolution, ledger)
+    if not matches:
+        return resolved
+    if any((entry.get('requested_sources') or {}).get('truncated') for entry in matches):
+        raise CatalogResolutionError(
+            'The referenced source set exceeds the available continuation context. '
+            'Select the complete intended set again; no sources were silently omitted.',
+            code='source_continuation_limited',
+        )
+    parts = [_source_set_parts(entry['requested_sources']) for entry in matches]
+    source_sets = {json.dumps(part, sort_keys=True) for part in parts}
+    if len(source_sets) != 1:
+        _log_source_continuation_conflict(
+            matches, parts, len(source_sets),
+            conversation_id=conversation_id, turn_id=turn_id,
+        )
+        candidates = []
+        seen = set()
+        for match in matches:
+            references = resolve_elicitation_references(
+                (match.get('requested_sources') or {}).get('references') or [],
+                user_id, conversation_id, settings=settings,
+            )
+            for reference in references:
+                key = (
+                    reference['kind'], reference['id'],
+                    reference['scope']['kind'], reference['scope']['id'],
+                )
+                if key not in seen:
+                    candidates.append(reference)
+                    seen.add(key)
+        raise CatalogResolutionError(
+            'More than one previous source selection matches this follow-up. '
+            'Select the intended documents before continuing.',
+            code='source_continuation_ambiguous',
+            continuation_candidates=candidates,
+        )
+    previous = matches[-1]
+    requested = previous['requested_sources']
+    selection = requested.get('selection') or {}
+    if (
+        resolved.get('doc_scope') not in (None, '', 'all', selection.get('doc_scope'))
+        or any(
+            resolved.get(key) and set(resolved[key]) != set(selection.get(key) or [])
+            for key in ('active_group_ids', 'active_public_workspace_ids')
+        )
+    ):
+        return resolved
+    references = resolve_elicitation_references(
+        requested.get('references') or [], user_id, conversation_id, settings=settings,
+    )
+    attachments = []
+    for attachment in requested.get('attachments') or []:
+        message = validate_conversation_attachment(attachment['message_id'], user_id, conversation_id)
+        if (_workspace_document_id(message) or message['id']) != attachment['document_id']:
+            raise CatalogResolutionError(
+                'A referenced attachment changed. Review your document selection.',
+                code='selected_source_unavailable',
+            )
+        attachments.append({
+            **attachment, 'file_name': _message_file_name(message),
+            'media_kind': 'image' if message.get('role') == 'image' else 'file',
+            'availability': 'available',
+        })
+    resolved['document_ids'] = list(requested['document_ids'])
+    for key in ('doc_scope', 'document_filter_mode', 'tags', 'active_group_ids', 'active_public_workspace_ids'):
+        if key in selection:
+            resolved[key] = deepcopy(selection[key])
+    resolved['document_labels'] = {item['id']: item.get('label', '') for item in references}
+    resolved['elicitation_references'] = [
+        *(resolved.get('elicitation_references') or []), *references,
+    ]
+    inventory = {item['document_id']: item for item in resolved.get('conversation_attachments') or []}
+    inventory.update({item['document_id']: item for item in attachments})
+    resolved['conversation_attachments'] = list(inventory.values())
+    resolved['resolved_attachment_ids'] = [item['document_id'] for item in attachments]
+    if requested.get('planning_revisions'):
+        resolved['planning_source_revisions'] = {
+            **(resolved.get('planning_source_revisions') or {}),
+            **deepcopy(requested['planning_revisions']),
+        }
+    resolved['continued_source_run_id'] = previous.get('run_id')
+    return resolved
+
+
 def _compact_run_entry(entry):
     """Reduce a ledger entry to one line, for when the ledger is over budget."""
     return {
@@ -1803,6 +2019,11 @@ def _compact_run_entry(entry):
         'turn_index': entry.get('turn_index'),
         'intent_summary': _text(entry.get('intent_summary'), 120),
         'status': entry.get('status'),
+        'source_message_ids': entry.get('source_message_ids') or [],
+        'requested_sources': {
+            'source_count': (entry.get('requested_sources') or {}).get('source_count', 0),
+            'truncated': True,
+        },
     }
 
 
@@ -1854,6 +2075,10 @@ def build_run_ledger(runs, settings=None, answered_questions=None):
                 LEDGER_SUMMARY_LENGTH,
             ),
             'status': _text(run.get('status')),
+            'source_message_ids': _string_list([
+                run.get('user_message_id'), run.get('assistant_message_id'),
+            ]),
+            'requested_sources': _requested_source_context(run),
             'capabilities_used': _string_list(
                 summary.get('capabilities_used') or run.get('capabilities_used'), limit=8
             ),
@@ -1899,6 +2124,13 @@ def build_run_ledger(runs, settings=None, answered_questions=None):
     # Still over budget: drop the oldest outright rather than return something unbounded.
     while _byte_length(ledger) > max_bytes and len(entries) > 1:
         entries.pop(0)
+        ledger['truncated'] = True
+
+    if _byte_length(ledger) > max_bytes and entries:
+        requested = entries[-1]['requested_sources']
+        entries[-1]['requested_sources'] = {
+            'source_count': requested.get('source_count', 0), 'truncated': True,
+        }
         ledger['truncated'] = True
 
     return ledger

@@ -16,16 +16,20 @@ from azure.core.exceptions import AzureError, ResourceNotFoundError
 
 from content_screening.contracts import ScreeningError, Subject, subject_from_document
 from functions_appinsights import log_event
-from functions_excel_accessibility import extract_excel_accessibility_metadata
-from excel_workbook_reader import EXCEL_WORKBOOK_SCHEMA_VERSION
+from functions_excel_accessibility import (
+    EXCEL_NATIVE_INSPECTION_SCHEMA_VERSION as EXCEL_WORKBOOK_SCHEMA_VERSION,
+    extract_excel_accessibility_metadata,
+)
+from native_document_evidence import NativeInspectionRequestError
 
 
 EXCEL_INVENTORY_FIELD = "excel_native_inventory"
-EXCEL_INVENTORY_SECTIONS = frozenset({
+EXCEL_INVENTORY_SECTION_ORDER = (
     "comments", "objects", "tables", "defined_names", "hyperlinks", "validations",
     "property_records", "custom_properties", "extended_properties",
     "image_analyses",
-})
+)
+EXCEL_INVENTORY_SECTIONS = frozenset(EXCEL_INVENTORY_SECTION_ORDER)
 EXCEL_INVENTORY_PART_BYTES = 256 * 1024
 EXCEL_INVENTORY_PART_RECORDS = 100
 EXCEL_INVENTORY_PAGE_BYTES = 14000
@@ -287,62 +291,82 @@ class ExcelInventoryReader:
     def _cursor(self, section, offset, fragment=0):
         return base64.urlsafe_b64encode(_encoded({
             "subject": self.subject.key, "source": self.manifest["source_sha256"],
+            "schema_version": EXCEL_WORKBOOK_SCHEMA_VERSION,
             "section": section, "offset": offset, "fragment": fragment,
         })).decode("ascii").rstrip("=")
 
     def _parse_cursor(self, token, section):
         if not isinstance(token, str) or not token or len(token) > 1024:
-            raise ValueError("The Excel inspection cursor is invalid.")
+            raise NativeInspectionRequestError("native_cursor_invalid", field="native_cursor")
         try:
             value = json.loads(base64.b64decode(token + "=" * (-len(token) % 4), altchars=b"-_", validate=True))
         except (ValueError, UnicodeError) as error:
-            raise ValueError("The Excel inspection cursor is invalid.") from error
+            raise NativeInspectionRequestError("native_cursor_invalid", field="native_cursor") from error
         if (
-            not isinstance(value, dict) or set(value) != {"subject", "source", "section", "offset", "fragment"}
-            or value["subject"] != self.subject.key or value["source"] != self.manifest["source_sha256"]
-            or value["section"] != section
+            not isinstance(value, dict) or set(value) != {"subject", "source", "schema_version", "section", "offset", "fragment"}
             or any(type(value[key]) is not int or value[key] < 0 for key in ("offset", "fragment"))
         ):
-            raise ValueError("The Excel inspection cursor belongs to a different source or section.")
+            raise NativeInspectionRequestError("native_cursor_invalid", field="native_cursor")
+        for key, expected in {
+            "subject": self.subject.key, "source": self.manifest["source_sha256"],
+            "schema_version": EXCEL_WORKBOOK_SCHEMA_VERSION, "section": section,
+        }.items():
+            if value[key] != expected:
+                raise NativeInspectionRequestError(
+                    "native_cursor_source_changed", field="native_cursor",
+                    rule=f"native_cursor_{key}_changed",
+                )
         return value["offset"], value["fragment"]
 
-    def page(self, section="comments", *, cursor=None, page_size=100, max_bytes=EXCEL_INVENTORY_PAGE_BYTES):
-        if section not in EXCEL_INVENTORY_SECTIONS:
-            raise ValueError("The requested Excel inventory section is invalid.")
+    def page(self, section="comments", *, cursor=None, page_size=100, max_bytes=EXCEL_INVENTORY_PAGE_BYTES,
+             _audit_records=None):
+        if section != "all" and section not in EXCEL_INVENTORY_SECTIONS:
+            raise NativeInspectionRequestError("native_section_invalid", field="native_section")
         if type(page_size) is not int or not 1 <= page_size <= 200:
-            raise ValueError("The Excel inventory page size must be between 1 and 200.")
+            raise NativeInspectionRequestError("native_page_size_invalid", field="native_page_size")
         if type(max_bytes) is not int or not 2048 <= max_bytes <= 65536:
-            raise ValueError("The Excel inventory response budget is invalid.")
+            raise NativeInspectionRequestError("native_response_budget_invalid", field="max_bytes")
         self.authorize()
         offset, fragment = self._parse_cursor(cursor, section) if cursor else (0, 0)
-        total = self.manifest["counts"].get(section, 0)
+        sections = EXCEL_INVENTORY_SECTION_ORDER if section == "all" else (section,)
+        selected_pages, total = [], 0
+        for selected in sections:
+            selected_pages.extend(
+                (page, total + page["first"])
+                for page in self.manifest["pages"] if page["section"] == selected
+            )
+            total += self.manifest["counts"].get(selected, 0)
         if offset > total or offset == total and fragment:
-            raise ValueError("The Excel inspection cursor is outside the inventory.")
+            raise NativeInspectionRequestError("native_cursor_out_of_range", field="native_cursor")
         records, used, next_offset, next_fragment = [], 0, offset, 0
         record_budget = max_bytes - 1024
-        for page in self.manifest["pages"]:
-            if page["section"] != section or page["first"] + page["count"] <= offset:
+        for page, first in selected_pages:
+            if first + page["count"] <= offset:
                 continue
             self.authorize()
             values = self.storage.read_json(page["reference"], self.subject)
             if not isinstance(values, list) or len(values) != page["count"] or any(not isinstance(value, dict) for value in values):
                 raise ValueError("The Excel inventory page failed its record check.")
             self.authorize()
-            for index in range(max(offset - page["first"], 0), len(values)):
-                record = values[index]
+            for index in range(max(offset - first, 0), len(values)):
+                record = (
+                    {**values[index], "inventory_section": page["section"]}
+                    if section == "all" else values[index]
+                )
                 encoded = _encoded(record)
                 if records and (len(records) >= page_size or used + len(encoded) > record_budget):
                     break
                 if not records and (len(encoded) > record_budget or fragment):
                     serialized = encoded.decode("utf-8")
                     if fragment >= len(serialized):
-                        raise ValueError("The Excel record continuation is invalid.")
+                        raise NativeInspectionRequestError("native_cursor_fragment_invalid", field="native_cursor")
                     low, high = 1, min(len(serialized) - fragment, record_budget)
                     result = None
                     while low <= high:
                         middle = (low + high) // 2
                         candidate = {
                             "sheet": record.get("sheet"), "cell": record.get("cell"), "id": record.get("id"),
+                            **({"inventory_section": page["section"]} if section == "all" else {}),
                             "record_json_fragment": serialized[fragment:fragment + middle],
                             "fragment_offset": fragment, "record_characters": len(serialized),
                             "record_fragment": True,
@@ -357,23 +381,31 @@ class ExcelInventoryReader:
                     piece = result["record_json_fragment"]
                     end = fragment + len(piece)
                     records.append(result)
+                    if _audit_records is not None:
+                        _audit_records.append(record)
                     if end < len(serialized):
-                        next_offset, next_fragment = page["first"] + index, end
+                        next_offset, next_fragment = first + index, end
                     else:
-                        next_offset = page["first"] + index + 1
+                        next_offset = first + index + 1
                     break
                 records.append(record)
+                if _audit_records is not None:
+                    _audit_records.append(record)
                 used += len(encoded)
-                next_offset = page["first"] + index + 1
-            if next_fragment or len(records) >= page_size or next_offset < page["first"] + page["count"]:
+                next_offset = first + index + 1
+            if next_fragment or len(records) >= page_size or next_offset < first + page["count"]:
                 break
         self.authorize()
         has_more = next_offset < total or bool(next_fragment)
         return {
             "section": section, "records": records, "total_records": total,
-            "returned_records": len(records), "start_record": offset,
+            "returned_records": len(records), "start_record": offset, "fragment_offset": fragment,
+            **({"section_counts": {
+                name: self.manifest["counts"].get(name, 0) for name in sections
+            }} if section == "all" else {}),
             "complete": bool(self.manifest["complete"] and not has_more and offset == 0),
             "inventory_complete": self.manifest["complete"], "has_more": has_more,
             "next_cursor": self._cursor(section, next_offset, next_fragment) if has_more else None,
             "source_sha256": self.manifest["source_sha256"],
+            "schema_version": EXCEL_WORKBOOK_SCHEMA_VERSION,
         }

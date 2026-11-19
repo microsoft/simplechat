@@ -1,0 +1,183 @@
+{# templates/custom_page_embed_base.html -#}
+{#-
+    Chrome-less base for custom pages shown inside the V2 interface.
+
+    V2 keeps its own navigation rail on screen and frames this document inside its content pane,
+    so none of the classic shell belongs here: no navigation, no notification polling, no idle
+    warning, no classic stylesheets. It stays a standalone document on purpose and does not extend
+    base.html. A Python-backed custom page that declares supports_embed can extend it, and
+    "{% extends 'custom_page_embed_base.html' if embed else 'base.html' %}" keeps one template for
+    both interfaces. It offers the same blocks as the classic base: title, head, content and scripts.
+
+    What the page can rely on: Bootstrap 5 styles and script, Bootstrap Icons, jQuery and
+    window.showToast. All of them are served from /static, and nothing is loaded from a remote
+    host.
+-#}
+{%- set embed_app_settings = app_settings | default({}, true) -%}
+{%- set embed_user_prefs = (user_settings | default({}, true)).get('settings') or {} -%}
+{%- set embed_saved_dark_mode = embed_user_prefs.get('darkModeEnabled') -%}
+{%- if embed_saved_dark_mode is sameas true -%}
+    {%- set embed_theme = 'dark' -%}
+{%- elif embed_saved_dark_mode is sameas false -%}
+    {%- set embed_theme = 'light' -%}
+{%- elif embed_app_settings.get('enable_dark_mode_default') -%}
+    {%- set embed_theme = 'dark' -%}
+{%- else -%}
+    {%- set embed_theme = 'light' -%}
+{%- endif -%}
+{%- set embed_viewer_roles = session.get('user', {}).get('roles') or [] -%}
+{%- set embed_viewer_has_app_role = 'User' in embed_viewer_roles or 'Admin' in embed_viewer_roles -%}
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="{{ embed_theme }}" data-simplechat-embed="true"{% if custom_page is defined %} data-custom-page-slug="{{ custom_page.slug }}"{% endif %}>
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}{{ embed_app_settings.get('app_title') or 'SimpleChat' }}{% endblock %}</title>
+
+    {% if embed_app_settings.get('custom_favicon_base64') %}
+        <link rel="icon" href="{{ url_for('static', filename='images/favicon.ico') }}?v={{ embed_app_settings.get('favicon_version', 1) }}" type="image/x-icon" />
+    {% else %}
+        <link rel="icon" href="{{ url_for('static', filename='images/favicon.ico') }}" type="image/x-icon" />
+    {% endif %}
+
+    <!-- Bootstrap and Bootstrap Icons, served locally -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.min.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.css') }}" />
+
+    <style>
+        .custom-page-embed-bar {
+            border-bottom: 1px solid var(--bs-border-color);
+            background: var(--bs-tertiary-bg);
+        }
+
+        .custom-page-embed-bar__title {
+            min-width: 0;
+            overflow: hidden;
+            font-weight: 600;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+    </style>
+
+    <!--
+        Theme before the first paint, so a framed page never flashes the wrong one. The V2 host
+        and the classic interface each keep the choice in their own localStorage key, and V2 is
+        checked first because it is the interface that frames this document. When neither key is
+        set, the server-rendered default above (the saved darkModeEnabled preference, otherwise
+        the administrator's default) stands.
+    -->
+    <script>
+        (function applyStoredTheme() {
+            var storedTheme = null;
+            try {
+                storedTheme = window.localStorage.getItem("simplechat.v2.theme")
+                    || window.localStorage.getItem("simplechat-theme");
+            } catch (error) {
+                storedTheme = null;
+            }
+            if (storedTheme === "dark" || storedTheme === "light") {
+                document.documentElement.setAttribute("data-bs-theme", storedTheme);
+            }
+        }());
+    </script>
+    {% block head %}{% endblock %}
+</head>
+
+<body class="d-flex flex-column min-vh-100">
+    <!--
+        Shown only when this document is the top-level page, not when V2 frames it. The V2 page
+        header already carries the title there. Rendered visible for a full page the server knows
+        is standalone, and revealed by the script below for an embed address opened in its own tab.
+    -->
+    <header
+        class="custom-page-embed-bar{% if not embed_standalone %} d-none{% endif %}"
+        id="custom-page-embed-bar"
+        data-custom-page-embed-bar
+    >
+        <div class="container d-flex align-items-center justify-content-between gap-3 py-2">
+            <span class="custom-page-embed-bar__title">{% block page_title %}{{ embed_app_settings.get('app_title') or 'SimpleChat' }}{% endblock %}</span>
+            {% if embed_viewer_has_app_role %}
+                <a class="btn btn-sm btn-outline-secondary flex-shrink-0" href="/v2">
+                    <i class="bi bi-arrow-left me-1" aria-hidden="true"></i>Back to {{ embed_app_settings.get('app_title') or 'SimpleChat' }}
+                </a>
+            {% else %}
+                <a class="btn btn-sm btn-outline-secondary flex-shrink-0" href="/">
+                    <i class="bi bi-arrow-left me-1" aria-hidden="true"></i>Back to {{ embed_app_settings.get('app_title') or 'SimpleChat' }}
+                </a>
+            {% endif %}
+        </div>
+    </header>
+    <script>
+        (function showBarWhenStandalone() {
+            var bar = document.getElementById("custom-page-embed-bar");
+            if (bar) {
+                bar.classList.toggle("d-none", window.self !== window.top);
+            }
+        }());
+    </script>
+
+    <!-- Page content -->
+    <main class="container flex-grow-1 py-3" id="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Toast container for window.showToast -->
+    <div
+        id="toast-container"
+        class="position-fixed bottom-0 end-0 p-3"
+        style="z-index: 1100;"
+        aria-label="Notifications"
+    ></div>
+
+    <!-- Browser scripts the pages assume, all local -->
+    <script src="{{ url_for('static', filename='js/chat/jquery.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/chat/bootstrap.bundle.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/toast.js') }}?v={{ config['VERSION'] }}"></script>
+
+    <!--
+        The conversation with the V2 host. It is two messages, and both are limited to this
+        origin on each side.
+
+        simplechat-theme: the host tells the page when the theme changes. It is accepted only
+        from the parent window and only from this page's own origin, and only the two theme
+        names are acted on.
+
+        simplechat-custom-page-ready: sent to the parent once the page has been parsed. The
+        browser fires a frame's load event for an error page as well, so this message is how the
+        host tells a page that rendered from one that answered 403, 404 or a server error. It is
+        addressed to this origin, so another origin cannot receive it.
+    -->
+    <script>
+        (function connectToHost() {
+            var root = document.documentElement;
+            var framed = window.self !== window.top;
+
+            window.addEventListener("message", function onHostMessage(event) {
+                if (event.origin !== window.location.origin || event.source !== window.parent) {
+                    return;
+                }
+                var message = event.data;
+                if (!message || message.type !== "simplechat-theme") {
+                    return;
+                }
+                if (message.theme === "dark" || message.theme === "light") {
+                    root.setAttribute("data-bs-theme", message.theme);
+                }
+            });
+
+            if (framed) {
+                window.parent.postMessage(
+                    {
+                        type: "simplechat-custom-page-ready",
+                        slug: root.getAttribute("data-custom-page-slug") || ""
+                    },
+                    window.location.origin
+                );
+            }
+        }());
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+
+</html>

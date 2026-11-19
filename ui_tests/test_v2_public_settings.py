@@ -1,17 +1,22 @@
 # test_v2_public_settings.py
 """
 Production-SPA coverage for the native V2 public workspace Settings, Activity and Statistics sections.
-Version: 0.261.188
+Version: 0.261.448
 Implemented in: 0.261.185
 An unrecognized status is explained with the server's own sentence: 0.261.188
+The danger zone deletes the workspace natively instead of handing off to classic: 0.261.448
+An owner or admin keeps these sections in an inactive or unrecognized-status workspace, and a document
+manager keeps Statistics: 0.261.448
 
 Exercises the real Settings, Activity and Statistics sections -- the M10C sections of the public
 WorkspaceShell's Manage group, the shared M7C components driven by the public scope -- against closed
 synthetic HTTP. The fixture (`ui_tests/fixtures/public_settings.py`) serves the native
 `/api/public-workspaces/<w>/settings[...]` and `/insights/*` routes with the server's decision, order of
-checks and reviewed texts (held to the real routes by test_public_settings_fixture_parity.py), and traps
-every classic public settings route and every personal-scope read, so a page that called a classic or
-personal route, invented a control the hints withhold, or kept an optimistic draft fails the run.
+checks and reviewed texts (held to the real routes by test_public_settings_fixture_parity.py), serves the
+owner's `DELETE /api/public_workspaces/<w>` as the real route answers it (held to the route by
+test_v2_workspace_delete_fixture_parity.py), and traps every other classic public settings route and every
+personal-scope read, so a page that called a classic or personal route, invented a control the hints
+withhold, or kept an optimistic draft fails the run.
 
 It pins the Manage group's rail entries; the three sections' reads and gating for the owner, an admin,
 a document manager and a reader, and in a locked or inactive workspace; the profile edit with its live
@@ -21,9 +26,12 @@ network failure that keeps every field; a mid-session lock that re-gates the pro
 offers Discard; the logo upload and removal, a conflict that keeps the file for an explicit retry, and
 the image check that refuses a non-image; the downloads and retention cards' presence, absence and
 edits, including the context refresh after a downloads save; the danger zone -- owner-only, quoting the
-workspace's own current-document count, saying deletion removes only the workspace record, confirming
-the active public workspace before the classic handoff, stopping when that fails, and asking first
-when a change is unsaved; the activity feed with the public actor labels ("Not a member"), limits,
+workspace's own current-document count, saying deletion removes only the workspace record, and deleting
+natively: held while documents remain (including one that arrives while the confirmation is open),
+confirmed, refused with the server's words or a plain sentence for a 5xx or a dropped connection,
+retried, already deleted elsewhere, sent once however often it is clicked, held back by unsaved edits,
+worded with the administrator's workspace label, and never touching classic or setActive; the activity
+feed with the public actor labels ("Not a member"), limits,
 empty and unavailable states; the statistics windows, the custom-range limit, the classic CSV export
 (the label title, no BOM, the classic file name) and the unavailable state; an administrator's custom
 workspace label reaching every section; and both themes at both breakpoints.
@@ -41,6 +49,7 @@ from ui_tests.fixtures.public_settings import (
     PUBLIC_STATS_UNAVAILABLE_MESSAGE, PUBLIC_STATUS_UNRECOGNIZED_MESSAGE, PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
 )
 from ui_tests.fixtures.public_settings import public_settings_ui as public_settings_ui
+from ui_tests.fixtures.public_workspace import PUBLIC_INACTIVE_REASON, PUBLIC_STATUS_UNKNOWN_REASON
 from ui_tests.fixtures.workspace_authoring import ORIGIN
 
 
@@ -74,6 +83,22 @@ MANAGER_REASON = PUBLIC_SETTINGS_REFUSAL_MESSAGES["public_workspace_manager_requ
 MEMBER_REASON = PUBLIC_SETTINGS_REFUSAL_MESSAGES["public_workspace_member_required"]
 LOCKED_REASON = PUBLIC_SETTINGS_REFUSAL_MESSAGES["public_workspace_status_unavailable"]
 
+# The raw status a test stores, the status the page shows (a value this version doesn't recognize is
+# "unknown"), the page's status pill, the reason the profile is read-only for the owner, and the reason
+# a section closed to the viewer gives.
+BARRING_STATUSES = [
+    pytest.param("inactive", "Status: Inactive", LOCKED_REASON, PUBLIC_INACTIVE_REASON, id="inactive"),
+    pytest.param("frozen", "Status: Status unavailable", PUBLIC_STATUS_UNRECOGNIZED_MESSAGE,
+                 PUBLIC_STATUS_UNKNOWN_REASON, id="unrecognized"),
+]
+
+# The native delete's route and the sentences the section shows for it (WorkspaceSettingsSection and
+# PublicSettingsSection own the wording; the apostrophes are the typographic ones the page renders).
+PUBLIC_DELETE_PATH = f"/api/public_workspaces/{WORKSPACE}"
+PUBLIC_DELETE_HELD = "The public workspace wasn\u2019t deleted because it still holds documents. Remove them first."
+PUBLIC_DELETE_FAILED = "The public workspace couldn\u2019t be deleted. Try again."
+PUBLIC_DELETE_GONE = "This public workspace no longer exists. It may already have been deleted."
+
 
 # --------------------------------------------------------------------------
 # Helpers.
@@ -105,9 +130,21 @@ def expect_context_read(ui, workspace=WORKSPACE):
     )
 
 
-def open_delete_confirmation(ui):
-    by_testid(ui, "public-settings-delete").click()
-    expect(ui.page.get_by_role("dialog")).to_contain_text("Delete this public workspace in classic?")
+def delete_calls(ui):
+    return [entry for entry in ui.requests if entry.method == "DELETE" and entry.path == PUBLIC_DELETE_PATH]
+
+
+def delete_dialog(ui):
+    return ui.page.get_by_role("dialog", name="Delete this public workspace?", exact=True)
+
+
+def wait_for_delete(ui, timeout_ms=5000):
+    """Wait for the page's DELETE to reach the fixture, so a held response can be arranged around it."""
+    waited = 0
+    while not delete_calls(ui):
+        assert waited < timeout_ms, "The delete was never sent."
+        ui.page.wait_for_timeout(50)
+        waited += 50
 
 
 # --------------------------------------------------------------------------
@@ -501,18 +538,145 @@ def test_an_unrecognized_status_is_explained_with_its_own_sentence(public_settin
     expect(ui.page.get_by_text(LOCKED_REASON, exact=True)).to_have_count(0)
 
 
-def test_an_inactive_workspace_closes_the_manage_sections(public_settings_ui):
+@pytest.mark.parametrize("role", ["Owner", "Admin"])
+@pytest.mark.parametrize("raw,pill,profile_reason,closed_reason", BARRING_STATUSES)
+def test_the_owner_and_admins_keep_the_manage_sections_where_the_status_bars_viewing(
+    public_settings_ui, role, raw, pill, profile_reason, closed_reason,
+):
+    """The classic manage page keeps Settings, Activity and Statistics for an owner and an admin of an
+    inactive workspace, and the routes behind them check no status, so V2 keeps them too. The content
+    sections stay closed, the profile and logo are read-only with the reason, and everything the routes
+    still allow works: downloads, retention, the activity feed, the statistics and, for the owner, the
+    danger zone."""
     ui, page = public_settings_ui, public_settings_ui.page
+    ui.configure(WORKSPACE, role=role, status=raw)
+    ui.open(f"/public/{WORKSPACE}")
+    nav = page.get_by_role("navigation", name="Workspace sections", exact=True)
+    for label in ("Members", "Settings", "Activity", "Statistics"):
+        expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(1)
+    for label in ("Documents", "Tags", "Prompts"):
+        expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(0)
+    expect(page.get_by_text(pill, exact=True)).to_be_visible()
+    nav.get_by_role("link", name="Settings", exact=True).click()
+    expect(by_testid(ui, "public-settings-section")).to_be_visible()
+    expect(page.get_by_text("Settings is not available", exact=True)).to_have_count(0)
+    # The profile and logo are read-only. The owner is told the status; an admin the role, which comes first.
+    expect(by_testid(ui, "public-settings-name")).to_be_disabled()
+    expect(by_testid(ui, "public-settings-description")).to_be_disabled()
+    expect(by_testid(ui, "public-settings-save-profile")).to_have_count(0)
+    expect(by_testid(ui, "public-settings-logo-upload")).to_have_count(0)
+    expect(page.get_by_text(profile_reason if role == "Owner" else OWNER_REASON, exact=True).first).to_be_visible()
+    # Downloads and retention follow their own rules, not the status.
+    expect(by_testid(ui, "public-settings-downloads-toggle")).to_be_enabled()
+    expect(by_testid(ui, "public-settings-save-retention")).to_be_visible()
+    expect(by_testid(ui, "public-settings-danger")).to_have_count(1 if role == "Owner" else 0)
+    open_activity(ui)
+    expect(by_testid(ui, "public-activity-section").get_by_role("listitem")).to_have_count(3)
+    open_statistics(ui)
+    expect(by_testid(ui, "public-statistics-window-7")).to_be_visible()
+    assert len(ui.insight_requests("stats")) == 1 and len(ui.insight_requests("activity")) == 1
+    assert not ui.settings_requests("PATCH", "profile") and not ui.settings_requests("PUT", "logo")
+    assert not ui.classic_visits
+
+
+@pytest.mark.parametrize("raw,pill,profile_reason,closed_reason", BARRING_STATUSES)
+def test_the_owner_still_changes_downloads_and_retention_where_the_status_bars_viewing(
+    public_settings_ui, raw, pill, profile_reason, closed_reason,
+):
+    ui = public_settings_ui
+    ui.configure(WORKSPACE, role="Owner", status=raw)
+    open_settings(ui)
+    by_testid(ui, "public-settings-downloads-toggle").click()
+    expect(ui.page.get_by_text("File download policy saved.", exact=True)).to_be_visible()
+    by_testid(ui, "public-settings-retention-conversation").select_option("30")
+    by_testid(ui, "public-settings-save-retention").click()
+    expect(ui.page.get_by_text("Retention policy saved.", exact=True)).to_be_visible()
+    assert len(ui.settings_requests("PATCH", "downloads")) == 1
+    assert len(ui.settings_requests("PATCH", "retention")) == 1
+    assert not ui.settings_requests("PATCH", "profile") and not ui.settings_requests("PUT", "logo")
+
+
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+def test_settings_where_the_status_bars_viewing_fits_every_layout(public_settings_ui, theme, width, height):
+    ui = public_settings_ui
     ui.configure(WORKSPACE, role="Owner", status="inactive")
+    open_settings(ui, theme=theme, width=width, height=height)
+    expect(ui.page.get_by_text("Status: Inactive", exact=True)).to_be_visible()
+    expect(by_testid(ui, "public-settings-name")).to_be_disabled()
+    expect(ui.page.get_by_text(LOCKED_REASON, exact=True).first).to_be_visible()
+    for panel in ("public-settings-downloads", "public-settings-retention", "public-settings-danger"):
+        expect(by_testid(ui, panel)).to_be_visible()
+    ui.assert_no_overflow()
+    SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    label = f'{"mobile" if width < 768 else "desktop"}-{theme}'
+    ui.page.screenshot(path=str(SCREENSHOTS / f"settings-inactive-{label}.png"), full_page=True)
+
+
+def test_a_status_that_bars_viewing_after_load_keeps_the_section_and_regates_the_profile(public_settings_ui):
+    """Before 0.261.448 an owner whose workspace went inactive while Settings was open lost the whole
+    section on the next context read, and the draft with it. Now the section stays, the save is refused
+    with the status, the profile re-gates read-only with the draft kept, and Discard clears it."""
+    ui = public_settings_ui
+    open_settings(ui)
+    original = by_testid(ui, "public-settings-name").input_value()
+    by_testid(ui, "public-settings-name").fill("Edited just before the workspace went inactive")
+    ui.configure(WORKSPACE, role="Owner", status="inactive")
+    by_testid(ui, "public-settings-save-profile").click()
+    expect(ui.page.get_by_text(LOCKED_REASON, exact=True).first).to_be_visible()
+    expect(ui.page.get_by_text("Status: Inactive", exact=True)).to_be_visible()
+    expect(by_testid(ui, "public-settings-section")).to_be_visible()
+    expect(by_testid(ui, "public-settings-name")).to_be_disabled()
+    expect(by_testid(ui, "public-settings-name")).to_have_value("Edited just before the workspace went inactive")
+    expect(by_testid(ui, "public-settings-save-profile")).to_have_count(0)
+    by_testid(ui, "public-settings-discard-profile").click()
+    expect(by_testid(ui, "public-settings-name")).to_have_value(original)
+    assert len(ui.settings_requests("PATCH", "profile")) == 1
+
+
+@pytest.mark.parametrize("raw,pill,profile_reason,closed_reason", BARRING_STATUSES)
+def test_a_document_manager_keeps_only_statistics_where_the_status_bars_viewing(
+    public_settings_ui, raw, pill, profile_reason, closed_reason,
+):
+    """Statistics is open to every stored role in every status, as classic's Stats tab and the route are;
+    Settings and Activity stay closed to a document manager, with the status as the reason."""
+    ui, page = public_settings_ui, public_settings_ui.page
+    ui.configure(WORKSPACE, role="DocumentManager", status=raw)
+    ui.open(f"/public/{WORKSPACE}")
+    nav = page.get_by_role("navigation", name="Workspace sections", exact=True)
+    expect(nav.get_by_role("link", name="Statistics", exact=True)).to_have_count(1)
+    for label in ("Members", "Settings", "Activity", "Documents"):
+        expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(0)
     ui.open(f"/public/{WORKSPACE}/settings")
     expect(page.get_by_text("Settings is not available", exact=True)).to_be_visible()
-    expect(page.get_by_text(
-        "This public workspace is inactive. Access is restricted to administrators.", exact=True)).to_be_visible()
+    expect(page.get_by_text(closed_reason, exact=True)).to_be_visible()
+    ui.open(f"/public/{WORKSPACE}/activity")
+    expect(page.get_by_text("Activity is not available", exact=True)).to_be_visible()
+    expect(page.get_by_text(closed_reason, exact=True)).to_be_visible()
+    open_statistics(ui)
+    assert len(ui.insight_requests("stats")) == 1
+    assert ui.settings_requests("GET") == [] and ui.insight_requests("activity") == []
+
+
+@pytest.mark.parametrize("raw,pill,profile_reason,closed_reason", BARRING_STATUSES)
+def test_a_reader_finds_every_manage_section_closed_where_the_status_bars_viewing(
+    public_settings_ui, raw, pill, profile_reason, closed_reason,
+):
+    ui, page = public_settings_ui, public_settings_ui.page
+    ui.configure(WORKSPACE, role="User", status=raw)
+    ui.open(f"/public/{WORKSPACE}")
+    nav = page.get_by_role("navigation", name="Workspace sections", exact=True)
+    for label in ("Members", "Settings", "Activity", "Statistics", "Documents", "Tags", "Prompts"):
+        expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(0)
+    for section, title in (("settings", "Settings"), ("activity", "Activity"), ("statistics", "Statistics")):
+        ui.open(f"/public/{WORKSPACE}/{section}")
+        expect(page.get_by_text(f"{title} is not available", exact=True)).to_be_visible()
+        expect(page.get_by_text(closed_reason, exact=True)).to_be_visible()
     assert ui.settings_requests() == []
+    assert ui.insight_requests("stats") == [] and ui.insight_requests("activity") == []
 
 
 # --------------------------------------------------------------------------
-# The danger zone: the workspace's own count, an honest description, and a confirmed handoff.
+# The danger zone: the workspace's own count, an honest description, and a native, confirmed delete.
 # --------------------------------------------------------------------------
 
 def test_the_danger_zone_quotes_the_current_document_count_and_what_deletion_leaves(public_settings_ui):
@@ -520,12 +684,14 @@ def test_the_danger_zone_quotes_the_current_document_count_and_what_deletion_lea
     ui.set_file_count(WORKSPACE, 7)
     open_settings(ui)
     danger = by_testid(ui, "public-settings-danger")
-    expect(by_testid(ui, "public-settings-file-count")).to_have_text("This public workspace holds 7 current documents.")
+    expect(by_testid(ui, "public-settings-file-count")).to_have_text(
+        "This public workspace holds 7 current documents. Remove them before deleting the public workspace.")
     assert len(ui.insight_requests("file-count")) == 1
-    expect(danger).to_contain_text("Deleting removes only the public workspace record.")
-    expect(danger).to_contain_text("Its documents, prompts, identities and file sources are left behind")
-    expect(danger).to_contain_text("counts documents itself, earlier versions included")
-    expect(by_testid(ui, "public-settings-delete")).to_have_text("Delete public workspace (classic)")
+    expect(danger).to_contain_text("It removes only the public workspace record")
+    expect(danger).to_contain_text("Its documents have to be removed first")
+    expect(danger).to_contain_text("its prompts, identities and file sources are left behind")
+    expect(by_testid(ui, "public-settings-delete")).to_have_text("Delete public workspace")
+    assert not ui.classic_visits and not delete_calls(ui)
 
 
 def test_the_danger_zone_count_reads_naturally_at_zero(public_settings_ui):
@@ -535,46 +701,215 @@ def test_the_danger_zone_count_reads_naturally_at_zero(public_settings_ui):
     expect(by_testid(ui, "public-settings-file-count")).to_have_text("This public workspace holds no current documents.")
 
 
-def test_the_classic_handoff_confirms_the_active_workspace_first(public_settings_ui):
-    ui, page = public_settings_ui, public_settings_ui.page
-    ui.active_workspace = "pub-b"
+def test_delete_is_held_while_the_workspace_holds_documents(public_settings_ui):
+    ui = public_settings_ui
+    ui.set_file_count(WORKSPACE, 7)
     open_settings(ui)
-    open_delete_confirmation(ui)
-    expect(page.get_by_role("dialog")).to_contain_text("It removes only the public workspace record")
-    page.get_by_role("button", name="Open classic", exact=True).click()
-    expect(page).to_have_url(f"{ORIGIN}/public_workspaces/{WORKSPACE}")
-    assert [entry.body for entry in ui.set_active_requests()] == [{"workspaceId": WORKSPACE}]
-    assert (f"/public_workspaces/{WORKSPACE}", WORKSPACE) in ui.classic_visits
+    by_testid(ui, "public-settings-delete").click()
+    expect(by_testid(ui, "public-settings-danger-error")).to_have_text(PUBLIC_DELETE_HELD)
+    expect(delete_dialog(ui)).to_have_count(0)
+    # The count is read again at the click, as classic does, and nothing is ever sent to delete.
+    assert len(ui.insight_requests("file-count")) == 2
+    assert not delete_calls(ui) and not ui.deleted_workspaces and not ui.classic_visits
 
 
-def test_the_classic_handoff_stops_when_the_workspace_cannot_be_confirmed(public_settings_ui):
-    ui, page = public_settings_ui, public_settings_ui.page
-    ui.set_active_failures.add(WORKSPACE)
+def test_a_document_that_arrives_while_the_confirmation_is_open_holds_the_delete(public_settings_ui):
+    ui = public_settings_ui
+    ui.set_file_count(WORKSPACE, 0)
     open_settings(ui)
-    open_delete_confirmation(ui)
-    page.get_by_role("button", name="Open classic", exact=True).click()
-    expect(page.get_by_role("alert").filter(
-        has_text="The active public workspace could not be saved.")).to_be_visible()
-    expect(page).to_have_url(f"{ORIGIN}/v2/public/{WORKSPACE}/settings")
-    assert ui.classic_visits == []
+    by_testid(ui, "public-settings-delete").click()
+    confirm = delete_dialog(ui)
+    expect(confirm).to_be_visible()
+    # The server checks nothing about documents, so the page reads the count once more before sending.
+    ui.set_file_count(WORKSPACE, 2)
+    confirm.get_by_role("button", name="Delete public workspace", exact=True).click()
+    expect(confirm).to_have_count(0)
+    expect(by_testid(ui, "public-settings-danger-error")).to_have_text(PUBLIC_DELETE_HELD)
+    expect(by_testid(ui, "public-settings-file-count")).to_contain_text("holds 2 current documents")
+    assert not delete_calls(ui) and not ui.deleted_workspaces
 
 
-def test_the_classic_handoff_asks_before_discarding_an_unsaved_change(public_settings_ui):
-    ui, page = public_settings_ui, public_settings_ui.page
+def test_the_owner_deletes_an_empty_workspace_and_returns_to_the_list(public_settings_ui):
+    ui = public_settings_ui
+    ui.set_file_count(WORKSPACE, 0)
     open_settings(ui)
-    by_testid(ui, "public-settings-name").fill("Unsaved name")
-    open_delete_confirmation(ui)
-    page.get_by_role("button", name="Open classic", exact=True).click()
-    prompt = page.get_by_role("dialog").filter(has_text="Discard unsaved changes?")
-    expect(prompt).to_be_visible()
-    prompt.get_by_role("button", name="Keep editing", exact=True).click()
-    expect(by_testid(ui, "public-settings-name")).to_have_value("Unsaved name")
-    assert ui.set_active_requests() == [] and ui.classic_visits == []
-    open_delete_confirmation(ui)
-    page.get_by_role("button", name="Open classic", exact=True).click()
-    prompt.get_by_role("button", name="Discard changes", exact=True).click()
-    expect(page).to_have_url(f"{ORIGIN}/public_workspaces/{WORKSPACE}")
-    assert len(ui.set_active_requests()) == 1
+    by_testid(ui, "public-settings-delete").click()
+    confirm = delete_dialog(ui)
+    expect(confirm).to_be_visible()
+    expect(confirm).to_contain_text("Everyone loses access to it right away")
+    expect(confirm).to_contain_text("Its prompts, identities and file sources are left behind")
+    assert not delete_calls(ui), "Nothing is sent until the confirmation."
+    confirm.get_by_role("button", name="Delete public workspace", exact=True).click()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/public")
+    expect(ui.page.get_by_text("Choose a public workspace", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text("Research library was deleted.", exact=True)).to_be_visible()
+    [removal] = delete_calls(ui)
+    assert removal.body is None and removal.query == {}
+    assert ui.deleted_workspaces == [WORKSPACE]
+    bootstrap_reads = [index for index, entry in enumerate(ui.requests) if entry.path == "/api/v2/bootstrap"]
+    assert bootstrap_reads[-1] > ui.requests.index(removal), "The workspaces are read again after the delete."
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+    # The delete never visits the classic page and never asks the server to make the workspace active.
+    assert not ui.classic_visits and ui.set_active_requests() == []
+
+
+def test_cancelling_the_confirmation_sends_nothing(public_settings_ui):
+    ui = public_settings_ui
+    ui.set_file_count(WORKSPACE, 0)
+    open_settings(ui)
+    by_testid(ui, "public-settings-delete").click()
+    confirm = delete_dialog(ui)
+    confirm.get_by_role("button", name="Cancel", exact=True).click()
+    expect(confirm).to_have_count(0)
+    expect(by_testid(ui, "public-settings-delete")).to_be_enabled()
+    assert not delete_calls(ui) and not ui.deleted_workspaces
+
+
+@pytest.mark.parametrize("status,payload,shown", [
+    pytest.param(
+        403, {"error": "Only owner can delete"}, "Only owner can delete", id="403-owner-only",
+    ),
+    pytest.param(
+        409, {"error": "The workspace changed while it was being deleted."},
+        "The workspace changed while it was being deleted.", id="409-conflict",
+    ),
+    pytest.param(
+        500, {"error": "Internal cosmos failure for partition 7"}, PUBLIC_DELETE_FAILED, id="500-never-raw",
+    ),
+])
+def test_a_refused_delete_says_why_keeps_the_workspace_and_can_be_retried(public_settings_ui, status, payload, shown):
+    ui = public_settings_ui
+    ui.set_file_count(WORKSPACE, 0)
+    open_settings(ui)
+    by_testid(ui, "public-settings-delete").click()
+    confirm = delete_dialog(ui)
+    ui.reject_next("DELETE", PUBLIC_DELETE_PATH, status=status, error=payload["error"])
+    confirm.get_by_role("button", name="Delete public workspace", exact=True).click()
+    # The server's words (or a plain sentence for a 5xx) appear in the dialog, which stays open.
+    expect(by_testid(ui, "public-settings-delete-error")).to_have_text(shown)
+    expect(confirm).to_be_visible()
+    expect(confirm.get_by_role("button", name="Delete public workspace", exact=True)).to_be_enabled()
+    assert "Internal cosmos failure" not in ui.page.locator("body").inner_text()
+    assert not ui.deleted_workspaces and ui.page.url == f"{ORIGIN}/v2/public/{WORKSPACE}/settings"
+    # Nothing was lost, so the same dialog can send the delete again, and it goes through.
+    confirm.get_by_role("button", name="Delete public workspace", exact=True).click()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/public")
+    assert ui.deleted_workspaces == [WORKSPACE] and len(delete_calls(ui)) == 2
+
+
+def test_a_dropped_connection_never_shows_a_raw_error_and_can_be_retried(public_settings_ui):
+    ui = public_settings_ui
+    ui.set_file_count(WORKSPACE, 0)
+    open_settings(ui)
+    by_testid(ui, "public-settings-delete").click()
+    confirm = delete_dialog(ui)
+
+    def _abort(route):
+        if route.request.method == "DELETE":
+            route.abort()
+        else:
+            route.fallback()
+
+    ui.page.route(f"**{PUBLIC_DELETE_PATH}", _abort)
+    confirm.get_by_role("button", name="Delete public workspace", exact=True).click()
+    expect(by_testid(ui, "public-settings-delete-error")).to_have_text(PUBLIC_DELETE_FAILED)
+    expect(confirm).to_be_visible()
+    assert not ui.deleted_workspaces
+    # The aborted request never reaches the fixture, so drop its transport console error, as the
+    # profile network test does, to keep the shared teardown's console gate meaningful.
+    ui.console_errors[:] = [(text, url) for text, url in ui.console_errors if not url.endswith(PUBLIC_DELETE_PATH)]
+    ui.page.unroute(f"**{PUBLIC_DELETE_PATH}", _abort)
+    confirm.get_by_role("button", name="Delete public workspace", exact=True).click()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/public")
+    assert ui.deleted_workspaces == [WORKSPACE]
+
+
+def test_a_workspace_already_deleted_elsewhere_is_left_as_after_a_delete(public_settings_ui):
+    ui = public_settings_ui
+    ui.set_file_count(WORKSPACE, 0)
+    open_settings(ui)
+    by_testid(ui, "public-settings-delete").click()
+    confirm = delete_dialog(ui)
+    ui.defer_next("DELETE", PUBLIC_DELETE_PATH)
+    confirm.get_by_role("button", name="Delete public workspace", exact=True).click()
+    wait_for_delete(ui)
+    # Another session deletes the workspace first, so the held DELETE meets the route's own 404.
+    ui.workspaces.pop(WORKSPACE)
+    ui.active_workspace = None
+    ui.release_responses()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/public")
+    expect(ui.page.get_by_text(PUBLIC_DELETE_GONE, exact=True)).to_be_visible()
+    assert not ui.deleted_workspaces, "This session deleted nothing."
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+
+
+def test_a_second_click_while_the_delete_is_in_flight_sends_nothing(public_settings_ui):
+    ui = public_settings_ui
+    ui.set_file_count(WORKSPACE, 0)
+    open_settings(ui)
+    by_testid(ui, "public-settings-delete").click()
+    confirm = delete_dialog(ui)
+    submit = confirm.get_by_role("button", name="Delete public workspace", exact=True)
+    ui.defer_next("DELETE", PUBLIC_DELETE_PATH)
+    submit.click()
+    wait_for_delete(ui)
+    expect(submit).to_be_disabled()
+    expect(confirm.get_by_role("button", name="Cancel", exact=True)).to_be_disabled()
+    submit.click(force=True)
+    ui.page.keyboard.press("Enter")
+    ui.page.keyboard.press("Escape")
+    ui.page.wait_for_timeout(200)
+    expect(confirm).to_be_visible()
+    assert len(delete_calls(ui)) == 1, "A delete in flight is never sent twice."
+    ui.release_responses()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/public")
+    assert ui.deleted_workspaces == [WORKSPACE] and len(delete_calls(ui)) == 1
+
+
+def test_delete_waits_for_unsaved_profile_edits(public_settings_ui):
+    ui = public_settings_ui
+    ui.set_file_count(WORKSPACE, 0)
+    open_settings(ui)
+    by_testid(ui, "public-settings-name").fill("A half-finished rename")
+    expect(by_testid(ui, "public-settings-delete")).to_be_disabled()
+    expect(by_testid(ui, "public-settings-delete-unsaved")).to_have_text(
+        "Save or discard your profile and retention changes before deleting the public workspace.")
+    by_testid(ui, "public-settings-discard-profile").click()
+    expect(by_testid(ui, "public-settings-delete")).to_be_enabled()
+    expect(by_testid(ui, "public-settings-delete-unsaved")).to_have_count(0)
+    assert not delete_calls(ui)
+
+
+def test_a_custom_workspace_label_words_the_delete_flow(public_settings_ui):
+    ui = public_settings_ui
+    ui.set_labels(singular="Knowledge Hub", plural="Knowledge Hubs", lower_singular="knowledge hub",
+                  lower_plural="knowledge hubs", short="Hub")
+    ui.set_file_count(WORKSPACE, 0)
+    open_settings(ui)
+    expect(by_testid(ui, "public-settings-delete")).to_have_text("Delete knowledge hub")
+    by_testid(ui, "public-settings-delete").click()
+    confirm = ui.page.get_by_role("dialog", name="Delete this knowledge hub?", exact=True)
+    expect(confirm).to_contain_text("The knowledge hub holds no current documents.")
+    confirm.get_by_role("button", name="Delete knowledge hub", exact=True).click()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/public")
+    expect(ui.page.get_by_text("Choose a knowledge hub", exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+def test_the_delete_confirmation_fits_every_layout(public_settings_ui, theme, width, height):
+    ui = public_settings_ui
+    ui.set_file_count(WORKSPACE, 0)
+    open_settings(ui, theme=theme, width=width, height=height)
+    by_testid(ui, "public-settings-delete").click()
+    confirm = delete_dialog(ui)
+    expect(confirm).to_be_visible()
+    box = confirm.bounding_box()
+    assert box and box["x"] >= 0 and box["x"] + box["width"] <= width, "The dialog is clipped horizontally."
+    expect(confirm.get_by_role("button", name="Delete public workspace", exact=True)).to_be_visible()
+    ui.assert_no_overflow()
+    SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    label = f'{"mobile" if width < 768 else "desktop"}-{theme}'
+    ui.page.screenshot(path=str(SCREENSHOTS / f"delete-confirmation-{label}.png"))
 
 
 # --------------------------------------------------------------------------

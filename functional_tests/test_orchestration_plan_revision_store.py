@@ -1,10 +1,11 @@
 # test_orchestration_plan_revision_store.py
 """
 Functional tests for the pre-execution plan revision persistence boundary.
-Version: 0.261.416
+Version: 0.261.446
 Implemented in: 0.261.102
 Single orchestration contract updated in: 0.261.139
 Optional semantic review implemented in: 0.261.416
+Generated calculation admission enforcement implemented in: 0.261.446
 
 Uses real storage helpers and SDK batch formatting with an atomic in-memory container.
 No Azure network, model, or main-thread message writes are needed.
@@ -92,6 +93,7 @@ class PlanRevisionStoreTests(unittest.TestCase):
         ):
             self.store = importlib.import_module('functions_orchestration_runs')
             self.revisions = importlib.import_module('functions_orchestration_plan_revisions')
+            self.schema = importlib.import_module('functions_orchestration_schema')
         patcher = patch.object(self.store, 'cosmos_orchestration_runs_container', self.runs)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -168,6 +170,65 @@ class PlanRevisionStoreTests(unittest.TestCase):
 
     def test_application_version(self):
         assert_app_version_at_least('0.261.102')
+
+    def test_generated_admission_origin_is_server_owned_and_claim_fails_closed(self):
+        self.assertEqual(self.original['generated_plan_origin'], 'model')
+        forged = deepcopy(canonical_plan())
+        forged.update(run_id='run_forged', plan_id='plan_forged')
+        saved = self.store.create_orchestration_run(
+            forged, 'user1', 'conv1', turn_context=self.context,
+            initial_updates={'generated_plan_origin': 'trusted_legacy'},
+        )
+        self.assertEqual(saved['generated_plan_origin'], 'model')
+        missing = deepcopy(self.original)
+        missing.pop('generated_plan_admission')
+        self.runs.upsert_item(missing)
+        self.assert_error(
+            'prepared_calculation_required',
+            self.revisions.claim_plan_run,
+            missing['id'], 'user1', 'conv1',
+        )
+
+    def test_generated_creation_and_ai_revision_reject_unprepared_multisource_programs(self):
+        explicit = canonical_plan()
+        explicit.update(run_id='run_explicit', plan_id='plan_explicit')
+        explicit['steps'].append({
+            'step_id': 'calculate', 'capability_id': 'tabular_analyze',
+            'arguments': {
+                'question': 'Calculate the selected records.',
+                'native_operation': 'relate',
+                'document_ids': ['doc1', 'doc2'],
+                'relational_spec': {
+                    'version': 'tabular-relate-v1', 'datasets': [
+                        {'alias': 'left', 'document_id': 'doc1'},
+                        {'alias': 'right', 'document_id': 'doc2'},
+                    ],
+                    'steps': [], 'result': 'left', 'output': {
+                        'version': 'tabular-transform-v1', 'fields': [],
+                    },
+                },
+            },
+        })
+        with self.assertRaises(self.schema.PlanValidationError) as caught:
+            self.store.create_orchestration_run(
+                explicit, 'user1', 'conv1', turn_context=self.context,
+            )
+        self.assertEqual(caught.exception.rule, 'prepared_calculation_required')
+        held = self.hold()
+        claim = self.claim(held)
+        with self.assertRaises(self.schema.PlanValidationError):
+            self.revisions.complete_plan_revision(
+                claim, kind='plan', document=explicit, origin='ai',
+            )
+
+    def test_explicit_trusted_legacy_origin_retains_legacy_execution_path(self):
+        legacy = canonical_plan()
+        legacy.update(run_id='run_legacy', plan_id='plan_legacy')
+        saved = self.store.create_orchestration_run(
+            legacy, 'user1', 'conv1', turn_context=self.context,
+            plan_origin='trusted_legacy',
+        )
+        self.assertEqual(saved['generated_plan_origin'], 'trusted_legacy')
 
     def test_hold_is_durable_and_overlay_does_not_change_canonical_steps(self):
         overlay = {'disabled_step_ids': ['compare'], 'removed_document_ids': {'search': ['doc2']}}

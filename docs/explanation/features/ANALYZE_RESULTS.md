@@ -1,6 +1,6 @@
 # Saved Analyze results
 
-**Version: 0.261.232**
+**Version: 0.261.424**
 
 Implemented in version: **0.261.109**, recorded in
 `application/single_app/config.py`.
@@ -32,6 +32,29 @@ from the narrative default.
 
 The user-facing workflow is documented in
 [Read and discuss saved Analyze results](../../guides/analyze-results.md).
+
+## Answer-first chat presentation
+
+Implemented in version: **0.261.424**, recorded in
+`application/single_app/config.py`.
+
+Classic chat and React V2 keep the answer and its inline citations primary.
+The existing response-level Sources disclosure contains the saved-result
+browser: validation details, complete-record pages, evidence, diagnostics, and
+selection of a particular result for follow-up. Sources remains available even
+when a saved result contains no findings or the answer has no ordinary citations.
+The normal chat view no longer appends a result card for every Analyze step.
+
+Material limitations retain a compact warning that opens Sources. A routine
+structural-success disclaimer is not shown under every answer. Downloads remain
+supporting outputs in the conversation, and the Plan panel is unchanged.
+Closing Sources cancels pending findings/evidence reads; masking and conversation
+changes retain their existing context and visibility guards.
+
+Native comment inventory counts are not saved Analyze finding counts. A
+completed native inventory with zero comments remains evidence for that absence,
+whereas partial inventories and unavailable reads cannot establish it. See
+[chat presentation and evidence correction](../fixes/CHAT_ANALYSIS_PRESENTATION_AND_EVIDENCE_FIX.md).
 
 ## Dependencies and implementation
 

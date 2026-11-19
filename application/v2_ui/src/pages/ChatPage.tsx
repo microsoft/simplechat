@@ -48,6 +48,7 @@ import { ConversationDrawer } from '../components/chat/ConversationDrawer';
 import { OrchestrationPlanEditorHost } from '../components/chat/OrchestrationPlanEditor';
 import { ConversationDetails } from '../components/chat/ConversationDetails';
 import { ConversationBadges } from '../components/chat/ConversationBadges';
+import { WorkflowActivityHeaderLink } from '../components/workflowActivity/WorkflowActivityLinks';
 import { ParticipantsPanel } from '../components/chat/ParticipantsPanel';
 import { InviteBanner } from '../components/chat/InviteBanner';
 import { FileApprovals } from '../components/chat/FileApprovals';
@@ -388,6 +389,8 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
                             <Maximize2 size={17} />
                         )}
                     </button>
+
+                    <WorkflowActivityHeaderLink conversationId={activeConversationId} sources={[metadata, active]} />
 
                     <button
                         type="button"

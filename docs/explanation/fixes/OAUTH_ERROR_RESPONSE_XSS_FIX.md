@@ -2,8 +2,14 @@
 
 Implemented in version: **0.261.423**
 
+Current merged version: **0.261.454**
+
 The application version is tracked in `application/single_app/config.py`.
-This change advances only its third segment from `0.261.422` to `0.261.423`.
+The original fix was prepared as `0.261.423` against `0.261.422`. After merging
+Development at `2968e8e5b0c27e97ec780b34acbfe909cd43f700`, the application
+advances only its third segment from that base's `0.261.453` to `0.261.454`.
+The OAuth release-note entry moves to the current version; all intervening
+Development release history and runtime configuration are preserved.
 
 ## Issue and root cause
 
@@ -59,20 +65,21 @@ creation retain their existing contracts.
 
 No shared authentication/cache helper, Microsoft 365 implementation, app
 security-header hook, CSP setting, browser asset, or deployer was changed.
-`config.py` changes only the application version. The coordinator-assigned
-release-note entry and regenerated split pages use the same `0.261.423` version;
-this documentation-only addition does not advance the version again.
+Relative to the merged Development base, `config.py` changes only the
+application version. The coordinator-assigned release-note entry and
+regenerated split pages now use `0.261.454`; no additional behavior is introduced
+by the base merge.
 
 ### Files changed
 
 | File | Change |
 | --- | --- |
 | `application/single_app/route_frontend_authentication.py` | Shared fixed-text error response and safe diagnostic logging for the two selected branches. |
-| `application/single_app/config.py` | Application patch version `0.261.423`. |
+| `application/single_app/config.py` | Application patch version `0.261.454`. |
 | `functional_tests/test_oauth_error_responses.py` | Real Flask HTTP regressions plus sign-in, Teams, and real MSAL-backed Microsoft 365 callback compatibility checks. |
-| `functional_tests/test_m365_routes.py` | Minimal repair of an existing notification fixture's stale group-helper imports; current version header. |
+| `functional_tests/test_m365_routes.py` | Repair of stale notification fixture imports and explicit classic callback-page selection in its scoped offline fixture; current version header. |
 | `docs/explanation/fixes/OAUTH_ERROR_RESPONSE_XSS_FIX.md` | Root cause, response contract, scope, and validation evidence. |
-| `docs/explanation/release_notes.md` | Concise Bug Fix entry under `v0.261.423`, with the historical non-closing reference. |
+| `docs/explanation/release_notes.md` | Concise Bug Fix entry under `v0.261.454`, with the historical non-closing reference. |
 | `docs/explanation/release-notes/*.md` | Regenerated split release pages derived from the release-note source. |
 
 ## Validation
@@ -150,3 +157,39 @@ Route policy, Swagger, access-control, XSS diff guardrails, and the documentatio
 inventory/site checks are also required before the PR handoff. Fresh PR-ref
 Python CodeQL evidence is distinct from final Development verification, which
 can only occur after the user approves and merges the PR.
+
+### Development base synchronization
+
+The branch was synchronized with Development commit
+`2968e8e5b0c27e97ec780b34acbfe909cd43f700`, bringing in its 90 intervening
+commits without rebasing or dropping either feature commit. The configuration
+conflict preserves all Development runtime settings and changes only its
+version from `0.261.453` to `0.261.454`. Both OAuth error-response branches are
+unchanged. All 322 Development release sections were compared by version and
+content and preserved exactly; the only additional source section is this
+fix's `0.261.454` entry, producing 323 sections in the regenerated pages.
+
+Development's Microsoft 365 result pages now use the interface selector, which
+can lazily read account settings. The existing offline route fixture explicitly
+selects classic mode with a cleanup-scoped patch, and the OAuth HTTP fixture
+supplies the same explicit policy. No authorization guard, MSAL validation,
+provider connection, or production template-selection behavior is replaced.
+The real interface-selection and modern standalone-page suites run alongside
+the callback regressions.
+
+```powershell
+python -m pytest -q -p test_support.cosmos_network_guard functional_tests\test_getatoken_missing_code_redirect.py functional_tests\test_m365_routes.py functional_tests\test_m365_connections.py functional_tests\test_m365_chat_connection_persistence.py functional_tests\test_oauth_error_responses.py functional_tests\test_ui_mode_seam.py functional_tests\test_ui_interface_selection.py functional_tests\test_modern_standalone_pages.py --tb=short
+```
+
+The merged runtime selection passed **225 tests** with external network access
+blocked. The affected documentation selection above passed **21 tests**;
+Swagger and all three route-policy suites passed (**15/15**, **10/10**, and
+**5/5**). Both release-page and Latest Features generator checks passed.
+These remain offline runtime and source-documentation checks, not live Azure,
+Graph, browser, or final Development-branch validation.
+
+The additional read-only Cosmos inventory check reported 31 inherited owner
+review gaps in `functions_settings.py`, `route_backend_orchestration.py`, and
+`route_backend_users.py`. Those modules, the checker, and its committed inventory
+were verified unchanged from the merged Development base. No OAuth boundary
+was flagged, and the merge does not refresh or approve those unrelated reviews.

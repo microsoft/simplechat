@@ -238,6 +238,14 @@ const ROUTES: [string, string, Record<string, unknown>?][] = [
     ['/public_workspaces', '/public'],
     ['/public_directory', '/public/directory'],
     ['/approvals', '/approvals'],
+    ['/notifications', '/notifications'],
+    ['/notifications/', '/notifications'],
+    ['/notifications?status=unread&q=report#top', '/notifications'],
+    // Workflow activity: the shortcut in the catalogue names no run; one that does is rebuilt from ids the page can read.
+    ['/workflow-activity', '/workflow-activity'],
+    ['/workflow-activity/', '/workflow-activity'],
+    ['/workflow-activity?runId=r-1&workflowId=w-1&scope=personal#top', '/workflow-activity?workflowId=w-1&runId=r-1'],
+    ['/workflow-activity?conversationId=c-1&scope=group&groupId=g-1', '/workflow-activity?conversationId=c-1&scope=group&groupId=g-1'],
     ['/support/latest-features', SUPPORT_LATEST_FEATURES_PATH],
     ['/support/send-feedback', SUPPORT_SEND_FEEDBACK_PATH],
 ];
@@ -256,8 +264,17 @@ check('classic shortcuts land on the matching V2 page', () => {
 });
 
 check('pages V2 has not rebuilt open as written', () => {
-    for (const href of ['/workflow-activity', '/groups/abc', '/admin/safety_violations']) {
+    for (const href of ['/groups/abc', '/admin/safety_violations']) {
         assert.deepEqual(resolveLatestFeatureShortcut(href), { kind: 'page', href });
+    }
+});
+
+check('a workflow-activity shortcut V2 cannot read opens as written, and never reaches the router', () => {
+    for (const href of ['/workflow-activity?runId=a%2Fb', '/workflow-activity?runId=r-1&scope=public']) {
+        assert.deepEqual(resolveLatestFeatureShortcut(href), { kind: 'page', href }, href);
+    }
+    for (const path of ['/workflow-activity?runId=a%2Fb', '/workflow-activity?runId=r-1&scope=personal']) {
+        assert.equal(safeShortcutRouteHref(path), SUPPORT_LATEST_FEATURES_PATH, path);
     }
 });
 

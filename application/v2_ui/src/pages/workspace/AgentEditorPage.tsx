@@ -329,14 +329,28 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     );
 
     const structured = (content: ReactNode) => <fieldset disabled={Boolean(advancedError) || iconBusy} className="min-w-0">{content}</fieldset>;
+    const reentryFields = original?.credential_reentry_required ?? [];
     return (
         <WorkspaceEditorFrame
             title={isNew ? 'New agent' : draft.display_name || draft.name || 'Agent details'} icon={Sparkles}
             iconNode={draft.icon ? <AgentIcon icon={draft.icon} /> : undefined}
             description={isNew ? 'Configure a reusable assistant. Changes are saved only when you choose Save agent.' : draft.description || undefined}
             backTo={adapter.basePath} dirty={dirty || iconBusy} saving={saving} readOnly={readOnly} error={arraySecretError || saveError}
+            notice={reentryFields.length ? <AgentNotice>
+                <p className="font-medium">Agent credentials need updating</p>
+                <p className="mt-1">A security update requires re-entry before these custom-connection credentials can be used.
+                    Approved saved model connections are unaffected.</p>
+                <ul className="mt-2 list-inside list-disc">{reentryFields.map((field) => <li key={field.path}>{field.label}</li>)}</ul>
+                {readOnly ? <p className="mt-2">{adapter.scope.kind === 'group'
+                    ? 'Ask a group owner or administrator with edit permission to update this agent.'
+                    : 'Ask the agent owner or a site administrator to update this agent.'}</p>
+                    : <div className="mt-2"><GlassButton type="button" size="sm" onClick={() => setJumpTo((current) => ({
+                        section: 'model', sequence: (current?.sequence ?? 0) + 1,
+                    }))}>Update credentials</GlassButton></div>}
+            </AgentNotice> : undefined}
             onSave={() => void save()} onDiscard={() => { clear(); assist.forget(); }} saveLabel="Save agent" saveDisabled={Boolean(advancedError) || iconBusy}
-            initialSection={new URLSearchParams(location.search).get('templates') === '1' ? 'templates' : undefined}
+            initialSection={new URLSearchParams(location.search).get('section') === 'model'
+                ? 'model' : new URLSearchParams(location.search).get('templates') === '1' ? 'templates' : undefined}
             sidePanel={assist.available ? <EditorAskAiPanel assist={assist} id="agent-ask-ai-panel" inputId="agent-ask-ai-input"
                 onClose={() => setAssistOpen(false)} session={assistSession}
                 actionSetup={{

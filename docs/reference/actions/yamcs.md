@@ -4,7 +4,7 @@ title: "Yamcs"
 description: "Reference for the Yamcs SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.333"
+version: "0.261.442"
 ---
 
 <!-- action-slug: yamcs -->
@@ -36,6 +36,20 @@ Connection testing appears in **Authentication**, after both Yamcs and optional 
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
+## TLS verification
+
+**Verify TLS** is enabled by default so the action checks the HTTPS server's
+identity against its trusted CA bundle. As of Development **0.261.442**, the
+selected setting is honored during connection testing, initial login, action
+requests, and token renewal, including when an environment CA bundle is configured.
+
+Disabling verification is an explicit diagnostic choice that weakens server
+identity checks; a failed verified connection is never retried without
+verification. For organization-issued certificates, use the
+[existing container CA workflow](../../guides/docker-customization.md#custom-certificate-authorities)
+with verification enabled. That certificate mechanism and the destination checks
+below are unchanged.
+
 ## Reaching a Yamcs server behind an authenticating proxy
 
 Ground segments often publish Yamcs through a reverse proxy, such as Apache, that
@@ -48,6 +62,30 @@ even though the Yamcs configuration is correct.
 HTTP Basic `Authorization` header on every request, which satisfies the proxy and is then
 consumed before Yamcs sees it. Leave it off when you reach Yamcs directly, such as a local
 simulator, so no unnecessary credential is sent.
+
+### Destination checks and existing proxy configurations
+
+Implemented in version: **0.261.435** (`application/single_app/config.py`).
+
+The action still connects to the configured Yamcs/proxy Server URL; enabling
+reverse-proxy authentication adds credentials, not a localhost routing hop.
+A reachable private proxy FQDN remains valid. Apache forwarding to localhost on
+its own machine is not the same as SimpleChat requesting localhost.
+
+The destination guard refuses loopback, link-local and cloud infrastructure
+targets, even when DNS or a redirect hides the address. In Azure App Service,
+a localhost Server URL points to the SimpleChat worker/container, not a remote
+Yamcs server or simulator. Expose a simulator through an appropriate reachable
+service endpoint rather than treating an operator's localhost as a server URL.
+
+Unchanged connections retain their credentials, supported Verify TLS behavior,
+timeouts and reusable/personal identity sources. No Authentication plus proxy
+Basic auth and API Key plus proxy Basic auth remain supported. Changing the
+connection origin requires explicit credential replacement or clearing; rotating
+credentials at the same origin does not.
+
+See [connection destinations and compatibility]({{ '/guides/workspace-agents-and-actions/' | relative_url }}#connection-destinations-and-compatibility)
+for redirect and deployment-wide forward-proxy upgrade considerations.
 
 ### Which authentication methods it can be combined with
 

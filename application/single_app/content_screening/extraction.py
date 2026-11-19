@@ -13,6 +13,7 @@ from typing import Callable
 
 from content_screening.contracts import (
     CONTENT_METADATA_FIELDS,
+    MAX_UNIT_CHARACTERS,
     ContentUnit,
     ScreeningError,
     ScreeningValidationError,
@@ -46,6 +47,7 @@ class ExtractionCapture:
     failure_code: str | None = None
     artifact_storage: object | None = field(default=None, repr=False, compare=False)
     heartbeat: Callable[[], None] | None = field(default=None, repr=False, compare=False)
+    native_accessibility_formats: set[str] = field(default_factory=set)
 
     def _append(self, target, unit):
         self.characters += len(unit.text)
@@ -93,6 +95,17 @@ class ExtractionCapture:
             f"supplement-{len(self.supplemental_units) + 1}", text, locator,
         ))
 
+    def add_native_accessibility(self, file_format, blocks):
+        """Capture the original's native blocks before rendered-page chunking can discard them."""
+        if file_format in self.native_accessibility_formats:
+            return
+        for page_number, text in blocks.items():
+            for start in range(0, len(text), MAX_UNIT_CHARACTERS):
+                self.add_supplement(
+                    text[start:start + MAX_UNIT_CHARACTERS], kind="native_accessibility", page_number=page_number,
+                )
+        self.native_accessibility_formats.add(file_format)
+
     def add_chunk(self, text, page_number, *, start_time=None):
         if not isinstance(text, str):
             self.failure_code = "screening_invalid_extraction"
@@ -122,6 +135,9 @@ class ExtractionCapture:
             value = document.get(name)
             if value in (None, "", [], {}):
                 continue
+            if name == "keywords" and isinstance(value, str):
+                # The basic PDF reader returns a string; reviewed list metadata must remain JSON.
+                value = [value]
             text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
             body.append(ContentUnit(f"metadata-{name}", text, {"kind": "metadata", "field": name}))
         return normalize_units(body)

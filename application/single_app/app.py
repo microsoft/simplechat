@@ -6,6 +6,7 @@ import pickle
 import json
 import os
 import sys
+from model_catalog_runtime import catalog_scope, pin_catalog_stream
 
 # Fix Windows encoding issue with Unicode characters (emojis, IPA symbols, etc.)
 # Must be done before any print statements that might contain Unicode
@@ -36,15 +37,23 @@ from functions_search import *
 from functions_settings import *
 from functions_mcp_server_config import is_mcp_ui_enabled
 from functions_rate_limit import build_rate_limit_error_payload
+from functions_ui_pages import V2_HOME_PATH, has_app_user_role, is_modern_ui_available, render_page
+from functions_ui_redirect import has_classic_escape, redirect_classic_page_to_modern_ui
 from functions_appinsights import *
 from functions_activity_logging import *
 from functions_session_store import install_merging_session_interface
+# The idle-timeout rules live in a module the V2 bootstrap route can import too: route
+# modules are imported by this file, so they cannot import from it.
+from functions_idle_timeout import (
+    get_idle_timeout_settings as resolve_idle_timeout_settings,
+    is_idle_timeout_enabled as resolve_idle_timeout_enabled,
+)
 
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 from datetime import datetime
-from flask import Blueprint, g, make_response
+from flask import Blueprint, g, has_request_context, make_response
 from urllib.parse import urlencode, urlparse
 
 from route_frontend_authentication import *
@@ -69,6 +78,10 @@ from route_custom_pages import register_route_custom_pages
 
 from route_backend_chats import *
 from route_backend_analysis_results import register_route_backend_analysis_results
+from route_backend_support_exports import (
+    register_route_backend_support_exports,
+    register_route_backend_support_export_consents,
+)
 from route_backend_v2 import (
     register_route_backend_v2,
     register_route_backend_v2_admin,
@@ -136,6 +149,7 @@ from route_backend_content_screening import register_route_backend_content_scree
 from route_frontend_content_screening import register_route_frontend_content_screening
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
 from route_backend_m365 import configure_m365_routes, register_route_backend_m365
+from route_backend_bitbucket import register_route_backend_bitbucket
 from functions_m365_approvals import configure_m365_approvals
 from functions_m365_connections import configure_m365_connection_authorization
 from functions_m365_execution import configure_m365_execution, validate_m365_workflow_context
@@ -159,7 +173,7 @@ from plugin_validation_endpoint import plugin_validation_admin_bp, plugin_valida
 from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
-from functions_custom_pages import get_custom_pages_nav
+from functions_custom_pages import get_custom_pages_nav, is_same_origin_framing_allowed
 from functions_debug import debug_print
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_terms_of_use import has_terms_of_use_acceptance
@@ -356,6 +370,7 @@ def initialize_application(force=False):
             get_redis_cache_infrastructure_endpoint(redis_hostname),
             redis_client_factory=functions_redis_client.create_redis_client,
         )
+        configure_model_catalog_runtime()
         settings = initialize_ai_connections(settings)
         sanitized_settings = sanitize_settings_for_logging(settings)
         debug_print(f"DEBUG:Application settings: {sanitized_settings}")
@@ -364,6 +379,7 @@ def initialize_application(force=False):
 
         initialize_clients(settings)
         ensure_custom_logo_file_exists(app, settings)
+        ensure_custom_favicon_file_exists(app, settings)
         print("Setting up Application Insights logging...")
         setup_appinsights_logging(settings)
         logging.basicConfig(level=logging.DEBUG)
@@ -389,6 +405,37 @@ def initialize_application(force=False):
 @app.before_request
 def ensure_application_initialized():
     initialize_application()
+    if request.endpoint == 'static' and (request.view_args or {}).get('filename') == 'images/favicon.ico':
+        ensure_custom_favicon_file_exists(app, get_request_settings())
+    g.model_catalog_scope = catalog_scope()
+    g.model_catalog_scope.__enter__()
+
+
+@app.teardown_request
+def release_model_catalog_scope(_error):
+    scope = g.pop("model_catalog_scope", None)
+    if scope is not None:
+        scope.__exit__(None, None, None)
+
+
+@app.after_request
+def preserve_stream_catalog_revision(response):
+    if response.is_streamed:
+        response.response = pin_catalog_stream(response.response)
+    return response
+
+
+def _support_request_diagnostics():
+    if not has_request_context():
+        return {}
+    authorized = getattr(g, 'authorized_chat_context', None)
+    return {
+        'user_id': get_current_user_id_or_none(),
+        'conversation_id': authorized.get('conversation_id') if isinstance(authorized, dict) else None,
+    }
+
+
+configure_diagnostic_context_provider(_support_request_diagnostics)
 
 
 def get_idle_timeout_settings(settings=None):
@@ -408,77 +455,7 @@ def get_idle_timeout_settings(settings=None):
     if settings is None:
         settings = get_request_settings()
 
-    timeout_raw = settings.get('idle_timeout_minutes', 30)
-    warning_raw = settings.get('idle_warning_minutes', 28)
-
-    try:
-        timeout_minutes = int(timeout_raw)
-    except (TypeError, ValueError):
-        timeout_minutes = 30
-        log_event(
-            "Invalid idle timeout value detected; using default.",
-            extra={
-                "setting": "idle_timeout_minutes",
-                "raw_value": str(timeout_raw),
-                "fallback_value": 30
-            },
-            level=logging.WARNING
-        )
-
-    try:
-        warning_minutes = int(warning_raw)
-    except (TypeError, ValueError):
-        warning_minutes = 28
-        log_event(
-            "Invalid idle warning value detected; using default.",
-            extra={
-                "setting": "idle_warning_minutes",
-                "raw_value": str(warning_raw),
-                "fallback_value": 28
-            },
-            level=logging.WARNING
-        )
-
-    normalized_timeout = max(10, timeout_minutes)
-    if normalized_timeout != timeout_minutes:
-        log_event(
-            "Idle timeout value normalized to minimum allowed value.",
-            extra={
-                "setting": "idle_timeout_minutes",
-                "original_value": timeout_minutes,
-                "normalized_value": normalized_timeout
-            },
-            level=logging.WARNING
-        )
-    timeout_minutes = normalized_timeout
-
-    normalized_warning = max(0, warning_minutes)
-    if normalized_warning != warning_minutes:
-        log_event(
-            "Idle warning value normalized to minimum allowed value.",
-            extra={
-                "setting": "idle_warning_minutes",
-                "original_value": warning_minutes,
-                "normalized_value": normalized_warning
-            },
-            level=logging.WARNING
-        )
-    warning_minutes = normalized_warning
-
-    if warning_minutes > timeout_minutes:
-        previous_warning_minutes = warning_minutes
-        warning_minutes = timeout_minutes
-        log_event(
-            "Idle warning value adjusted to not exceed idle timeout.",
-            extra={
-                "idle_timeout_minutes": timeout_minutes,
-                "original_idle_warning_minutes": previous_warning_minutes,
-                "adjusted_idle_warning_minutes": warning_minutes
-            },
-            level=logging.WARNING
-        )
-
-    return timeout_minutes, warning_minutes
+    return resolve_idle_timeout_settings(settings)
 
 
 def is_idle_timeout_enabled(settings=None):
@@ -497,12 +474,7 @@ def is_idle_timeout_enabled(settings=None):
     if settings is None:
         settings = get_request_settings()
 
-    enabled_raw = settings.get('enable_idle_timeout', False)
-
-    if isinstance(enabled_raw, str):
-        return enabled_raw.strip().lower() in ('1', 'true', 'yes', 'on')
-
-    return bool(enabled_raw)
+    return resolve_idle_timeout_enabled(settings)
 
 
 settings_source_counters = {}
@@ -618,6 +590,9 @@ def get_request_settings():
 
 @app.context_processor
 def inject_settings():
+    from functions_ui_mode import get_ui_policy
+    from ui_routing import resolve_v2_target
+
     settings = get_request_settings()
     public_settings = sanitize_settings_for_user(settings)
     idle_timeout_enabled = is_idle_timeout_enabled(settings)
@@ -645,7 +620,11 @@ def inject_settings():
         log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
         latest_features_nav_hidden = IS_DEVELOPMENT
+    ui_policy = get_ui_policy(settings, user_settings)
+    ui_target = resolve_v2_target(request.path, request.query_string)
     return dict(
+        ui_policy=ui_policy,
+        modern_ui_switch_path=ui_target["path"] if ui_target else "/v2",
         app_settings=public_settings,
         user_settings=user_settings,
         custom_pages_nav=custom_pages_nav,
@@ -996,6 +975,19 @@ def build_terms_of_use_url(path, query_string):
     )
 
 
+# Registered ahead of the Terms of Use and idle-timeout hooks on purpose. Flask runs app-level
+# hooks in registration order, so a classic URL is sent to its V2 counterpart before the terms
+# gate can answer it: a user who still has to accept the terms then meets the V2 terms page (the
+# gate sends /v2 requests there) and not the classic interstitial, and an expired session is
+# handled by the idle-timeout hook on the V2 request that follows. It sits after the CORS and
+# same-origin hooks, which only ever answer OPTIONS and state-changing requests, and it never
+# touches a method other than GET or HEAD. Inert until get_ui_mode() answers modern.
+@app.before_request
+def redirect_classic_pages_to_modern_ui():
+    """Send classic page URLs to their V2 counterparts when the modern interface is selected."""
+    return redirect_classic_page_to_modern_ui(get_request_settings)
+
+
 @app.before_request
 def enforce_terms_of_use():
     """Block authenticated app usage until the current terms of use is accepted."""
@@ -1159,6 +1151,14 @@ def add_security_headers(response):
     # Apply all configured security headers
     for header_name, header_value in SECURITY_HEADERS.items():
         response.headers[header_name] = header_value
+
+    # The chrome-less custom page that the V2 interface shows in a frame may be framed by this
+    # same origin, and by nothing else. Only X-Frame-Options is relaxed for that one response:
+    # the Content-Security-Policy above already limits frame-ancestors to 'self' (plus the Teams
+    # origins when configured) and is left exactly as configured. Deployments that enable Teams
+    # SSO send no X-Frame-Options at all, so there is nothing to relax and none is added.
+    if is_same_origin_framing_allowed() and 'X-Frame-Options' in response.headers:
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     
     # Add HSTS header only if HTTPS is enabled and configured
     if ENABLE_STRICT_TRANSPORT_SECURITY and request.is_secure:
@@ -1275,8 +1275,10 @@ def handle_rate_limited_request(error):
     else:
         message = get_rate_limit_message(settings)
         try:
-            response = make_response(render_template(
+            response = make_response(render_page(
                 'errors/429.html',
+                'modern/errors/429.html',
+                settings=settings,
                 rate_limit_message_html=markdown_filter(message),
             ))
         except Exception as render_error:
@@ -1304,6 +1306,8 @@ public_app_bp = Blueprint('public_app', __name__)
 @public_app_bp.route('/')
 @swagger_route(security=get_auth_security())
 def index():
+    from functions_ui_mode import allows_classic_escape
+
     if ENABLE_AUTO_LOGIN_ON_INDEX and "user" not in session:
         return redirect(url_for('frontend_authentication.login'))
 
@@ -1316,13 +1320,26 @@ def index():
     # Convert Markdown to HTML safely
     landing_html = markdown_filter(landing_text)
     signed_in_account = get_signed_in_account_display(session.get("user"))
-
-    return render_template(
-        'index.html',
+    page_context = dict(
         app_settings=public_settings,
         landing_html=landing_html,
         signed_in_account=signed_in_account,
     )
+
+    if has_app_user_role(session.get("user")):
+        # In the modern interface a signed-in application user belongs in V2, but only when
+        # the bundle was built: /v2 answers 503 without it, so the classic page stays. The
+        # classic to V2 redirect hook asks the same question and normally answers first, so
+        # this only matters when that hook did not run; it honours ui=classic ("Open this page
+        # in classic") exactly as the hook does.
+        classic_escape = has_classic_escape(request.query_string) and allows_classic_escape(settings)
+        if not classic_escape and is_modern_ui_available(settings):
+            return redirect(V2_HOME_PATH)
+        return render_template('index.html', **page_context)
+
+    # A visitor V2 cannot serve (signed out, or signed in without a role) gets the modern
+    # landing page in the modern interface and the classic page otherwise.
+    return render_page('index.html', 'modern/landing.html', settings=settings, **page_context)
 
 @public_app_bp.route('/robots933456.txt')
 @swagger_route(security=get_auth_security())
@@ -1350,7 +1367,7 @@ def serve_js_modules(filename):
 @public_app_bp.route('/acceptable_use_policy.html')
 @swagger_route(security=get_auth_security())
 def acceptable_use_policy():
-    return render_template('acceptable_use_policy.html')
+    return render_page('acceptable_use_policy.html', 'modern/acceptable_use_policy.html')
 
 session_api_bp = Blueprint('session_api', __name__)
 session_api_bp.before_request(login_required_blueprint())
@@ -1505,6 +1522,7 @@ configure_m365_history_runtime()
 configure_m365_file_runtime()
 configure_m365_pending_delivery_runtime(app.test_request_context)
 register_route_blueprint('backend_m365', register_route_backend_m365, user_required_blueprint)
+register_route_blueprint('backend_bitbucket', register_route_backend_bitbucket, user_required_blueprint)
 
 
 @app.after_request
@@ -1581,6 +1599,8 @@ register_route_blueprint('backend_group_settings', register_route_backend_group_
 
 # ------------------- API Control Center Routes ---------
 register_route_blueprint('backend_control_center', register_route_backend_control_center, login_required_blueprint)
+register_route_blueprint('backend_support_exports', register_route_backend_support_exports, admin_required_blueprint)
+register_route_blueprint('backend_support_export_consents', register_route_backend_support_export_consents, user_required_blueprint)
 
 # ------------------- API Notifications Routes ----------
 register_route_blueprint('backend_notifications', register_route_backend_notifications, user_required_blueprint)

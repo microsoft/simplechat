@@ -1,8 +1,9 @@
 # test_orchestration_search_citations.py
 """Search content handoffs retain exact passage citations, not just document identities.
 
-Version: 0.261.389
+Version: 0.261.424
 Implemented in: 0.261.365; per-answer evidence status in 0.261.388
+Native empty-inventory and mixed inspection status covered in: 0.261.424
 
 The real adapters, retained readers, lineage projection and Compose execute with
 offline search/model/storage transport. No external qualification harness is changed.
@@ -243,6 +244,76 @@ def test_historical_evidence_without_a_prepared_sidecar_remains_provenance_only(
         'scope': {'type': 'personal', 'id': 'owner'}, 'group_id': None, 'public_workspace_id': None,
     }]
     assert case.model.calls == []
+
+
+@pytest.mark.parametrize('body_matches', [False, True])
+def test_complete_native_inventory_does_not_replace_a_separate_search_outcome(runtime, body_matches):
+    native_step = {**search_step(), 'step_id': 'comments'}
+    case = runtime.make([
+        native_step, search_step(),
+        compose('answer', inputs={
+            'comments': source_input('comments'), 'body': source_input('search'),
+        }),
+    ])
+    source = case.fixture.sources['document-1']
+    inventory = {
+        'document_id': 'document-1', 'execution_mode': 'native_inspection', 'section': 'comments',
+        'inventory_complete': True, 'total_records': 0, 'returned_records': 0,
+        'partial': False, 'has_more': False, 'limit_reached': False,
+    }
+    coverage_citation = {
+        'document_id': 'document-1', 'citation_id': 'document-1:native-comments:coverage',
+        'file_name': 'Review.docx', 'evidence_kind': 'native_annotation_coverage',
+    }
+    body_citation = {
+        'document_id': 'document-1', 'citation_id': 'document-1_1',
+        'file_name': 'Review.docx', 'page_number': 1,
+    }
+    parents = []
+    for step in case.plan['steps'][:2]:
+        native = step['step_id'] == 'comments'
+        prepared = {
+            'version': 'orchestration-gathered-content-v1', 'capability_id': 'document_search',
+            'content_scope': 'native_document_annotations' if native else 'returned_excerpts',
+            'citations': [coverage_citation] if native else [body_citation] if body_matches else [],
+            'coverage': {'native_inspection': [inventory]} if native else {'returned_excerpt_count': int(body_matches)},
+        }
+        task = case.fixture.service.persist_task_result(
+            producer=case.context.result_producer(step), role='gather', status='complete',
+            outputs=[runtime.NamedOutput('prepared', 'structured-v1', prepared, runtime.complete(1))],
+            sources=[source], origin='grounded',
+            guard_token=case.context.result_guard_token_for_step(step['step_id']),
+        )
+        parents.append(task.output('prepared'))
+    task = case.fixture.service.persist_task_result(
+        producer=case.context.result_producer(case.plan['steps'][2]), role='reason', status='complete',
+        outputs=[runtime.NamedOutput('answer', 'markdown-v1', 'A source-grounded answer.', runtime.complete(1))],
+        sources=[], upstream=parents, origin='grounded',
+        guard_token=case.context.result_guard_token_for_step('answer'),
+    )
+    reopened = SimpleNamespace(result_service=case.fixture.restart())
+    status = runtime.result_runtime.read_result_evidence_status(reopened, task.output('answer'))
+    assert status['state'] == ('complete' if body_matches else 'partial')
+    assert status['sources'][0]['state'] == status['state']
+    assert status['sources'][0]['evidence_count'] == int(body_matches)
+    assert case.model.calls == []
+
+
+@pytest.mark.parametrize('change', [
+    {'inventory_complete': False}, {'returned_records': True}, {'total_records': -1},
+    {'partial': None}, {'section': 'body'}, {'document_id': 'another-document'},
+])
+def test_unknown_native_coverage_cannot_certify_an_empty_inventory(runtime, change):
+    inventory = {
+        'document_id': 'document-1', 'execution_mode': 'native_inspection', 'section': 'comments',
+        'inventory_complete': True, 'total_records': 0, 'returned_records': 0,
+        'partial': False, 'has_more': False, 'limit_reached': False,
+        **change,
+    }
+    state = runtime.result_runtime._native_inventory_evidence_state(
+        {'coverage': {'native_inspection': [inventory]}}, 'document-1',
+    )
+    assert state == 'unknown'
 
 
 def test_evidence_sidecar_verifies_stored_content_digest_without_fallback(search_content):

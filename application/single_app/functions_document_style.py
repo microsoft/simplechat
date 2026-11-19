@@ -30,6 +30,7 @@ from defusedxml.ElementTree import ParseError as DefusedParseError
 from defusedxml.ElementTree import fromstring as defused_fromstring
 
 from functions_appinsights import log_event
+from native_document_evidence import inaccessible_field, native_field
 from functions_office_media import (
     OFFICE_DOCUMENT_PART_MAX_BYTES,
     OFFICE_EMBEDDED_RELS_MAX_BYTES,
@@ -1071,6 +1072,8 @@ def build_pptx_style_inventory(archive, slide_entries):
     """
     theme = _parse_theme(archive, r'^ppt/theme/theme\d+\.xml$')
     accumulator = StyleAccumulator('slide_number')
+    native_runs = []
+    native_run_count = 0
 
     default_levels = {}
     presentation_bytes = _read_zip_entry_bounded(archive, 'ppt/presentation.xml', OFFICE_EMBEDDED_RELS_MAX_BYTES)
@@ -1147,6 +1150,10 @@ def build_pptx_style_inventory(archive, slide_entries):
                 text_containers.append((elem, None))
 
         for container, ph_info in text_containers:
+            object_properties = next(
+                (node for node in container.iter() if _xml_local_name(node.tag) == 'cNvPr'), None,
+            )
+            object_id = _xml_attr_by_local_name(object_properties, 'id') if object_properties is not None else None
             shape_levels = {}
             if _xml_local_name(container.tag) == 'sp':
                 for tx_body in container:
@@ -1169,17 +1176,19 @@ def build_pptx_style_inventory(archive, slide_entries):
                         if lvl_raw.isdigit():
                             level = min(int(lvl_raw) + 1, 9)
                 base = {}
-                for source in (
-                    default_levels,
-                    tx_style,
-                    master_ph['levels'] if master_ph else {},
-                    layout_ph['levels'] if layout_ph else {},
-                    shape_levels,
+                origins = {}
+                for origin, source in (
+                    ('presentation_default', default_levels),
+                    ('master_text_style', tx_style),
+                    ('master_placeholder', master_ph['levels'] if master_ph else {}),
+                    ('layout_placeholder', layout_ph['levels'] if layout_ph else {}),
+                    ('shape_list_style', shape_levels),
                 ):
                     base.update(source.get(level, {}))
+                    origins.update({key: origin for key in source.get(level, {})})
 
                 for run in paragraph:
-                    if _xml_local_name(run.tag) != 'r':
+                    if _xml_local_name(run.tag) not in ('r', 'fld'):
                         continue
                     text = ''.join(
                         str(t.text) for t in run if _xml_local_name(t.tag) == 't' and t.text
@@ -1188,7 +1197,29 @@ def build_pptx_style_inventory(archive, slide_entries):
                         continue
                     r_pr = next((c for c in run if _xml_local_name(c.tag) == 'rPr'), None)
                     effective = dict(base)
-                    effective.update(_parse_dml_run_props(r_pr, theme))
+                    explicit = _parse_dml_run_props(r_pr, theme)
+                    effective.update(explicit)
+                    run_origins = {**origins, **{key: 'run_property' for key in explicit}}
+                    native_run_count += 1
+                    if len(native_runs) < MAX_STYLE_TRACKED_RUNS:
+                        native_fields = {
+                            key: native_field(effective, key) if key in effective
+                            else inaccessible_field('effective_style_unresolved')
+                            for key in ('font', 'size_pt', 'color', 'bold', 'italic', 'underline')
+                        }
+                        solid = next(
+                            (child for child in r_pr if _xml_local_name(child.tag) == 'solidFill'), None,
+                        ) if r_pr is not None else None
+                        color_node = next(iter(solid), None) if solid is not None else None
+                        if color_node is None or _xml_local_name(color_node.tag) != 'srgbClr' or list(color_node):
+                            native_fields['color'] = inaccessible_field('effective_color_or_modifiers_unresolved')
+                        native_runs.append({
+                            'slide_number': slide_number, 'source_part': slide_path,
+                            'object_id': object_id, 'text': text[:512], 'text_complete': len(text) <= 512,
+                            'field_type': _xml_attr_by_local_name(run, 'type') if _xml_local_name(run.tag) == 'fld' else None,
+                            'style': effective, 'style_origins': run_origins,
+                            'native_fields': native_fields,
+                        })
                     accumulator.add(
                         slide_number,
                         text,
@@ -1207,6 +1238,9 @@ def build_pptx_style_inventory(archive, slide_entries):
         f'assumed to be {STYLE_DEFAULT_PPTX_FONT_SIZE_PT:g}pt (the PowerPoint default).',
     ]
     inventory = accumulator.build_inventory(coverage='full', notes=notes)
+    inventory['native_runs'] = native_runs
+    inventory['native_run_count'] = native_run_count
+    inventory['native_runs_truncated'] = len(native_runs) != native_run_count
     return inventory, accumulator.section_summaries()
 
 

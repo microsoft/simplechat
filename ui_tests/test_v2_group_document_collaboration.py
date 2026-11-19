@@ -218,7 +218,8 @@ def test_missing_or_unknown_support_never_reuses_personal_sharing(group_collabor
         expect(explorer(ui).get_by_role("button", name=re.compile(r"^Review\b"))).to_have_count(0)
         row(ui, "same-document").get_by_role("button", name="Details for Research brief", exact=True).click()
         expect(explorer(ui).get_by_role("button", name="Share", exact=True)).to_have_count(0)
-        expect(ui.page.get_by_role("button", name=re.compile(r"Classic", re.IGNORECASE)).first).to_be_visible()
+        # The legacy document upgrade is native, so there is no classic hand-off to fall back on either.
+        expect(ui.page.get_by_role("button", name=re.compile(r"Classic", re.IGNORECASE))).to_have_count(0)
         assert not [entry for entry in ui.requests if COLLABORATION_PATH.fullmatch(entry.path)]
     assert not ui.operation_requests
 

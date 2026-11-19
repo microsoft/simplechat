@@ -1,13 +1,13 @@
 // identityFields.ts
-// The field rules shared by workspace identity editors, kept out of the renderer so they can be
-// tested without a DOM.
+// The field rules shared by identity editors (personal, group, public, and the administrator's
+// global identities), kept out of the renderer so they can be tested without a DOM.
 //
 // A workspace identity is a saved credential: a name, the SimpleChat capabilities that may use it
 // (file sync, actions), an authentication method, and the credential material for that method.
 // The classic editor (static/js/workspace/workspace-identities.js) is the source of truth for
 // which auth types each capability allows, how the "Used For" selection maps onto provider,
 // source types and usage contexts, and how the write payload is shaped. This module mirrors that
-// exactly so a group identity authored here is byte-compatible with one authored in classic.
+// exactly so an identity authored here is byte-compatible with one authored in classic.
 //
 // Secrets are never returned to the browser: the server sends password_stored / secret_stored
 // booleans instead. The secret field therefore opens blank on an edit, and a blank secret on save
@@ -99,13 +99,18 @@ function capabilityConfig(value: string): CapabilityConfig {
  * The auth types permitted by a set of capabilities, in the order they first appear across the
  * selected capabilities. Mirrors `getAllowedAuthTypes`: it falls back to username_password so a
  * form always has at least one method.
+ *
+ * `offered` narrows the result to the methods an editor offers at all, as the classic editor's
+ * `data-auth-type-options` does (the global identities pane leaves out anonymous). Left out, every
+ * method the capabilities allow is offered, which is what the personal, group and public editors
+ * have always done.
  */
-export function allowedAuthTypes(capabilities: string[]): string[] {
+export function allowedAuthTypes(capabilities: string[], offered?: readonly string[]): string[] {
     const authTypes: string[] = [];
     const selected = capabilities.length ? capabilities : ['action'];
     selected.forEach((capability) => {
         capabilityConfig(capability).authTypes.forEach((authType) => {
-            if (!authTypes.includes(authType)) {
+            if (!authTypes.includes(authType) && (!offered || offered.includes(authType))) {
                 authTypes.push(authType);
             }
         });

@@ -17,7 +17,7 @@ from functions_settings import get_settings, update_settings, get_user_settings,
 from functions_ai_connections import filter_model_endpoints_by_capability, supports_model_capability
 from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent, update_global_agent_enabled
 from functions_personal_agents import get_personal_agents, ensure_migration_complete, save_personal_agent, delete_personal_agent
-from functions_group import require_active_group, assert_group_role
+from functions_group import require_active_group, assert_group_role, find_group_by_id
 from functions_agent_payload import (
     AgentPayloadError,
     can_agent_use_default_multi_endpoint_model,
@@ -68,12 +68,16 @@ from functions_agent_delegation import (
     validate_agent_delegation_bindings,
 )
 from functions_workspace_authoring import (
+    apply_group_agent_write,
     build_agent_editor_options,
     editor_error_response,
     ensure_editor_options_access,
+    legacy_editor_write_body,
     personal_editor_response,
+    project_shared_record,
+    read_group_editor_record,
 )
-from functions_group_agent_policy import group_agent_write_roles, group_agents_available
+from functions_group_agent_policy import group_agent_management_operations, group_agent_write_roles, group_agents_available
 from functions_settings import is_agent_assistant_enabled
 from functions_editor_assist import EditorAssistError
 from functions_editor_assist_runtime import (
@@ -1139,6 +1143,10 @@ def get_user_agents():
             agent.setdefault('agent_type', 'local')
 
         global_agents = [agent for agent in global_agents if _is_agent_allowed_for_user_selection(user_id, agent)]
+        global_agents = [
+            project_shared_record(agent, 'agents', global_scope=True)
+            for agent in global_agents
+        ]
         
         # Merge agents using ID as key to avoid name conflicts
         # This allows both personal and global agents with same name to coexist
@@ -1318,7 +1326,7 @@ def _prepare_group_agent_payload(user_id, group_id, agent, settings, existing):
     except AssignedKnowledgeError as exc:
         return None, (jsonify({'error': str(exc)}), 400)
 
-    validation_error = validate_agent(cleaned_agent)
+    validation_error = validate_agent(cleaned_agent, existing_id=(existing or {}).get('id'))
     if validation_error:
         return None, (jsonify({'error': f'Agent validation failed: {validation_error}'}), 400)
 
@@ -1650,7 +1658,7 @@ def get_group_agents_route():
     user_id = get_current_user_id()
     try:
         active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
-        assert_group_role(
+        role = assert_group_role(
             user_id,
             active_group,
             allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
@@ -1669,7 +1677,16 @@ def get_group_agents_route():
             agent['is_group'] = True
             agent['group_id'] = active_group
     agents = [agent for agent in agents if isinstance(agent, dict) and _is_agent_allowed_for_user_selection(user_id, agent)]
-    return jsonify({'agents': agents}), 200
+    settings = get_settings()
+    can_manage = bool(group_agent_management_operations(
+        user_id, find_group_by_id(active_group), role, settings,
+    ))
+    response = jsonify({'agents': [
+        project_shared_record(agent, 'agents', can_manage=can_manage, group_scope=True)
+        for agent in agents
+    ]})
+    response.headers['Cache-Control'] = 'no-store'
+    return response, 200
 
 
 @bpa.route('/api/group/agents/<agent_id>', methods=['GET'])
@@ -1682,7 +1699,7 @@ def get_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
         active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
-        assert_group_role(
+        role = assert_group_role(
             user_id,
             active_group,
             allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
@@ -1694,10 +1711,17 @@ def get_group_agent_route(agent_id):
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
 
-    agent = get_group_agent(active_group, agent_id)
-    if not agent:
-        return jsonify({'error': 'Agent not found'}), 404
-    return jsonify(agent), 200
+    settings = get_settings()
+    can_manage = bool(group_agent_management_operations(
+        user_id, find_group_by_id(active_group), role, settings,
+    ))
+    try:
+        agent = read_group_editor_record('agents', user_id, active_group, agent_id, settings)
+        response = jsonify(project_shared_record(agent, 'agents', can_manage=can_manage, group_scope=True))
+    except Exception as exc:
+        return editor_error_response(exc)
+    response.headers['Cache-Control'] = 'no-store'
+    return response, 200
 
 
 @bpa.route('/api/group/agents', methods=['POST'])
@@ -1709,10 +1733,13 @@ def get_group_agent_route(agent_id):
 def create_group_agent_route():
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
-        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
+        role = assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
+        group = find_group_by_id(active_group)
+        if not group or 'create' not in group_agent_management_operations(user_id, group, role, app_settings):
+            raise PermissionError('Group agent management is unavailable.')
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:
@@ -1720,43 +1747,20 @@ def create_group_agent_route():
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
 
-    payload = request.get_json(silent=True) or {}
     try:
-        validate_group_agent_payload(payload, partial=False)
-        cleaned_payload = sanitize_agent_payload(payload)
-    except (ValueError, AgentPayloadError) as exc:
-        return jsonify({'error': str(exc)}), 400
-
-    settings = get_settings()
-    if not settings.get('allow_group_custom_endpoints', False):
-        _strip_disallowed_local_custom_connection_fields(cleaned_payload)
-
-    for key in ('group_id', 'last_updated', 'is_global', 'is_group'):
-        cleaned_payload.pop(key, None)
-
-    try:
-        cleaned_payload = apply_assigned_knowledge_to_agent_payload(
-            cleaned_payload,
-            user_id=user_id,
-            agent_scope='group',
-            group_id=active_group,
-            is_admin=False,
+        payload = request.get_json(silent=True)
+        body = legacy_editor_write_body(payload, None, 'agents')
+        body['updates'].setdefault('id', str(uuid.uuid4()))
+        saved = apply_group_agent_write(
+            user_id, active_group, None, body, _prepare_group_agent_payload, app_settings,
         )
-    except AssignedKnowledgeError as exc:
-        return jsonify({'error': str(exc)}), 400
-
-    try:
-        saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
-    except (ValueError, LookupError):
-        return jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
     except Exception as exc:
-        debug_print('Failed to save group agent: %s', exc)
-        return jsonify({'error': 'Unable to save agent'}), 500
+        return editor_error_response(exc)
 
     log_agent_creation(user_id=user_id, agent_id=saved.get('id', ''), agent_name=saved.get('name', ''), agent_display_name=saved.get('display_name', ''), scope='group', group_id=active_group)
-    return jsonify(saved), 201
+    response = jsonify(project_shared_record(saved, 'agents', can_manage=True, group_scope=True))
+    response.headers['Cache-Control'] = 'no-store'
+    return response, 201
 
 
 @bpa.route('/api/group/agents/<agent_id>', methods=['PATCH'])
@@ -1768,10 +1772,13 @@ def create_group_agent_route():
 def update_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
-        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
+        role = assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
+        group = find_group_by_id(active_group)
+        if not group or 'edit' not in group_agent_management_operations(user_id, group, role, app_settings):
+            raise PermissionError('Group agent management is unavailable.')
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except LookupError as exc:
@@ -1779,60 +1786,20 @@ def update_group_agent_route(agent_id):
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
 
-    existing = get_group_agent(active_group, agent_id)
-    if not existing:
-        return jsonify({'error': 'Agent not found'}), 404
-
-    updates = request.get_json(silent=True) or {}
-    for key in ('id', 'group_id', 'last_updated', 'is_global', 'is_group'):
-        updates.pop(key, None)
-
     try:
-        validate_group_agent_payload(updates, partial=True)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-
-    merged = dict(existing)
-    merged.update(updates)
-    merged['id'] = agent_id
-
-    try:
-        validate_group_agent_payload(merged, partial=False)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-
-    try:
-        cleaned_payload = sanitize_agent_payload(merged)
-    except AgentPayloadError as exc:
-        return jsonify({'error': str(exc)}), 400
-
-    settings = get_settings()
-    if not settings.get('allow_group_custom_endpoints', False):
-        _strip_disallowed_local_custom_connection_fields(cleaned_payload)
-
-    try:
-        cleaned_payload = apply_assigned_knowledge_to_agent_payload(
-            cleaned_payload,
-            user_id=user_id,
-            agent_scope='group',
-            group_id=active_group,
-            is_admin=False,
+        existing = read_group_editor_record('agents', user_id, active_group, agent_id, app_settings)
+        saved = apply_group_agent_write(
+            user_id, active_group, existing,
+            legacy_editor_write_body(request.get_json(silent=True), existing, 'agents'),
+            _prepare_group_agent_payload, app_settings,
         )
-    except AssignedKnowledgeError as exc:
-        return jsonify({'error': str(exc)}), 400
-
-    try:
-        saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
-    except (ValueError, LookupError):
-        return jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
     except Exception as exc:
-        debug_print('Failed to update group agent %s: %s', agent_id, exc)
-        return jsonify({'error': 'Unable to update agent'}), 500
+        return editor_error_response(exc)
 
     log_agent_update(user_id=user_id, agent_id=agent_id, agent_name=saved.get('name', ''), agent_display_name=saved.get('display_name', ''), scope='group', group_id=active_group)
-    return jsonify(saved), 200
+    response = jsonify(project_shared_record(saved, 'agents', can_manage=True, group_scope=True))
+    response.headers['Cache-Control'] = 'no-store'
+    return response, 200
 
 
 @bpa.route('/api/group/agents/<agent_id>', methods=['DELETE'])
@@ -2692,6 +2659,16 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
 def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id=None):    
     settings = get_settings()
     agents = get_global_agents()
+    selected_agent = settings.get("global_selected_agent", {})
+    if not include_admin_extras:
+        agents = [
+            project_shared_record(agent, 'agents', global_scope=True)
+            for agent in agents if _is_agent_allowed_for_user_selection(user_id, agent)
+        ]
+        selected_agent = (
+            project_shared_record(selected_agent, 'agents', global_scope=True)
+            if isinstance(selected_agent, dict) and selected_agent else {}
+        )
     combined_endpoints = []
     base_endpoints = settings.get("model_endpoints", []) or []
     multi_flag = settings.get("enable_multi_model_endpoints", False)
@@ -2704,7 +2681,7 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
     effective_multi_flag = bool(multi_flag or any(endpoint.get("models") for endpoint in combined_endpoints))
     
     # Return selected_agent and any other relevant settings for admin UI
-    return jsonify({
+    response = jsonify({
         "semantic_kernel_agents": agents,
         "orchestration_type": settings.get("orchestration_type", "default_agent"),
         "enable_multi_agent_orchestration": settings.get("enable_multi_agent_orchestration", False),
@@ -2717,7 +2694,7 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
         "enable_http_plugin": settings.get("enable_http_plugin", False),
         "enable_wait_plugin": settings.get("enable_wait_plugin", False),
         "enable_default_embedding_model_plugin": settings.get("enable_default_embedding_model_plugin", False),
-        "global_selected_agent": settings.get("global_selected_agent", {}),
+        "global_selected_agent": selected_agent,
         "merge_global_semantic_kernel_with_workspace": settings.get("merge_global_semantic_kernel_with_workspace", False),
         "enable_gpt_apim": settings.get("enable_gpt_apim", False),
         "azure_apim_gpt_deployment": settings.get("azure_apim_gpt_deployment", ""),
@@ -2737,3 +2714,5 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
         "enable_multi_model_endpoints": effective_multi_flag,
         "model_endpoints": combined_endpoints,
     })
+    response.headers['Cache-Control'] = 'no-store'
+    return response

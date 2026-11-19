@@ -13,20 +13,29 @@
 // it; a write-guard exhaustion (the write-conflict 409) keeps the draft for a plain retry; a 400 shows
 // the server's verbatim message. The downloads and retention cards render only when the server
 // includes their block, so an unavailable capability is absent rather than shown disabled.
+//
+// The danger zone deletes the workspace natively, as classic's manage page does: the document count is
+// read again, a workspace that still holds documents is not deleted, a confirmation names what the
+// delete does and leaves, and only then is the owner's DELETE sent. The server decides who may delete
+// and answers at once, so every refusal is shown in its own words and a repeated click can never send
+// a second DELETE. A 404 means the workspace is already gone, which is where the user was headed, so
+// it leaves the page as a success does. Unsaved edits hold the delete back instead of being dropped.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, Image as ImageIcon, Loader2, Trash2, Upload, type LucideIcon } from 'lucide-react';
+import { Image as ImageIcon, Loader2, Trash2, Upload, type LucideIcon } from 'lucide-react';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../../components/ui/primitives';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { SectionIntro } from '../../components/workspace/primitives';
 import { codePointLength } from '../../lib/groupDirectory';
 import { rebaseDraft, rebaseNotice, type RebaseField } from '../../lib/rebaseDraft';
 import { ApiError } from '../../lib/apiClient';
+import { isRecord } from '../../lib/workspaceAuthoring';
 import {
     GroupLogoMissingError, GroupSettingsChangedError, GroupSettingsWriteConflictError,
     type GroupProfileChanges, type GroupRetentionBounds, type GroupRetentionValue,
     type GroupSettingsManagement, type WorkspaceSettings, type WorkspaceSettingsAdapter,
 } from '../../lib/groupSettings';
+import { toast } from '../../stores/toastStore';
 
 const NAME_MAX = 80;
 const DESCRIPTION_MAX = 500;
@@ -69,15 +78,37 @@ export interface WorkspaceSettingsSectionScope {
     logoReadOnlyHint: string;
     downloadsToggleLabel: string;
     downloadsHint: string;
-    /** The owner-only danger zone, which hands the delete to the classic page. */
+    /**
+     * The owner-only danger zone: the native delete and the wording each scope owes the user. `count`
+     * words the document count; a count above zero is also why the delete is held, so it names the
+     * prerequisite. Every other text is shown once, where its name says.
+     */
     danger: {
         title: string;
+        /** What deleting does, and what it leaves behind, above the count. */
         body: string;
         counting: string;
         count: (count: number) => string;
         button: string;
         confirmTitle: string;
-        confirmDescription: string;
+        confirmDescription: (workspaceName: string) => string;
+        /** The dialog's consequences, below its description. */
+        confirmDetail: string;
+        confirmLabel: string;
+        /** The count could not be read, so nothing was deleted. */
+        checkFailed: string;
+        /** The count is above zero, so nothing was deleted; the count line above says how many. */
+        held: string;
+        /** The DELETE could not be completed: a server fault or a failure to reach it. */
+        failed: string;
+        /** A 404: the workspace was already deleted, so the user leaves it as after a delete. */
+        gone: string;
+        /** The toast after a delete. */
+        deleted: (workspaceName: string) => string;
+        /** The line in the danger zone while the page leaves after a delete or a 404. */
+        leaving: string;
+        /** Why Delete waits, while profile or retention edits are unsaved. */
+        unsaved: string;
     };
 }
 
@@ -191,8 +222,19 @@ function retentionChoices(current: string, stored: string, bounds: GroupRetentio
 const FIELD_CLASS =
     'mt-1 w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-60';
 
+/**
+ * What a refused or failed delete says. A 5xx and a failure to reach the server are never shown raw:
+ * they get the scope's own sentence. A refusal carries the server's words -- for a role gate those are
+ * in `message`, beside a bare `Forbidden` -- and a body that isn't JSON is never echoed.
+ */
+function deleteFailureText(cause: unknown, fallback: string): string {
+    if (!(cause instanceof ApiError) || cause.status >= 500 || !isRecord(cause.payload)) return fallback;
+    const sentence = typeof cause.payload.message === 'string' ? cause.payload.message.trim() : '';
+    return (cause.status === 403 && sentence) || cause.message || fallback;
+}
+
 export function WorkspaceSettingsSection({
-    scope, adapter, management, interactionDisabled, onBusyChange, onDirtyChange, onAccessChanged, onSaved, onOpenClassic,
+    scope, adapter, management, interactionDisabled, onBusyChange, onDirtyChange, onAccessChanged, onSaved, onDeleted,
 }: {
     scope: WorkspaceSettingsSectionScope;
     adapter: WorkspaceSettingsAdapter;
@@ -211,8 +253,12 @@ export function WorkspaceSettingsSection({
     onAccessChanged: () => void;
     /** Re-read the workspace context after a successful profile or logo save, so the header follows. */
     onSaved: () => void;
-    /** Open the classic workspace page for the delete flow classic still owns. */
-    onOpenClassic: () => void;
+    /**
+     * Leave the workspace once it is gone, whether this section deleted it or found it already deleted.
+     * The page reads the account's workspaces again and goes back to the list. The section stays
+     * disabled until the page has left, so nothing it offers can be used on a workspace that is gone.
+     */
+    onDeleted: () => void | Promise<void>;
 }) {
     const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
     // The freshest settings_management hint the section holds: the last read or write when one has
@@ -244,7 +290,18 @@ export function WorkspaceSettingsSection({
 
     const [fileCount, setFileCount] = useState<number | null>(null);
     const [fileCountError, setFileCountError] = useState('');
+    // The delete flow: `checking` while the count is re-read before the confirmation, `deleteOpen` for
+    // the confirmation, `deleteBusy` from the confirm click until the page has left (or the delete was
+    // refused), and `deleted` once the workspace is gone, which keeps every control disabled.
+    const [deleteChecking, setDeleteChecking] = useState(false);
     const [deleteOpen, setDeleteOpen] = useState(false);
+    const [deleteBusy, setDeleteBusy] = useState(false);
+    const [dangerError, setDangerError] = useState('');
+    const [deleteError, setDeleteError] = useState('');
+    // The in-flight guard is a ref, not state, because a second click can land before a re-render.
+    const deleteInFlight = useRef(false);
+    // Set once the workspace is gone: the text that says the page is leaving. Every control stays disabled.
+    const [deleted, setDeleted] = useState('');
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const onBusyChangeRef = useRef(onBusyChange);
@@ -255,6 +312,8 @@ export function WorkspaceSettingsSection({
     onAccessChangedRef.current = onAccessChanged;
     const onSavedRef = useRef(onSaved);
     onSavedRef.current = onSaved;
+    const onDeletedRef = useRef(onDeleted);
+    onDeletedRef.current = onDeleted;
     // The load effect keeps its original dependencies (adapter and reload), so it reads the scope's
     // fallback text through a ref rather than re-running when a wrapper re-renders.
     const loadFailedRef = useRef(scope.loadFailed);
@@ -275,7 +334,7 @@ export function WorkspaceSettingsSection({
     const allows = useCallback((operation: string) => gateOperations.has(operation), [gateOperations]);
     const reason = useCallback((operation: string) => (gate?.reasons ?? {})[operation], [gate]);
 
-    const busy = profileBusy || logoBusy || downloadsBusy || retentionBusy;
+    const busy = profileBusy || logoBusy || downloadsBusy || retentionBusy || deleteBusy;
     useEffect(() => { onBusyChangeRef.current(busy); }, [busy]);
     useEffect(() => () => { onBusyChangeRef.current(false); onDirtyChangeRef.current(false); }, []);
 
@@ -578,6 +637,99 @@ export function WorkspaceSettingsSection({
         if (refused) reReadContext();
     };
 
+    // --- Deleting the workspace -----------------------------------------------------------------
+
+    /**
+     * The workspace is gone, by this delete or one before it. Say so, keep every control disabled and
+     * hand the page the exit. The in-flight guard stays set so no later click can send another DELETE.
+     */
+    const leaveDeleted = async (message: string, tone: 'success' | 'info', inline: string) => {
+        deleteInFlight.current = true;
+        setDeleted(inline);
+        setDeleteOpen(false);
+        setDangerError('');
+        setDeleteError('');
+        if (tone === 'success') toast.success(message); else toast.info(message);
+        await onDeletedRef.current();
+    };
+
+    /**
+     * Read the document count again, as classic does at the click, and open the confirmation only when
+     * nothing is left to remove. A count that cannot be read holds the delete rather than guessing.
+     */
+    const startDelete = async () => {
+        if (deleteInFlight.current || !allows('view_file_count')) return;
+        deleteInFlight.current = true;
+        setDeleteChecking(true);
+        setDangerError('');
+        let gone = false;
+        let refused = false;
+        try {
+            const count = await adapter.readFileCount();
+            setFileCount(count);
+            if (count > 0) {
+                setDangerError(scope.danger.held);
+            } else {
+                setDeleteError('');
+                setDeleteOpen(true);
+            }
+        } catch (cause) {
+            gone = cause instanceof ApiError && cause.status === 404;
+            refused = cause instanceof ApiError && cause.status === 403;
+            if (!gone) setDangerError(refused ? deleteFailureText(cause, scope.danger.checkFailed) : scope.danger.checkFailed);
+        } finally {
+            if (!gone) deleteInFlight.current = false;
+            setDeleteChecking(false);
+        }
+        if (gone) await leaveDeleted(scope.danger.gone, 'info', scope.danger.leaving);
+        else if (refused) reReadContext();
+    };
+
+    /**
+     * Send the owner's DELETE. The count is read once more first, because a document can arrive while the
+     * confirmation is open, and the server checks nothing about it. A 404 means the workspace is already
+     * gone; every other refusal is shown in the dialog in the server's words, the dialog stays open, and
+     * the flow can be retried. After a delete the section stays busy until the page has left.
+     */
+    const confirmDelete = async () => {
+        if (deleteInFlight.current || !settings) return;
+        deleteInFlight.current = true;
+        const name = settings.profile.name;
+        setDeleteBusy(true);
+        setDeleteError('');
+        let outcome: 'deleted' | 'gone' | 'held' | 'failed' = 'failed';
+        let refused = false;
+        try {
+            const count = await adapter.readFileCount();
+            setFileCount(count);
+            if (count > 0) {
+                outcome = 'held';
+                setDeleteOpen(false);
+                setDangerError(scope.danger.held);
+            } else {
+                await adapter.deleteWorkspace();
+                outcome = 'deleted';
+            }
+        } catch (cause) {
+            if (cause instanceof ApiError && cause.status === 404) {
+                outcome = 'gone';
+            } else {
+                setDeleteError(deleteFailureText(cause, scope.danger.failed));
+                refused = cause instanceof ApiError && cause.status === 403;
+            }
+        }
+        if (outcome === 'deleted' || outcome === 'gone') {
+            await leaveDeleted(
+                outcome === 'deleted' ? scope.danger.deleted(name) : scope.danger.gone,
+                outcome === 'deleted' ? 'success' : 'info', scope.danger.leaving,
+            );
+            return;
+        }
+        deleteInFlight.current = false;
+        setDeleteBusy(false);
+        if (refused) reReadContext();
+    };
+
     if (loading) {
         return (
             <div className="space-y-3" aria-busy="true">
@@ -816,19 +968,37 @@ export function WorkspaceSettingsSection({
                                 ? danger.counting
                                 : danger.count(fileCount)}
                     </p>
-                    <GlassButton size="sm" variant="ghost" disabled={disabled}
-                        onClick={() => setDeleteOpen(true)} data-testid={testId('delete')}>
-                        {danger.button}<ArrowUpRight size={14} />
+                    {editorDirty ? (
+                        <p className="text-xs text-text-3" data-testid={testId('delete-unsaved')}>{danger.unsaved}</p>
+                    ) : null}
+                    {dangerError ? (
+                        <p role="alert" className="text-xs text-danger" data-testid={testId('danger-error')}>{dangerError}</p>
+                    ) : null}
+                    {deleted ? (
+                        <p role="status" className="flex items-center gap-2 text-xs text-text-2" data-testid={testId('deleted')}>
+                            <Loader2 size={14} className="animate-spin" aria-hidden="true" />{deleted}
+                        </p>
+                    ) : null}
+                    <GlassButton size="sm" variant="ghost"
+                        disabled={disabled || editorDirty || deleteChecking || Boolean(deleted)}
+                        onClick={() => void startDelete()} data-testid={testId('delete')}>
+                        {deleteChecking ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                        {danger.button}
                     </GlassButton>
                 </GlassPanel>
             ) : null}
 
             {deleteOpen ? (
                 <ConfirmDialog title={danger.confirmTitle}
-                    description={danger.confirmDescription}
-                    confirmLabel="Open classic" tone="danger"
-                    onConfirm={() => { setDeleteOpen(false); onOpenClassic(); }}
-                    onClose={() => setDeleteOpen(false)} />
+                    description={danger.confirmDescription(settings.profile.name)}
+                    confirmLabel={danger.confirmLabel} tone="danger" busy={deleteBusy}
+                    onConfirm={() => void confirmDelete()}
+                    onClose={() => { if (!deleteBusy) { setDeleteOpen(false); setDeleteError(''); } }}>
+                    <p className="text-xs text-text-2">{danger.confirmDetail}</p>
+                    {deleteError ? (
+                        <p role="alert" className="mt-2 text-xs text-danger" data-testid={testId('delete-error')}>{deleteError}</p>
+                    ) : null}
+                </ConfirmDialog>
             ) : null}
         </div>
     );

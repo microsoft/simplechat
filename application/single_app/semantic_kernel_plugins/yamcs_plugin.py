@@ -16,6 +16,8 @@ from action_credential_contracts import (
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_outbound_destinations import normalize_outbound_url
+from functions_outbound_http import guard_login_credentials, guard_requests_session
 from functions_yamcs_operations import (
     YAMCS_ALLOWED_READ_STATEMENTS,
     YAMCS_AUTH_METHOD_API_KEY,
@@ -28,8 +30,10 @@ from functions_yamcs_operations import (
     YAMCS_SUPPORTED_AUTH_METHODS,
     YAMCS_SUPPORTED_AUTH_TYPES,
     build_yamcs_basic_auth_header,
+    build_yamcs_api_key_credentials,
     normalize_yamcs_additional_fields,
     normalize_yamcs_server_url,
+    wrap_yamcs_login_credentials,
     yamcs_basic_auth_conflicts_with_auth_method,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
@@ -295,20 +299,7 @@ class YamcsPlugin(BasePlugin):
 
         auth_key = str(self._auth.get("key") or "")
         if self.auth_method == YAMCS_AUTH_METHOD_API_KEY:
-            try:
-                from yamcs.client import APIKeyCredentials
-            except ImportError:
-                # yamcs-client 1.8.8 exposes core Credentials, but no API-key
-                # holder. Its Context calls before_request for every request.
-                class APIKeyCredentials(Credentials):
-                    def __init__(self, api_key):
-                        super().__init__()
-                        self.api_key = api_key
-
-                    def before_request(self, session, auth_url):
-                        session.headers.update({"x-api-key": self.api_key})
-
-            return APIKeyCredentials(auth_key)
+            return build_yamcs_api_key_credentials(auth_key)
         if self.auth_method == YAMCS_AUTH_METHOD_BEARER_TOKEN:
             return Credentials(access_token=auth_key)
         return Credentials(username=str(self._auth.get("identity") or ""), password=auth_key)
@@ -333,6 +324,7 @@ class YamcsPlugin(BasePlugin):
         return BasicAuthCredentials(self.basic_auth_username, self.basic_auth_password)
 
     def _connect(self):
+        normalize_outbound_url(self.server_url)
         try:
             from yamcs.client import YamcsClient
         except ImportError as exc:
@@ -347,31 +339,20 @@ class YamcsPlugin(BasePlugin):
             f"basic_auth_enabled={self.enable_basic_auth}"
         )
         credentials = self._build_credentials()
-        if credentials is not None and getattr(self, "_credential_status_transport", False):
-            plugin = self
-            delegate_credentials = credentials
-
-            class BoundCredentials:
-                def login(self, session, auth_root, on_token_update):
-                    session.request = plugin._with_timeout(session.request)
-                    try:
-                        return delegate_credentials.login(session, auth_root, on_token_update)
-                    except Exception:
-                        session.close()
-                        raise
-
-            credentials = BoundCredentials()
         client = YamcsClient(
             self.server_url,
-            credentials=credentials,
+            credentials=guard_login_credentials(
+                wrap_yamcs_login_credentials(credentials, self._with_timeout)
+            ),
             tls_verify=self.tls_verify,
             user_agent="SimpleChat",
         )
-        # The Yamcs client wraps a requests.Session; apply the configured timeout to it so a
-        # slow or unreachable ground segment cannot hang an agent turn indefinitely.
         session = getattr(getattr(client, "ctx", None), "session", None)
         if session is not None:
-            session.request = self._with_timeout(session.request)
+            guard_requests_session(session)
+            # Unauthenticated clients have no login callback to configure their session.
+            if credentials is None:
+                session.request = self._with_timeout(session.request)
             self._apply_basic_auth_header(session)
         return client
 
@@ -392,9 +373,11 @@ class YamcsPlugin(BasePlugin):
 
     def _with_timeout(self, request_callable: Callable) -> Callable:
         configured_timeout = self.timeout
+        configured_verify = self.tls_verify
 
         def request_with_timeout(*args, **kwargs):
             kwargs.setdefault("timeout", configured_timeout)
+            kwargs.setdefault("verify", configured_verify)
             response = request_callable(*args, **kwargs)
             if getattr(self, "_credential_status_transport", False) and response.status_code in {401, 403, 407}:
                 # yamcs-client discards HTTP status on several error paths.

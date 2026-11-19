@@ -8,7 +8,7 @@ audience: user
 
 ## What this does
 
-Workspace scope lock keeps a conversation associated with the workspace scope used for grounded chat. The chat header shows **Scope locked** when locked scope metadata exists.
+Workspace scope lock keeps a conversation associated with the workspace scope used for grounded chat. The chat header shows **Scope locked** (classic) or a padlock beside the title (V2) when locked scope metadata exists.
 
 {% include media.html id="slide-workspace-scope-lock" %}
 
@@ -34,10 +34,9 @@ Use scope lock when grounded retrieval should stay associated with one team's do
 
 ## Steps
 
-These steps use the classic **Grounded Search** controls. In V2, workspace
-and document context is selected through **Documents**; see the
-[document-source picker]({{ '/reference/chat-controls/#react-v2-document-source-picker' | relative_url }}).
-The scope boundary and enforcement policy remain separate from that interface choice.
+These steps use the classic **Grounded Search** controls. For V2, see
+[Steps in V2](#steps-in-v2). The scope boundary and enforcement policy remain separate from that
+interface choice.
 
 1. Open **Chat**.
 2. Select **Workspaces** to open **Grounded Search**.
@@ -59,9 +58,34 @@ The scope boundary and enforcement policy remain separate from that interface ch
 
 7. Start a new conversation when you need a different locked source set.
 
+## Steps in V2
+
+In V2, workspace and document context is selected through **Documents**; see the
+[document-source picker]({{ '/reference/chat-controls/#react-v2-document-source-picker' | relative_url }}).
+You can also change the lock itself, which classic users do from the lock icon.
+
+1. Open **Chat**, use **Documents** to choose what a message searches, and send a grounded message.
+   The conversation locks to the workspaces that produced the answer, and a padlock appears beside
+   the conversation title.
+2. Select the padlock, or open the conversation's **Details** and read **Workspace scope**. The
+   dialog lists the workspaces the conversation is locked to and says what the lock does.
+3. To widen the scope, choose **Unlock scope**. It is offered only while your administrator has not
+   enforced the lock. Open **Documents** afterwards and pick the workspace you meant.
+4. To keep the conversation to its workspaces again, select the padlock and choose **Lock scope**.
+   The dialog lists the workspaces it will lock to. Remove any source you added from another
+   workspace before you send, because the **Documents** picker lists only the locked workspaces.
+5. While the conversation is locked, the **Documents** picker starts with a note naming the locked
+   workspaces. **Manage** (or **Details**) opens the same dialog.
+
+In a shared conversation, anyone who can post in it can change the lock. In your own conversation,
+only you can.
+
+For the controls and what each one does, see
+[React V2 workspace scope lock]({{ '/reference/chat-controls/#react-v2-workspace-scope-lock' | relative_url }}).
+
 ## Verify it worked
 
-The conversation continues to show the locked scope, and conflicting workspace selections are prevented or require unlocking first.
+The conversation continues to show the locked scope, and conflicting workspace selections are prevented or require unlocking first. In V2 the padlock is closed and amber while the scope is locked, open when it is unlocked, and **Details** shows **Locked** or **Unlocked** beside the workspaces.
 
 ## Troubleshooting
 
@@ -69,6 +93,8 @@ The conversation continues to show the locked scope, and conflicting workspace s
 | --- | --- | --- |
 | You cannot unlock the scope | `enforce_workspace_scope_lock` is enabled | Start another conversation for a different source set. |
 | Scope choices are disabled | They conflict with the locked conversation scope | Use the lock modal or create a new chat. |
+| V2 shows a read-only dialog with no **Unlock scope** | The administrator enforces the lock, the conversation is someone else's, you cannot post in the shared conversation, or no workspace has been recorded yet | Read the reason in the dialog; start a new conversation if you need different sources. |
+| V2 refuses to send with "A selected workspace is no longer available" | You locked the conversation after choosing a source from a workspace outside the lock | Remove that source from the message box, or unlock the scope first. |
 
 ## Related
 

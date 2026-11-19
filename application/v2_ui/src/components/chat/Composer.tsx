@@ -75,6 +75,7 @@ import {
 } from '../../lib/composerDraft';
 import { composerAttachmentDrafts, composerAttachmentOwner, useComposerAttachmentDraft } from '../../lib/composerAttachmentDrafts';
 import { clearChatUploadLocalPreviews } from '../../lib/chatUploads';
+import { AGREEMENT_PENDING_MESSAGE } from '../../lib/userAgreement';
 import { ComposerEditor, type ComposerEditorActions } from './ComposerEditor';
 import {
     CONTEXT_HANDOFF_PARAMS,
@@ -317,7 +318,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const explicitImageReferences = (draft.imageReferences ?? []).filter((reference) =>
         draftImageReferences.some((item) => imageReferenceKey(item) === imageReferenceKey(reference)));
     const uploading = composerDraftHasPendingUploads(draft);
-    const uploadsBlocked = uploading || draft.uploads.some((upload) => upload.state === 'failed');
+    // A file waiting on the user agreement has no chip yet, so the editor says so; sending in that gap
+    // would leave the file behind.
+    const [agreementPending, setAgreementPending] = useState(false);
+    const uploadsBlocked = uploading || agreementPending || draft.uploads.some((upload) => upload.state === 'failed');
     const uploadConversationId = attachments.uploadConversationId;
     const previousAttachmentOwner = useRef(owner);
     const previewAccount = useRef(owner.accountId);
@@ -1780,7 +1784,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     };
 
     return (
-        <div className="chat-composer shrink-0 px-2 pb-2 md:px-4 md:pb-4">
+        <div className="chat-composer shrink-0 px-4 pb-2 md:pb-4">
             {largeRun && (
                 <LargeRunDialog
                     estimate={largeRun.estimate}
@@ -2000,6 +2004,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                             return true;
                         }}
                         onSubmit={() => submit()}
+                        onAgreementPendingChange={setAgreementPending}
                         onUploadComplete={(response, ownerConversationId) => {
                             if (useChatStore.getState().activeConversationId !== ownerConversationId
                                 || currentConversationEpoch() !== navigationEpoch) {
@@ -2394,6 +2399,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     onClick={() => submit()}
                                     data-tour="composer-send"
                                     disabled={(!text.trim() && !attachedPrompt && !hasMentionChips) || !canPost || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
+                                    title={agreementPending ? AGREEMENT_PENDING_MESSAGE : undefined}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'

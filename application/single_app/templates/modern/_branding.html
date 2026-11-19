@@ -1,0 +1,32 @@
+{# templates/modern/_branding.html #}
+{#
+    Branding shared by the modern standalone pages.
+
+    The logo rules are the classic ones from templates/index.html: a custom light logo, a
+    custom dark logo, and the shipped logos when nothing was uploaded. A light-only upload
+    also serves dark mode. Both images are written out and the stylesheet shows the one that
+    matches the theme; they load lazily, so the one that stays hidden is never downloaded.
+
+    Import with context so the macro can read app_settings.
+#}
+{% macro brand_logo(height=None, alt="") %}
+    {%- set branding = app_settings if app_settings is defined and app_settings else {} -%}
+    {%- if branding.show_logo -%}
+        {%- set has_light_upload = branding.custom_logo_base64 -%}
+        {%- set has_dark_upload = branding.custom_logo_dark_base64 -%}
+        {%- if has_light_upload -%}
+            {%- set light_logo_url = url_for("static", filename="images/custom_logo.png") ~ "?v=" ~ (branding.logo_version | default(1)) -%}
+        {%- else -%}
+            {%- set light_logo_url = url_for("static", filename="images/logo-lightmode.png") -%}
+        {%- endif -%}
+        {%- if has_dark_upload -%}
+            {%- set dark_logo_url = url_for("static", filename="images/custom_logo_dark.png") ~ "?v=" ~ (branding.logo_dark_version | default(1)) -%}
+        {%- elif has_light_upload -%}
+            {%- set dark_logo_url = light_logo_url -%}
+        {%- else -%}
+            {%- set dark_logo_url = url_for("static", filename="images/logo-darkmode.png") -%}
+        {%- endif -%}
+        <img class="ms-logo ms-logo-light" src="{{ light_logo_url }}" alt="{{ alt }}" loading="lazy"{% if height %} height="{{ height }}"{% endif %} />
+        <img class="ms-logo ms-logo-dark" src="{{ dark_logo_url }}" alt="{{ alt }}" loading="lazy"{% if height %} height="{{ height }}"{% endif %} />
+    {%- endif -%}
+{% endmacro %}

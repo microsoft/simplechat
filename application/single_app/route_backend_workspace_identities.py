@@ -23,6 +23,7 @@ from swagger_wrapper import get_auth_security, swagger_route
 
 
 WORKSPACE_IDENTITY_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+IDENTITY_IN_USE_MESSAGE = "This workspace identity is still used by one or more File Sync sources or actions"
 
 
 def register_route_backend_workspace_identities(bp):
@@ -92,6 +93,18 @@ def register_route_backend_workspace_identities(bp):
         identity = update_workspace_identity(scope_type, scope_id, identity_id, _payload(), user_id)
         return jsonify({"identity": sanitize_workspace_identity(identity)}), 200
 
+    class IdentityInUse(ValueError):
+        """A delete was refused because File Sync sources or actions still use the identity.
+
+        It is still a ValueError, so a route that maps it like any other keeps answering 400 with
+        the sentence. Only the global delete route answers the structured 409 below, because V2
+        Admin Settings reads that to name what still uses a global identity.
+        """
+
+        def __init__(self, references):
+            super().__init__(IDENTITY_IN_USE_MESSAGE)
+            self.references = references
+
     def _assert_not_referenced(scope_type, scope_id, identity_id):
         referenced_sources = []
         if scope_type != WORKSPACE_IDENTITY_SCOPE_GLOBAL:
@@ -101,7 +114,23 @@ def register_route_backend_workspace_identities(bp):
         reference_count = len(referenced_sources) + len(referenced_actions)
         if reference_count:
             log_workspace_identity_reference_block(scope_type, scope_id, identity_id, reference_count)
-            raise ValueError("This workspace identity is still used by one or more File Sync sources or actions")
+            raise IdentityInUse(
+                [
+                    {
+                        "kind": "file_source",
+                        "id": str(source.get("id") or source.get("source_id") or ""),
+                        "name": str(source.get("name") or source.get("display_name") or ""),
+                    }
+                    for source in referenced_sources
+                ] + [
+                    {
+                        "kind": "action",
+                        "id": str(action.get("id") or action.get("name") or ""),
+                        "name": str(action.get("displayName") or action.get("display_name") or action.get("name") or ""),
+                    }
+                    for action in referenced_actions
+                ]
+            )
 
     def _list_action_references(scope_type, scope_id, identity_id):
         # Local imports avoid a route/action import cycle during application startup.
@@ -168,6 +197,14 @@ def register_route_backend_workspace_identities(bp):
         try:
             admin_user_id, target_scope_id = _require_admin_target_context(WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL)
             return _delete(WORKSPACE_IDENTITY_SCOPE_GLOBAL, target_scope_id, identity_id, admin_user_id)
+        except IdentityInUse as error:
+            # A refusal is a conflict with what uses the identity, not a malformed request. This is
+            # the answer the strict personal, group and public routes give, with the same fields.
+            return jsonify({
+                "error": IDENTITY_IN_USE_MESSAGE,
+                "error_code": "identity_in_use",
+                "references": error.references,
+            }), 409
         except Exception as error:
             return _map_exception(error)
 

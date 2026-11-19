@@ -34,6 +34,7 @@ Version: 0.261.138
 """
 
 import json
+import re
 
 # Lane key matched by the client's activity lane table.
 ORCHESTRATION_LANE_KEY = 'orchestration'
@@ -342,10 +343,19 @@ def build_content_event(content):
     return serialize_sse({'content': content})
 
 
-def build_error_event(message, conversation_id=None):
+def build_error_event(message, conversation_id=None, *, code=None, stage=None, rule=None, attempt=None):
     payload = {'error': str(message or 'The request could not be completed.')}
     if conversation_id:
         payload['conversation_id'] = conversation_id
+    for key, value in (('code', code), ('error_stage', stage), ('error_rule', rule)):
+        if value is not None:
+            if not isinstance(value, str) or re.fullmatch(r'[a-z][a-z0-9_]{0,79}', value) is None:
+                raise ValueError('Invalid orchestration error classification.')
+            payload[key] = value
+    if attempt is not None:
+        if type(attempt) is not int or attempt < 1:
+            raise ValueError('Invalid orchestration planning attempt.')
+        payload['error_attempt'] = attempt
     return serialize_sse(payload)
 
 

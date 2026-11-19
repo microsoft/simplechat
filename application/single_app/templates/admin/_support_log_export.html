@@ -1,0 +1,87 @@
+<section class="card p-3 mb-3" id="support-log-export-section" aria-labelledby="support-log-export-heading" data-ignore-settings-change="true" data-support-exports="admin">
+    <h5 id="support-log-export-heading"><i class="bi bi-file-earmark-zip me-2" aria-hidden="true"></i>Support Log Export</h5>
+    <p class="text-muted">Collect retained diagnostics for a support case. Nothing is sent to the development team automatically. These actions run separately from Save Settings.</p>
+    <div class="alert alert-danger d-none" id="support-export-error" role="alert"></div>
+    <details class="mb-4">
+        <summary class="fw-semibold">Source and storage setup</summary>
+        <div class="row g-3 mt-1">
+            <div class="col-md-6"><label class="form-label" for="support-export-cloud">Azure cloud</label>
+                <select class="form-select" id="support-export-cloud"><option value="public">Azure Commercial</option><option value="usgovernment">Azure US Government</option></select></div>
+            <div class="col-12"><label class="form-label" for="support-export-app-resource">Application Insights resource ID</label><input class="form-control" id="support-export-app-resource" /></div>
+            <div class="col-12"><label class="form-label" for="support-export-site-resource">App Service resource ID (optional console source)</label><input class="form-control" id="support-export-site-resource" /></div>
+        </div>
+        <p class="small text-muted mt-2">Queries use Azure Monitor resource context. Give the application identity read access to these resources; the connected workspace must allow resource permissions. An ingestion connection string does not grant query access.</p>
+        <p class="small" id="support-export-storage-status" role="status">Checking private export storage...</p>
+        <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-outline-primary" id="support-export-save-config">Save export configuration</button>
+            <button type="button" class="btn btn-outline-primary" id="support-export-initialize">Initialize private export storage</button>
+            <button type="button" class="btn btn-outline-primary" id="support-export-test">Test source access</button>
+        </div>
+    </details>
+    <fieldset id="support-export-fields">
+        <legend class="h6">Choose diagnostic scope</legend>
+        <div class="form-check mb-3"><input class="form-check-input" type="checkbox" id="support-export-all" /><label class="form-check-label" for="support-export-all">All users (explicitly include deployment-wide activity)</label></div>
+        <div class="row g-3 mb-3" id="support-export-person-fields">
+            <div class="col-md-6"><label class="form-label" for="support-export-user-search">Find a SimpleChat user</label>
+                <div class="input-group"><input class="form-control" type="search" id="support-export-user-search" /><button class="btn btn-outline-secondary" type="button" id="support-export-search-users">Find users</button></div></div>
+            <div class="col-md-6"><label class="form-label" for="support-export-user">Selected user</label><select class="form-select" id="support-export-user"><option value="">Select a user</option></select></div>
+            <div class="col-12"><button class="btn btn-sm btn-outline-secondary d-none" type="button" id="support-export-more-users">Load more users</button></div>
+        </div>
+        <div class="mb-3"><label class="form-label" for="support-export-mode">Collection mode</label><select class="form-select" id="support-export-mode"><option value="time">Time-based</option><option value="conversations">Conversation windows</option></select></div>
+        <div class="d-none mb-3" id="support-export-margins">
+            <div class="row g-3">
+                <div class="col-sm-6"><label class="form-label" for="support-export-before">Minutes before</label><input class="form-control" type="number" min="0" max="1440" step="1" value="15" id="support-export-before" /></div>
+                <div class="col-sm-6"><label class="form-label" for="support-export-after">Minutes after</label><input class="form-control" type="number" min="0" max="1440" step="1" value="15" id="support-export-after" /></div>
+            </div>
+            <div class="form-check mt-2"><input class="form-check-input" type="checkbox" id="support-export-narrow" /><label class="form-check-label" for="support-export-narrow">Also narrow conversation windows to an explicit time range</label></div>
+        </div>
+        <div class="row g-3 mb-2" id="support-export-time-fields">
+            <div class="col-md-6"><label class="form-label" for="support-export-start">Start time</label><input class="form-control" type="datetime-local" id="support-export-start" /></div>
+            <div class="col-md-6"><label class="form-label" for="support-export-end">End time</label><input class="form-control" type="datetime-local" id="support-export-end" /></div>
+        </div>
+        <p class="small text-muted" id="support-export-timezone"></p>
+        <div class="mb-4 d-none" id="support-export-conversation-fields">
+            <label class="form-label" for="support-export-conversation-search">Find conversation ID</label>
+            <div class="input-group mb-2"><input class="form-control" type="search" id="support-export-conversation-search" /><button class="btn btn-outline-secondary" type="button" id="support-export-search-conversations">Find conversations</button></div>
+            <p class="small text-muted">Metadata only: messages and sensitive titles are not available without transcript consent. Select at most 20 conversations.</p>
+            <div id="support-export-conversations" class="overflow-auto mb-2" style="max-height: 16rem;" aria-label="Available conversations"></div>
+            <div id="support-export-selected" class="small text-break mb-2"></div>
+            <button class="btn btn-sm btn-outline-secondary d-none" type="button" id="support-export-more-conversations">Load more conversations</button>
+        </div>
+        <fieldset class="mb-4">
+            <legend class="h6">Log sources</legend>
+            <div id="support-export-sources"></div>
+            <p class="small text-muted">Explicitly deselect unavailable sources. Historical console output is not recoverable unless Azure already collected it.</p>
+            <div class="form-check"><input class="form-check-input" type="checkbox" id="support-export-context" /><label class="form-check-label" for="support-export-context">Include nearby unscoped system context (may include unrelated activity)</label></div>
+        </fieldset>
+        <fieldset class="mb-3">
+            <legend class="h6">Privacy and optional transcripts</legend>
+            <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="support-export-transcripts" disabled /><label class="form-check-label" for="support-export-transcripts">Request whole personal-conversation snapshots with explicit owner approval</label></div>
+            <p class="small text-muted">Transcripts are optional, not restricted to the diagnostic time window, and unavailable for shared/group conversations.</p>
+            <label class="form-label" for="support-export-privacy">Privacy checking</label>
+            <select class="form-select mb-2" id="support-export-privacy"><option value="deterministic">Deterministic credential and PII redaction</option><option value="ai">Deterministic plus AI privacy inspection</option></select>
+            <p class="small text-muted" id="support-export-model"></p>
+            <div class="alert alert-warning d-none" id="support-export-ai-notice">Only already-scrubbed data is sent to the configured default model. The complete inspection has a 200,000-input-token budget; oversized or incomplete checks block release.</div>
+            <label class="form-label" for="support-export-purpose">Support purpose</label>
+            <textarea class="form-control" id="support-export-purpose" maxlength="500" rows="2">Troubleshoot a SimpleChat issue.</textarea>
+        </fieldset>
+        <p class="small text-muted">Limits: 7 days, 20 conversations, 100,000 records, 50 MiB uncompressed. Download expires after 24 hours. No raw export or automatic sharing.</p>
+        <button type="button" class="btn btn-primary" id="support-export-review" disabled>Review export scope</button>
+    </fieldset>
+    <section class="border rounded p-3 mt-3 d-none" id="support-export-review-panel" aria-labelledby="support-export-review-heading">
+        <h6 id="support-export-review-heading" tabindex="-1">Review the exact collection scope</h6>
+        <div id="support-export-review-details" class="small text-break"></div>
+        <div class="form-check my-3"><input class="form-check-input" type="checkbox" id="support-export-review-ack" /><label class="form-check-label" for="support-export-review-ack">I reviewed the scope and understand privacy checking is best effort; sharing remains manual.</label></div>
+        <div class="d-flex flex-wrap gap-2"><button type="button" class="btn btn-primary" id="support-export-generate" disabled>Generate support ZIP</button><button type="button" class="btn btn-outline-secondary" id="support-export-edit">Edit scope</button></div>
+    </section>
+    <section class="mt-4 border-top pt-3" aria-labelledby="support-export-jobs-heading">
+        <h6 id="support-export-jobs-heading">Your support exports</h6>
+        <label class="form-label" for="support-export-job">Export request</label><select class="form-select mb-2" id="support-export-job"><option value="">No exports yet</option></select>
+        <button type="button" class="btn btn-sm btn-outline-secondary d-none mb-2" id="support-export-more-jobs">Load more exports</button>
+        <div id="support-export-job-status" role="status" aria-live="polite" class="mb-2"></div>
+        <div id="support-export-job-actions" class="d-flex flex-wrap gap-2"></div>
+        <pre class="bg-body-secondary border rounded p-3 mt-3 overflow-auto text-break d-none" style="max-height: 20rem; white-space: pre-wrap;" id="support-export-preview"></pre>
+        <div class="form-check mt-3 d-none" id="support-export-download-review"><input class="form-check-input" type="checkbox" id="support-export-download-ack" /><label class="form-check-label" for="support-export-download-ack">I reviewed the scrubbed preview and will check the ZIP for residual sensitive data before sharing.</label></div>
+        <button type="button" class="btn btn-primary mt-2 d-none" id="support-export-download" disabled>Download support ZIP</button>
+    </section>
+</section>

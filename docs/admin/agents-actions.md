@@ -144,6 +144,13 @@ first:
 - **Disable** (the power icon) keeps an agent's configuration but stops offering it. Disabling the
   default hands the default to another enabled agent, if there is one, and the
   confirmation names which.
+- **Duplicate** (the copy icon) opens the new-agent editor on an unsaved copy of the agent,
+  for a variant such as another persona over the same actions. The copy is named
+  `<name>_copy` (`_copy_2` and so on while that is taken) and titled "<display name> Copy", and
+  it starts disabled, so nobody is offered it until you enable it from the list. Stored
+  credentials, such as the agent's own model key, are never copied: enter new ones in the
+  editor before saving. Nothing is stored until you save. If you already have a new agent
+  started and unsaved, the list asks you to finish or discard it first.
 - **Delete** (the bin) removes an agent after you confirm. The default agent
   cannot be deleted; choose another default first.
 
@@ -402,6 +409,11 @@ As with Global Agents, each change saves straight away:
   connector catalogue the deployment provides, MCP presets and the global MCP
   preconfigurations, connection tests, and Key Vault credential handling. Saving
   returns you to this list.
+- **Duplicate** (the copy icon) opens the new-action editor on an unsaved copy, for the same
+  connector pointed at a second system. The copy is named `<name>_copy` (`_copy_2` and so on
+  while that is taken) and starts disabled. Its stored credentials, such as a key or a
+  connection string, are not copied, so enter new ones before saving; a connector that needs a
+  key cannot be saved until you do. Nothing is stored until you save.
 - **Disable** (the power icon) keeps an action's configuration without loading
   it, and **Delete** (the bin) removes it after you confirm. Deleting an action
   does not edit the agents that used it.

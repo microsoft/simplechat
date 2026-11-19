@@ -510,6 +510,17 @@ html[data-font-size='xl'] {
 }
 
 @layer utilities {
+    .chat-assistant-bubble:has(.chat-markdown-table) {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .chat-markdown-table :is(th, td) {
+        min-width: clamp(3.5rem, 8vw, 8rem);
+        overflow-wrap: anywhere;
+        white-space: normal;
+    }
+
     /*
      * The Admin Settings card and field rules below are shared with the V2 workflow editor
      * (SectionCard.tsx and WorkflowField.tsx), so a workflow card reads as the same object as an

@@ -118,6 +118,7 @@ export interface OrchestrationAttempt {
     generated_artifacts?: GeneratedArtifact[];
     export_catalog?: OrchestrationExportFormat[];
     deliverable_states?: OrchestrationDeliverableCheck[];
+    answer_qualified?: boolean;
 }
 
 function recordOf(value: unknown): Record<string, unknown> {
@@ -204,6 +205,7 @@ export function normalizeOrchestrationAttempt(value: unknown): OrchestrationAtte
         finalization_status: finalization === 'pending' || finalization === 'saved'
             || finalization === 'failed' || finalization === 'interrupted' ? finalization : undefined,
         message_saved: typeof data.message_saved === 'boolean' ? data.message_saved : undefined,
+        answer_qualified: data.answer_qualified === true,
         ...(outputs !== undefined ? { outputs } : {}),
         ...(Array.isArray(data.generated_artifacts) || Array.isArray(metadata.generated_artifacts)
             ? { generated_artifacts: readGeneratedArtifacts({ ...metadata, ...data }) } : {}),

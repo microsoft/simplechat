@@ -1,7 +1,7 @@
 # test_keyvault_plugin_secret_scope_enforcement.py
 """
 Functional test for Key Vault plugin secret scope enforcement.
-Version: 0.261.096
+Version: 0.261.435
 Implemented in: 0.241.011; 0.241.022; 0.250.121; 0.261.096
 
 This test ensures plugin Key Vault references are validated against the
@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import sys
+from unittest.mock import patch
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -165,6 +166,9 @@ def test_store_plugin_secret_reference_rejects_cross_scope_secret_names():
 def test_runtime_plugin_loader_blanks_secret_fields_on_scope_mismatch():
     """Verify the runtime loader refuses to resolve foreign plugin secret references."""
     print("🔍 Testing runtime plugin secret resolution hardening...")
+    # Standalone execution has no application import path; these contracts are bootstrap-free.
+    with patch.object(sys, "path", [os.path.join(ROOT_DIR, "application", "single_app"), *sys.path]):
+        from functions_action_manifest import copy_action_manifest, is_mcp_action
 
     namespace, _ = load_functions(
         SK_LOADER_FILE,
@@ -184,6 +188,8 @@ def test_runtime_plugin_loader_blanks_secret_fields_on_scope_mismatch():
             "log_event": lambda *args, **kwargs: None,
             "logging": logging,
             "debug_print": lambda *args, **kwargs: None,
+            "is_mcp_action": is_mcp_action,
+            "copy_action_manifest": copy_action_manifest,
         },
     )
 
@@ -227,6 +233,7 @@ def test_sql_secret_resolution_helper_binds_expected_scope_and_source():
             "validate_secret_name_dynamic": lambda value: True,
             "resolve_secret_reference_for_context": fake_resolver,
             "ACTION_ADDITIONAL_SECRET_SOURCES": {"action-addset"},
+            "WorkspaceAuthoringValidation": ValueError,
         },
     )
 
@@ -236,6 +243,7 @@ def test_sql_secret_resolution_helper_binds_expected_scope_and_source():
         "connection_string",
         scope_value="user-123",
         scope="user",
+        stored_value="user-123--action-addset--user--plugin-connection-string",
     )
 
     assert resolved_value == "resolved-secret"
@@ -243,6 +251,17 @@ def test_sql_secret_resolution_helper_binds_expected_scope_and_source():
     assert captured["scope"] == "user"
     assert captured["allowed_sources"] == {"action-addset"}
     assert captured["context_label"] == "SQL field 'connection_string'"
+    captured.clear()
+    try:
+        resolve_sql_secret(
+            "user-123--action-addset--user--another-action-password",
+            "password", scope_value="user-123", scope="user",
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("A same-scope reference still requires its original action field.")
+    assert not captured
 
     try:
         resolve_sql_secret("***REDACTED***", "password", scope_value="user-123", scope="user")

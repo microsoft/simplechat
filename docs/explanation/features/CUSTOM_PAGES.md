@@ -1,6 +1,6 @@
 # Custom Pages
 
-Current version: **0.250.106**
+Current version: **0.261.448**
 
 Implemented in version: **0.242.023**
 
@@ -36,6 +36,8 @@ Authenticated custom page navigation fix implemented in version: **0.242.040**
 
 Admin Settings Open action implemented in version: **0.250.106**
 
+V2 embed mode (`?embed=1`, `supports_embed`, the `/v2/custom/<slug>` host page) implemented in version: **0.261.448**
+
 ## Overview
 
 Custom Pages let app teams that deploy SimpleChat add trusted, deployment-time pages under the `/custom` namespace without changing the core application route code. The feature is controlled by the Admin Settings toggle `enable_custom_pages` and fails closed when disabled.
@@ -61,6 +63,8 @@ The host routes are:
 - `/api/admin/custom-pages` for Admin Settings metadata management
 
 Static pages are rendered through `custom_page_shell.html` after the host route applies `@login_required` and `@user_required`. Static HTML content is treated as trusted deployment-time app-team content and is not end-user supplied.
+
+The V2 interface shows a custom page by framing a chrome-less copy of it. `/custom/<slug>?embed=1` renders `custom_page_embed_shell.html` for a static page, or calls a Python extension that sets `supports_embed = True` with `context["embed"]` set. Only that response is framed, and only by the same origin. The classic routes and templates are unchanged. See [V2_CUSTOM_PAGES.md](V2_CUSTOM_PAGES.md) for the embed contract, the framing header, and the V2 host page.
 
 ## Configuration Options
 
@@ -132,9 +136,10 @@ The Python-backed example is discovered from code, so it should not be created i
 
 ## Testing and Validation
 
-Functional coverage was added in `functional_tests/test_custom_pages_wiring.py`. It validates version/configuration wiring, protected route registration, Admin Settings UI wiring, navigation integration, table Open action behavior, and the trusted HTML rendering boundary without requiring live Cosmos DB connectivity. UI contract coverage for the Admin Settings Open action lives in `ui_tests/test_admin_custom_pages_open_action.py`.
+Functional coverage was added in `functional_tests/test_custom_pages_wiring.py`. It validates version/configuration wiring, protected route registration, Admin Settings UI wiring, navigation integration, table Open action behavior, and the trusted HTML rendering boundary without requiring live Cosmos DB connectivity. UI contract coverage for the Admin Settings Open action lives in `ui_tests/test_admin_custom_pages_open_action.py`. Embed mode for the V2 interface is covered by `functional_tests/test_custom_pages_embed_mode.py` and `ui_tests/test_v2_custom_pages.py`.
 
 Known limitations:
 
 - The Admin Settings designer manages metadata only; app teams still deploy the referenced files as part of the application artifact.
 - Python-backed pages are trusted deployment-time extensions, not arbitrary runtime code uploaded by users.
+- A Python-backed page appears inside the V2 interface only when its extension sets `supports_embed = True`; otherwise V2 offers to open it in a new tab.

@@ -1,12 +1,14 @@
 # test_orchestration_failure_telemetry.py
 """Specific orchestration failure rules reach telemetry without private plan text.
 
-Version: 0.261.342
+Version: 0.261.444
 Implemented in: 0.261.140
 Step, capability, format, and authority-reason codes covered in: 0.261.141
 Partial-input producer capability and step hash fields covered in: 0.261.191
 Semantic chat outcomes and persisted-state correlation implemented in: 0.261.341
 Bounded, non-regex application-version validation implemented in: 0.261.342
+Two shared planning corrections covered in: 0.261.422
+Recovery guard detail through the Warning logger covered in: 0.261.444
 
 Uses real planner/validation/logging modules with offline provider replies.
 The synthetic invalid proposals test diagnostics, not the unknown historical
@@ -18,7 +20,9 @@ import hashlib
 import importlib
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from azure.cosmos._cosmos_responses import CosmosDict
@@ -76,7 +80,7 @@ def test_repair_and_terminal_failure_retain_safe_specific_rule(
     monkeypatch.setattr(telemetry, "get_appinsights_logger", lambda: logger)
     monkeypatch.setattr(telemetry, "_load_logging_settings", lambda: {"enable_debug_logging": debug})
     proposal = invalid_proposal(rule)
-    harness.replies = [json.dumps(proposal), json.dumps(proposal)]
+    harness.replies = [json.dumps(proposal)] * 3
     with caplog.at_level(logging.INFO, logger=logger.name):
         with pytest.raises(harness.planner.PlannerError) as failure:
             harness.planner.plan_request(
@@ -92,8 +96,8 @@ def test_repair_and_terminal_failure_retain_safe_specific_rule(
             "[ORCHESTRATION_PLANNER] The request could not be planned.",
         }
     ]
-    assert len(records) == len(harness.model_calls) == 2
-    assert [record.sc_attempt for record in records] == [1, 2]
+    assert len(records) == len(harness.model_calls) == 3
+    assert [record.sc_attempt for record in records] == [1, 2, 3]
     for record in records:
         assert record.sc_validation_rule == rule
         assert record.sc_validation_code == "deliverables_invalid"
@@ -209,6 +213,100 @@ def test_preparation_diagnostic_identifies_stage_and_confirmed_failure(harness, 
     assert details["response_type"] == "dict"
     assert failure.value.durable_status == "failed"
     assert "run_id" not in details and "user_id" not in details
+
+
+def test_recovery_guard_detail_survives_the_real_warning_logger_with_debug_off(
+    harness, monkeypatch, caplog,
+):
+    telemetry = importlib.import_module("functions_appinsights")
+    checkpoints = importlib.import_module("functions_orchestration_checkpoints")
+    from test_support.orchestration_results import ResultFixture
+
+    logger = logging.getLogger("test.orchestration.recovery_guard")
+    monkeypatch.setattr(telemetry, "_load_logging_settings", lambda: {"enable_debug_logging": False})
+    monkeypatch.setattr(telemetry, "get_appinsights_logger", lambda: logger)
+    monkeypatch.setattr(harness.execution, "log_event", telemetry.log_event)
+    task = ResultFixture().save()
+    step_id = task.producer.step_id
+    context = SimpleNamespace(
+        user_message="Review", memory_context={}, selected_document_ids=[],
+        plan_contract_version=2, task_results={step_id: task}, result_aliases={},
+        pending_results={}, execution_deadline_at="2030-01-01T00:00:00+00:00",
+        composition_profiles={},
+    )
+    changed_producer = replace(task.producer, run_id="run-2")
+    changed_task = replace(
+        task, producer=changed_producer,
+        outputs=tuple(replace(reference, producer=changed_producer) for reference in task.outputs),
+    )
+    state = checkpoints.context_state(context)
+    state["task_results"][step_id] = changed_task.to_dict()
+    with pytest.raises(checkpoints.CheckpointError) as caught:
+        checkpoints.restore_context(context, {"state": state})
+    error = caught.value
+    assert error.validation_rule == "task_result_producer_changed"
+    assert error.stage == "checkpoint_result_restore"
+    assert error.producer_capability_id == task.producer.capability_id
+    record = {
+        "id": "PRIVATE_RUN", "conversation_id": "PRIVATE_CONVERSATION",
+        "turn_id": "PRIVATE_TURN",
+    }
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        harness.execution._log_failure(
+            "Headless execution preparation failed.", record, error,
+            stage="execution_prepare",
+        )
+    event = next(
+        item for item in caplog.records
+        if getattr(item, "sc_message", None)
+        == "[ORCHESTRATION_RUNS] Headless execution preparation failed."
+    )
+    assert event.sc_validation_rule == "task_result_producer_changed"
+    assert event.sc_stage == "checkpoint_result_restore"
+    assert event.sc_producer_capability_id == task.producer.capability_id
+    assert event.sc_execution_code == "recovery_changed"
+    assert "PRIVATE_" not in json.dumps({
+        key: value for key, value in event.__dict__.items() if key.startswith("sc_")
+    })
+
+
+def test_delivery_without_plan_final_response_uses_closed_recovery_refusal(
+    harness, monkeypatch,
+):
+    from types import SimpleNamespace
+
+    harness.create()
+    record = harness.read()
+    record.update(
+        status="waiting",
+        started_at="2030-01-01T00:00:00+00:00",
+        execution_deadline_at="2030-01-01T00:05:00+00:00",
+        execution_binding="saved-execution-binding",
+        task_results={},
+        pending_results={},
+        final_response={"producer": {"capability_id": "PRIVATE_CAPABILITY"}},
+    )
+    record["plan"].pop("final_response", None)
+    execution = harness.execution.HarnessExecution(record, SimpleNamespace())
+    principal = SimpleNamespace(email="owner@example.test", bridge=None)
+    def initialize_resources(settings, services):
+        execution.services = services
+        return principal, {"user_roles": [], "user_email": principal.email}
+
+    monkeypatch.setattr(execution, "_initialize_delivery_resources", initialize_resources)
+    monkeypatch.setattr(execution, "_read_delivery_metadata", lambda: None)
+    monkeypatch.setattr(execution, "_revalidate_context", lambda: {})
+    monkeypatch.setattr(
+        execution, "_read_conversation",
+        lambda: {"user_id": "owner", "id": "conversation-1"},
+    )
+    monkeypatch.setattr(execution, "_bind_public_chat_scope", lambda *args: None)
+    with pytest.raises(harness.execution.HarnessExecutionError) as failure:
+        execution._initialize_delivery(harness.settings, harness.services())
+    assert failure.value.code == "recovery_changed"
+    assert failure.value.validation_rule == "final_response_reference_changed"
+    assert failure.value.stage == "final_response_binding"
+    assert failure.value.producer_capability_id is None
 
 
 @pytest.mark.parametrize("outcome", ["completed", "partial", "failed", "waiting", "cancelled"])

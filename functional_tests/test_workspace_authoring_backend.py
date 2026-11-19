@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.373
+Version: 0.261.435
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,
@@ -23,8 +23,11 @@ from pathlib import PureWindowsPath
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from azure.core import exceptions as azure_core_exceptions
 import pytest
 from flask import Blueprint, Flask, jsonify, request, session
+from functions_outbound_http import guard_login_credentials, guard_requests_session
+from functions_outbound_destinations import OutboundDestinationError
 
 from test_support.agent_delegation import (
     APP_ROOT,
@@ -203,6 +206,7 @@ def environment(monkeypatch):
         services.modules["config"].SECRET_KEY = "test-only-not-a-production-credential"
         services.appinsights.sanitize_log_message = lambda message: message
         services.appinsights.debug_print = Mock()
+        services.appinsights.is_debug_enabled = lambda: False
         for prefix in ("agent", "action"):
             for operation in ("creation", "update", "deletion"):
                 setattr(services.activity, f"log_{prefix}_{operation}", Mock())
@@ -246,7 +250,7 @@ def environment(monkeypatch):
         stack.enter_context(patch.dict(sys.modules, stubs))
         modules = [stubs["functions_simplechat_operations"], stubs["functions_azure_maps"]]
         for name in (
-            "functions_mcp_operations", "functions_snowflake_operations", "functions_yamcs_operations",
+            "functions_mcp_operations", "functions_mcp_tool_pinning", "functions_snowflake_operations", "functions_yamcs_operations",
             "functions_databricks_operations", "functions_tableau_operations", "functions_blob_storage_operations",
             "functions_chart_operations", "functions_msgraph_operations",
             "functions_azure_endpoint_validation", "functions_icon_utils",
@@ -270,6 +274,7 @@ def environment(monkeypatch):
         payload = _load_module(stack, "functions_agent_payload")
         health = _load_module(stack, "semantic_kernel_plugins.plugin_health_checker", r"semantic_kernel_plugins\plugin_health_checker.py")
         authoring = _load_module(stack, "functions_workspace_authoring")
+        pinning = _load_module(stack, "functions_mcp_tool_pinning")
         # Execute the actual settings sanitizer without application startup.
         settings_namespace = {
             "TABULAR_GENERATION_BACKEND_SETTING_KEYS": set(),
@@ -294,6 +299,7 @@ def environment(monkeypatch):
             "debug_print": Mock(), "check_user_access_status": Mock(return_value=(True, None)),
             "swagger_route": lambda **kwargs: lambda function: function, "get_auth_security": lambda: [],
             "personal_editor_response": authoring.personal_editor_response,
+            "project_shared_record": authoring.project_shared_record,
             "editor_error_response": authoring.editor_error_response,
             "ensure_editor_access": authoring.ensure_editor_access,
             "ensure_editor_options_access": authoring.ensure_editor_options_access,
@@ -302,6 +308,10 @@ def environment(monkeypatch):
             "clear_editor_test_secrets": authoring.clear_editor_test_secrets,
             "WorkspaceAuthoringValidation": authoring.WorkspaceAuthoringValidation,
             "validate_editor_action_manifest": authoring.validate_editor_action_manifest,
+            "validate_action_connection_update": authoring.validate_action_connection_update,
+            "guard_login_credentials": guard_login_credentials,
+            "guard_requests_session": guard_requests_session,
+            "OutboundDestinationError": OutboundDestinationError,
             "sanitize_agent_payload": payload.sanitize_agent_payload,
             "is_azure_ai_foundry_agent": payload.is_azure_ai_foundry_agent,
             "AgentPayloadError": payload.AgentPayloadError,
@@ -310,6 +320,7 @@ def environment(monkeypatch):
             "validate_agent": schema.validate_agent, "validate_plugin": schema.validate_plugin,
             "PLUGIN_STORAGE_MANAGED_FIELDS": schema.PLUGIN_STORAGE_MANAGED_FIELDS,
             "PluginHealthChecker": health.PluginHealthChecker,
+            "validate_mcp_tool_pinning_for_save": pinning.validate_mcp_tool_pinning_for_save,
             "validate_agent_delegation_bindings": delegation.validate_agent_delegation_bindings,
             "ensure_governance_access": services.governance.ensure_governance_access,
             "ensure_action_type_access": services.governance.ensure_action_type_access,
@@ -374,6 +385,7 @@ def environment(monkeypatch):
             "_resolve_action_identity_context", "_resolve_plugin_secret_context",
             "_action_test_origin", "_action_origin_secret_context", "_handle_mcp_configuration_error",
             "_prepare_action_test_manifest",
+            "_authorize_action_test_scope", "_resolve_group_for_test", "_validate_flat_http_action_test",
             "_flatten_editor_test_fields", "_prepare_editor_sql_test_data", "_prepare_editor_yamcs_test_data",
             "_is_personal_editor_test_request", "_assert_personal_editor_test_access",
             "_hydrate_sql_test_identity", "_load_existing_plugin_for_sql_test", "_resolve_secret_value_for_sql_test",
@@ -463,6 +475,8 @@ def configured_action_payload(environment, kind):
         fields["workspaceId"] = "test-workspace"
     elif kind == "mcp":
         fields.update({"transport": "streamable_http", "auth_method": "none"})
+        pinning = importlib.import_module("functions_mcp_tool_pinning")
+        fields[pinning.MCP_TOOL_FINGERPRINTS_FIELD] = pinning.build_mcp_tool_fingerprints([], [])
     elif kind == "embedding_model":
         record.update({"api_version": "2024-06-01", "deployment": "test-embedding"})
     elif kind in {"chart", "simplechat", "msgraph"}:
@@ -1046,7 +1060,14 @@ def test_changed_assigned_knowledge_uses_real_personal_scope_policy(environment)
             sort_documents=lambda values, *args, **kwargs: values,
         )
         sources = {
+            "azure.core.exceptions": azure_core_exceptions,
             "functions_documents": documents,
+            "functions_document_access_index": module_stub(
+                "functions_document_access_index", DOCUMENT_ACCESS_SOURCE_BATCH_SIZE=100,
+                query_document_access_index_ids=Mock(side_effect=AssertionError(
+                    "Explicit assigned-document validation must use get_document_record, not a catalog query.",
+                )),
+            ),
             "functions_group": module_stub(
                 "functions_group", find_group_by_id=Mock(return_value={"id": "group"}),
                 get_user_role_in_group=Mock(return_value=None),
@@ -1104,6 +1125,12 @@ def test_legacy_stored_placeholders_resolve_only_the_owned_existing_secret(envir
     assert patch_record(env, route_kind, stale, {"description": "Stale"}).status_code == 409
     assert env.services.secret_reads == []
     updated = patch_record(env, route_kind, resource, {"description": "Edited"})
+    if kind == "agents":
+        assert updated.status_code == 400
+        assert "credentials need updating" in updated.get_json()["error"]
+        assert env.services.secret_reads == []
+        assert env.services.vault[expected_reference] == "owned-legacy-credential"
+        return
     assert updated.status_code == 200, updated.get_json()
     current = env.services.records[kind, "personal"]["actor", stored["id"]]
     value = current[path[0]] if len(path) == 1 else current[path[0]][path[1]]
@@ -1470,6 +1497,7 @@ def test_sql_editor_driver_failures_do_not_echo_resolved_credentials(environment
 
 def test_new_yamcs_identity_testing_does_not_expand_group_or_admin_behavior(environment):
     env = environment
+    env.namespace["require_active_group"] = Mock(side_effect=PermissionError("No group editing grant"))
     for scope in ("group", "global"):
         response = env.client.post("/api/plugins/test-yamcs-connection", json={
             "identity_id": "another-scope-identity",
@@ -1477,7 +1505,7 @@ def test_new_yamcs_identity_testing_does_not_expand_group_or_admin_behavior(envi
             "additionalFields": {"instance": "demo"},
             "server_url": "https://yamcs.example.test", "instance": "demo", "action_scope": scope,
         })
-        assert response.status_code == 400
+        assert response.status_code == 403
     env.identities.hydrate_action_identity_reference.assert_not_called()
 
 

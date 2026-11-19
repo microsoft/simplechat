@@ -102,7 +102,9 @@ The same change brought the two administrator-configured navigation groups into 
 V2 rail, since neither had any representation there:
 
 - **Custom Pages** — trusted pages deployed under `custom_pages`, already filtered
-  per page against the caller's roles by `get_custom_pages_nav`.
+  per page against the caller's roles by `get_custom_pages_nav`. A page V2 can show in its
+  own shell opens at `/v2/custom/<slug>` with the rail still on screen; see
+  [V2_CUSTOM_PAGES.md](V2_CUSTOM_PAGES.md).
 - **External Links** — administrator-approved links, shown only to callers holding
   the `Admin` or `User` role, matching the gate in `_sidebar_nav.html`.
 
@@ -113,7 +115,9 @@ can force the menu at any count.
 
 External links always open in a new tab with `rel="noopener noreferrer"`; they leave
 the application, and losing an in-progress conversation to a policy link would be a
-poor trade. Custom pages honour their own `open_in_new_tab` metadata.
+poor trade. Custom pages honour their own `open_in_new_tab` metadata. A same-tab custom
+page that the server marks embeddable is a router link that opens the page inside V2
+rather than leaving it, and every other custom page keeps its link to the classic page.
 
 A link whose URL is not a local path or an `http`/`https` address is dropped before
 it reaches the browser. Only the V2 settings PATCH applies that rule on write — the
@@ -156,9 +160,12 @@ Custom Pages and External Links are configured under **Appearance > Pages & Link
 
 ## Known limitations
 
-- The access-denied and signed-out branches of the classic home page have no V2
-  equivalent. They cannot be reached: `/v2` is behind `login_required` and
-  `user_required`, so a caller who would see either never reaches the SPA.
+- The access-denied and signed-out branches of the classic home page have no V2 page. They
+  cannot live in the SPA: `/v2` is behind `login_required` and `user_required`, so a caller who
+  would see either never reaches it. Their modern counterpart is a server-rendered standalone
+  page, `templates/modern/landing.html`, described in
+  [V2_MODERN_STANDALONE_PAGES.md](V2_MODERN_STANDALONE_PAGES.md). It is inactive until the
+  interface selector exists.
 - When **Show Logo** is on but no custom logo has been uploaded, the classic home
   page falls back to the bundled artwork. V2 shows no logo there and relies on the
   application title instead. See `docs/explanation/fixes/V2_APPEARANCE_PARITY_FIX.md`.

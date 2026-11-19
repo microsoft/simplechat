@@ -19,6 +19,8 @@ from app_settings_store import (
     SettingsConflictError,
     SettingsUnavailableError,
 )
+from model_catalog_runtime import configure_catalog_provider
+from model_catalog_updates import CatalogUpdates
 from config import *
 from content_screening.contracts import (
     ScreeningCitationsRequiredError,
@@ -59,6 +61,10 @@ from functions_group_assignment_ids import (
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
 from functions_model_capabilities import ModelTokenBudgetError, normalize_model_budget_overrides
+from functions_orchestration_timing import (
+    DEFAULT_STEP_TIMEOUT_SECONDS,
+    DEFAULT_TOTAL_TIMEOUT_SECONDS,
+)
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -146,6 +152,7 @@ WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT = (
     "message may be sent."
 )
 USER_UI_SETTINGS_KEYS = (
+    "preferredUiMode",
     "profileImage",
     "navLayout",
     "darkModeEnabled",
@@ -1415,6 +1422,25 @@ def configure_application_cache(settings, redis_cache_endpoint=None, *, redis_cl
         )
 
 
+def configure_model_catalog_runtime():
+    """Called by web and scheduler owners after their shared cache is initialized."""
+    configure_catalog_provider(get_model_catalog_update_service().snapshot)
+
+
+_catalog_update_service = None
+
+
+def get_model_catalog_update_service():
+    """Construct the storage owner only after configuration has supplied its dependencies."""
+    global _catalog_update_service
+    store = _get_app_settings_store()
+    if _catalog_update_service is None or _catalog_update_service.store is not store:
+        _catalog_update_service = CatalogUpdates(
+            cosmos_settings_container, store, VERSION, log_event,
+        )
+    return _catalog_update_service
+
+
 def _env_flag_enabled(name):
     return str(os.environ.get(name, '')).strip().lower() in {'1', 'true', 'yes', 'on'}
 
@@ -1553,6 +1579,7 @@ def normalize_image_connection_api_version_settings(settings):
 
 def get_settings(use_cosmos=False, include_source=False):
     default_settings = {
+        'enable_model_catalog_online_updates': False,
         # External health check
         'enable_external_healthcheck': False,
         'enable_no_auth_external_healthcheck': False,
@@ -1644,8 +1671,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'chat_orchestration_enabled_capabilities': [],
         'chat_orchestration_max_steps': 8,
         'chat_orchestration_max_replans': 2,
-        'chat_orchestration_step_timeout_seconds': 180,
-        'chat_orchestration_total_timeout_seconds': 900,
+        'chat_orchestration_step_timeout_seconds': DEFAULT_STEP_TIMEOUT_SECONDS,
+        'chat_orchestration_total_timeout_seconds': DEFAULT_TOTAL_TIMEOUT_SECONDS,
         'chat_orchestration_ledger_max_bytes': 16384,
         'chat_orchestration_ledger_max_runs': 10,
         # Lets a chat plan propose a personal workflow that the user approves on a card before
@@ -1784,7 +1811,14 @@ def get_settings(use_cosmos=False, include_source=False):
         'ai_notice_message': '',
         'ai_notice_frequency': 'non_dismissible',
         'enable_dark_mode_default': False,
+        # V2 color customization. None keeps the SimpleChat default palette.
+        'v2_color_scheme': None,
+        'allow_user_custom_color_modes': True,
+        'allow_user_theme_cards': True,
+        'require_readable_custom_colors': True,
         'enable_left_nav_default': True,
+        'ui_mode_policy': 'both',
+        'ui_default_mode': 'modern',
         'release_notifications_registered': False,
         'release_notifications_name': '',
         'release_notifications_email': '',
@@ -4157,7 +4191,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
         if 'plugins' not in doc['settings'] or doc['settings']['plugins'] is None:
             doc['settings']['plugins'] = []
         if 'selected_agent' not in doc['settings'] or doc['settings']['selected_agent'] is None:
-            first_user_agent = doc['settings']['agents'][0]
+            first_user_agent = doc['settings']['agents'][0] if doc['settings']['agents'] else None
             if first_user_agent:
                 doc['settings']['selected_agent'] = {
                     'id': first_user_agent.get('id'),

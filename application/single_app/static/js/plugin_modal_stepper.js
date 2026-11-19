@@ -2,6 +2,8 @@
 // Multi-step modal functionality for action/plugin creation
 import { showToast } from "./chat/chat-toast.js";
 import { getTypeIcon, getMcpRetirementStatus, isMcpActionType } from "./workspace/view-utils.js";
+import { SharedCredentialEditor, isStoredCredentialValue } from "./shared-credential-editor.js";
+import { BitbucketActionEditor } from "./bitbucket-action-editor.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact).
 // control_center is created in the V2 admin action editor, the one surface that configures it.
@@ -1020,6 +1022,7 @@ export class PluginModalStepper {
 
     // Store original plugin state for change tracking
     this.originalPlugin = plugin ? JSON.parse(JSON.stringify(plugin)) : null;
+    this.sharedCredentials = new SharedCredentialEditor(plugin);
     const retirementStatus = getMcpRetirementStatus(plugin);
     const retirementNotice = document.getElementById('mcp-retirement-notice');
     if (retirementNotice) {
@@ -1063,6 +1066,8 @@ export class PluginModalStepper {
       this.clearForm();
       this.populateActionTypeCards();
     }
+
+    this.sharedCredentials.render(document.querySelector('#plugin-modal .modal-body'));
 
     // Show the modal
     const modal = new bootstrap.Modal(document.getElementById('plugin-modal'));
@@ -4092,6 +4097,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
+    if (type === 'bitbucket') return true;
     return this.isSqlType(type) || this.isCosmosType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type) || this.isLogAnalyticsType(type) || this.isAgentType(type);
   }
 
@@ -4099,6 +4105,7 @@ export class PluginModalStepper {
     const sections = {
       openapi: document.getElementById('openapi-config-section'),
       generic: document.getElementById('generic-config-section'),
+      bitbucket: document.getElementById('bitbucket-config-section'),
       sql: document.getElementById('sql-config-section'),
       cosmos: document.getElementById('cosmos-config-section'),
       rocksdb: document.getElementById('rocksdb-config-section'),
@@ -4126,7 +4133,15 @@ export class PluginModalStepper {
       });
     };
 
-    if (this.isOpenApiType()) {
+    if (this.selectedType === 'bitbucket') {
+      showOnly('bitbucket');
+      if (!this.bitbucketEditor) {
+        this.bitbucketEditor = new BitbucketActionEditor(this);
+        this.bitbucketEditor.populate(this.originalPlugin?.type === 'bitbucket' ? this.originalPlugin : {});
+      }
+      this.loadActionIdentities().then(() => this.bitbucketEditor.refresh()).catch(() => this.showError('Unable to load Bitbucket identities.'));
+      this.bitbucketEditor.refresh();
+    } else if (this.isOpenApiType()) {
       showOnly('openapi');
     } else if (this.isSqlType()) {
       showOnly('sql');
@@ -5871,7 +5886,7 @@ export class PluginModalStepper {
       auth.type = 'key';
       const username = document.getElementById('plugin-auth-basic-username')?.value.trim() || '';
       const password = document.getElementById('plugin-auth-basic-password')?.value.trim() || '';
-      auth.key = `${username}:${password}`;
+      auth.key = this.sharedCredentials?.basicAuth(username, password) ?? `${username}:${password}`;
       additionalFields.auth_method = 'basic';
     } else if (authType === 'oauth2') {
       auth.type = 'key';
@@ -6758,6 +6773,10 @@ export class PluginModalStepper {
   }
 
   populateFormFromPlugin(plugin) {
+    if (plugin.type === 'bitbucket') {
+      this.bitbucketEditor ||= new BitbucketActionEditor(this);
+      this.bitbucketEditor.populate(plugin);
+    }
     // Step 2 fields
     document.getElementById('plugin-name').value = plugin.name || '';
     document.getElementById('plugin-display-name').value = plugin.displayName || plugin.display_name || '';
@@ -6834,7 +6853,8 @@ export class PluginModalStepper {
         } else if (authMethod === 'basic') {
           authType = 'basic';
           // Split the combined username:password format
-          const credentials = auth.key ? auth.key.split(':') : ['', ''];
+          const credentials = this.sharedCredentials?.has('/auth/key') && isStoredCredentialValue(auth.key)
+              ? [auth.key, auth.key] : (auth.key ? auth.key.split(':') : ['', '']);
           document.getElementById('plugin-auth-basic-username').value = credentials[0] || '';
           document.getElementById('plugin-auth-basic-password').value = credentials[1] || '';
         } else if (authMethod === 'oauth2') {
@@ -7401,6 +7421,9 @@ export class PluginModalStepper {
     if (identityId) {
       formData.identity_id = identityId;
     }
+    if (this.selectedType === 'bitbucket') {
+      Object.assign(formData, this.bitbucketEditor.collect());
+    }
     if (isYamcsVisible) {
         // Empty references are intentional clears, not requests to preserve old secrets.
         formData.identity_id = identityId || '';
@@ -7410,7 +7433,7 @@ export class PluginModalStepper {
         formData.id = this.originalPlugin.id;
     }
 
-    return formData;
+    return this.sharedCredentials?.apply(formData) || formData;
   }
 
   generateActionName(displayName) {
@@ -7584,6 +7607,7 @@ export class PluginModalStepper {
   }
 
   getEndpointValue() {
+    if (this.selectedType === 'bitbucket') return this.bitbucketEditor.value('endpoint').value.trim();
     // Check different endpoint fields based on plugin type
     const isOpenApiType = this.isOpenApiType();
     const isSqlType = this.isSqlType();
@@ -7642,6 +7666,7 @@ export class PluginModalStepper {
   }
 
   getAuthTypeValue() {
+    if (this.selectedType === 'bitbucket') return this.bitbucketEditor.value('method').value;
     // Check different auth fields based on plugin type
     const isOpenApiType = this.isOpenApiType();
     const isSqlType = this.isSqlType();
@@ -8722,6 +8747,7 @@ export class PluginModalStepper {
       }
     };
     safeSetValue('yamcs-service-credential-source', 'shared');
+    this.bitbucketEditor?.populate();
     safeSetValue('yamcs-proxy-credential-source', 'shared');
     this.populateYamcsForm({ endpoint: '', auth: { type: 'username_password' }, additionalFields: {} });
 

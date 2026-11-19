@@ -1,5 +1,5 @@
 // chat-analysis-results.js
-// Saved Analyze findings supplement the answer; only an authorized complete-record page is read.
+// Saved Analyze findings live in Sources; only an authorized complete-record page is read.
 
 const pageSize = 25;
 const validationNotices = {
@@ -94,6 +94,56 @@ export function readSavedAnalyses(metadata) {
         }
     }
     return results;
+}
+
+function savedAnalysisLimitation(descriptors, unavailable) {
+    if (unavailable || descriptors.some(descriptor => !descriptor || descriptor.available === false)) {
+        return 'Saved analysis unavailable';
+    }
+    const labels = {
+        invalid: 'Analysis validation failed',
+        partial: 'Partial analysis',
+        pending: 'Analysis validation pending',
+        not_validated: 'Analysis not validated',
+    };
+    for (const status of Object.keys(labels)) {
+        if (descriptors.some(descriptor => descriptor?.validation_status === status)) {
+            return labels[status];
+        }
+    }
+    return null;
+}
+
+function renderAnalysisWarning(message) {
+    const label = savedAnalysisLimitation(message._savedAnalysisDescriptors,
+        message.dataset.savedAnalysisUnavailable === 'true');
+    let warning = message._savedAnalysisWarning;
+    if (!label) {
+        warning?.remove();
+        message._savedAnalysisWarning = null;
+        return;
+    }
+    if (!warning) {
+        warning = node('div', 'saved-analysis-warning mt-2');
+        warning.setAttribute('role', 'status');
+        const button = node('button', 'btn btn-sm alert alert-warning py-1 px-2 mb-0 text-start');
+        button.type = 'button';
+        button.addEventListener('click', () => {
+            const toggle = message._savedAnalysisSources.parentElement.querySelector(
+                ':scope > .message-footer .citation-toggle-btn',
+            );
+            if (toggle?.getAttribute('aria-expanded') !== 'true') {
+                toggle?.click();
+            }
+        });
+        warning.append(button);
+        message._savedAnalysisSources.parentElement.querySelector(':scope > .message-text')?.after(warning);
+        message._savedAnalysisWarning = warning;
+    }
+    const button = warning.querySelector('button');
+    button.textContent = `${label}. View sources`;
+    button.setAttribute('aria-controls', message._savedAnalysisSources.id);
+    warning.classList.toggle('d-none', message.dataset.savedAnalysisMasked === 'true');
 }
 
 export function syncSavedAnalysisConversation(conversationId = activeConversationId()) {
@@ -304,8 +354,9 @@ export function disposeSavedAnalysisViews() {
 
 function hideUnavailableActions(message) {
     message.dataset.savedAnalysisUnavailable = 'true';
-    message.querySelectorAll('.saved-analysis-downloads, .generated-tabular-outputs-container, .assistant-inline-export-actions, .message-footer')
+    message.querySelectorAll('.saved-analysis-downloads, .generated-tabular-outputs-container, .assistant-inline-export-actions, .message-footer .message-actions')
         .forEach(element => element.classList.add('d-none'));
+    renderAnalysisWarning(message);
 }
 
 export function hydrateSavedAnalysisResult(message, fullMessage) {
@@ -315,18 +366,32 @@ export function hydrateSavedAnalysisResult(message, fullMessage) {
     }
     message.dataset.savedAnalysis = 'true';
     message._savedAnalysisDescriptors = descriptors;
-    let anchor = message.querySelector('.message-text');
+    const sources = message.querySelector(':scope > .message-content > .message-bubble > .message-sources');
+    message._savedAnalysisSources = sources;
     for (const descriptor of descriptors) {
-        anchor = hydrateAnalysisResult(message, descriptor, anchor);
+        hydrateAnalysisResult(message, descriptor, sources);
     }
+    renderAnalysisWarning(message);
+    message.addEventListener('chat:sources-toggled', event => {
+        if (!event.detail.open) {
+            views.forEach(view => {
+                if (message.contains(view.root)) {
+                    view.dispose();
+                }
+            });
+            sources.querySelectorAll('.saved-analysis-result details[open]').forEach(details => {
+                details.open = false;
+            });
+        }
+    });
 }
 
-function hydrateAnalysisResult(message, descriptor, anchor) {
-    const root = node('section', 'saved-analysis-result border rounded p-3 mt-3');
+function hydrateAnalysisResult(message, descriptor, sources) {
+    const root = node('section', 'saved-analysis-result border-top pt-3 mt-3');
     root.setAttribute('aria-label', descriptor?.label ? `Saved analysis: ${descriptor.label}` : 'Saved analysis');
     const heading = node('h3', 'h6 mb-1 text-break', descriptor?.label || 'Saved analysis');
     root.append(heading);
-    anchor?.after(root);
+    sources.append(root);
     const controllers = new Set();
     const view = { root, dispose: () => {
         controllers.forEach(controller => controller.abort());
@@ -380,7 +445,7 @@ function hydrateAnalysisResult(message, descriptor, anchor) {
         }
     };
     const status = node('p', 'small text-muted mb-1',
-        `0 of ${descriptor.record_count} records displayed · ${descriptor.source_count} sources in the saved analysis.`);
+        `${descriptor.record_count} saved findings · ${descriptor.source_count} sources.`);
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
     const validationNotice = status => descriptor.semantics?.mode === 'source_observations'
@@ -544,7 +609,7 @@ function hydrateAnalysisResult(message, descriptor, anchor) {
         } else {
             view.dispose();
             content.replaceChildren();
-            status.textContent = `0 of ${descriptor.record_count} records displayed · ${descriptor.source_count} sources in the saved analysis.`;
+            status.textContent = `${descriptor.record_count} saved findings · ${descriptor.source_count} sources.`;
         }
     });
     retry.addEventListener('click', () => void loadPage());
@@ -582,6 +647,7 @@ export function setSavedAnalysisMasked(message, metadata) {
         element.classList.toggle('d-none', masked || (element.classList.contains('saved-analysis-downloads') &&
             message.dataset.savedAnalysisUnavailable === 'true'));
     });
+    message._savedAnalysisWarning?.classList.toggle('d-none', masked);
     if (masked && message._savedAnalysisDescriptors.some(descriptor => sameAnalysis(selectedContext, descriptor))) {
         clearSavedAnalysisContext();
     }
