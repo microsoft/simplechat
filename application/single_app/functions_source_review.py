@@ -12,7 +12,6 @@ import logging
 import os
 import re
 import socket
-import threading
 import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -35,11 +34,6 @@ URL_ACCESS_APP_ROLE = "UrlAccessUser"
 URL_ACCESS_CONTEXT_CHAT = "chat"
 URL_ACCESS_CONTEXT_WORKFLOW = "workflow"
 _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE: Optional[Dict[str, Any]] = None
-# The launch check starts a browser driver, and a driver that never answers gives no error
-# to catch. It runs on its own thread so a caller waits this long at most.
-SOURCE_REVIEW_RUNTIME_PROBE_SECONDS = 15
-_SOURCE_REVIEW_RUNTIME_PROBE_LOCK = threading.Lock()
-_SOURCE_REVIEW_RUNTIME_PROBE: Optional[Tuple[threading.Thread, float]] = None
 _SOURCE_REVIEW_RENDER_SEMAPHORE: Optional[asyncio.Semaphore] = None
 SOURCE_REVIEW_DEFAULTS = {
     "enable_url_access": False,
@@ -589,45 +583,16 @@ def get_source_review_runtime_capabilities(force_refresh: bool = False) -> Dict[
         return dict(capabilities)
 
     capabilities["playwright_available"] = True
-    global _SOURCE_REVIEW_RUNTIME_PROBE
-    with _SOURCE_REVIEW_RUNTIME_PROBE_LOCK:
-        probe = _SOURCE_REVIEW_RUNTIME_PROBE
-        if probe is None or not probe[0].is_alive():
-            thread = threading.Thread(
-                target=_run_source_review_runtime_probe,
-                args=(dict(capabilities),),
-                name="source-review-runtime-probe",
-                daemon=True,
-            )
-            probe = _SOURCE_REVIEW_RUNTIME_PROBE = (thread, time.monotonic())
-            thread.start()
-    thread, started = probe
-    remaining = SOURCE_REVIEW_RUNTIME_PROBE_SECONDS - (time.monotonic() - started)
-    if remaining > 0:
-        thread.join(remaining)
-    if not thread.is_alive() and _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE is not None:
-        return dict(_SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE)
-
-    # Still running: answer now and leave the result uncached, so a check that finishes
-    # later is what the next caller reads. No second check starts while this one is alive.
-    if remaining > 0:
-        log_event(
-            "[SOURCE_REVIEW] Chromium launch check did not finish in time.",
-            extra={"waited_seconds": SOURCE_REVIEW_RUNTIME_PROBE_SECONDS},
-            level=logging.WARNING,
-        )
-    capabilities["message"] = (
-        "Playwright is installed, but the Chromium launch check did not finish within "
-        f"{SOURCE_REVIEW_RUNTIME_PROBE_SECONDS} seconds, so JavaScript rendering is unavailable."
-    )
-    return capabilities
-
-
-def _run_source_review_runtime_probe(capabilities: Dict[str, Any]) -> None:
-    """Launch Chromium once and record the outcome for every later caller."""
-    global _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE
     try:
-        _launch_chromium_for_runtime_probe()
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright_instance:
+            browser = playwright_instance.chromium.launch(
+                headless=True,
+                args=_get_chromium_launch_args(),
+                timeout=5000,
+            )
+            browser.close()
         capabilities.update({
             "js_rendering_available": True,
             "chromium_launch_available": True,
@@ -635,19 +600,9 @@ def _run_source_review_runtime_probe(capabilities: Dict[str, Any]) -> None:
         })
     except Exception as runtime_error:
         capabilities["message"] = f"Playwright is installed, but Chromium launch failed: {str(runtime_error)[:220]}"
+
     _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE = capabilities
-
-
-def _launch_chromium_for_runtime_probe() -> None:
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as playwright_instance:
-        browser = playwright_instance.chromium.launch(
-            headless=True,
-            args=_get_chromium_launch_args(),
-            timeout=5000,
-        )
-        browser.close()
+    return dict(capabilities)
 
 
 def _get_chromium_launch_args() -> List[str]:
@@ -3351,12 +3306,6 @@ async def _try_rendered_page_fetch(
         from playwright.async_api import async_playwright
     except ImportError:
         return _skipped_page(url, "js_rendering_dependency_unavailable", depth=depth, parent_url=parent_url)
-
-    # A saved setting can be on in a runtime that cannot launch a browser. The check is
-    # bounded and cached; starting the driver here is not, so ask it first.
-    runtime = await asyncio.to_thread(get_source_review_runtime_capabilities)
-    if not runtime.get("js_rendering_available"):
-        return _skipped_page(url, "js_rendering_runtime_unavailable", depth=depth, parent_url=parent_url)
 
     start_time = time.time()
     render_semaphore = _get_source_review_render_semaphore()
