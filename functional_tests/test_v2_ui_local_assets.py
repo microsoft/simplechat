@@ -2,7 +2,7 @@
 """
 Functional test for V2 UI local browser asset compliance.
 
-Version: 0.261.456
+Version: 0.261.458
 Implemented in: 0.261.003
 
 This test ensures the compiled V2 bundle loads no browser runtime code from the public

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for documentation site quality and URL contracts.
-Version: 0.261.456
+Version: 0.261.458
 Implemented in: 0.250.230
 
 This test protects the documentation site redesign from regressing:

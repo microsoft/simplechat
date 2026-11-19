@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Test to verify table markdown processing and identify AI response format issues.
-Version: 0.261.456
+Version: 0.261.458
 Implemented in: 0.229.003
 
 This test investigates how different markdown formats are processed and

@@ -1,8 +1,8 @@
 # test_browser_assets.py
 """Regression tests for local runtime assets and allowed network boundaries.
 
-Version: 0.261.456
-Implemented in: 0.261.456
+Version: 0.261.458
+Implemented in: 0.261.458
 """
 
 import hashlib

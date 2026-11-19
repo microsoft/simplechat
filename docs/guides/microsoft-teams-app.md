@@ -202,7 +202,7 @@ Set `teamsFrameAncestors`, `customTeamsOrigins`, and `teamsAppResource` explicit
 
 SimpleChat vendors the Teams JavaScript SDK under `application/single_app/static/js/MicrosoftTeams.min.js` so disconnected and sovereign environments do not load browser runtime JavaScript from a public CDN.
 
-Since version **0.261.456**, the SDK's trusted-domain metadata is local too:
+Since version **0.261.458**, the SDK's trusted-domain metadata is local too:
 `/static/js/teams-2.19.0/validDomains.json`. It contains the same 35 origins as
 the embedded list in SDK 2.19.0. A small documented patch changes only the
 metadata-fetch URL; host validation, its embedded-list fallback and SSO service

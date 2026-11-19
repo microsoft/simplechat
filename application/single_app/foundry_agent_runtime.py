@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import requests
 import aiohttp
@@ -3188,12 +3188,46 @@ def list_foundry_workflows_from_endpoint(foundry_settings: Dict[str, Any], globa
 def resolve_foundry_project_base(endpoint, project_name):
     if not endpoint:
         raise ValueError("Missing Foundry endpoint")
-    base = endpoint.rstrip("/")
-    if "/api/projects/" in base:
-        return base
-    if project_name:
-        return f"{base}/api/projects/{project_name}"
-    raise ValueError("Foundry project name is required when endpoint does not include /api/projects/.")
+    base = str(endpoint).strip().rstrip("/")
+    if (
+        not re.fullmatch(r"https?://[^/?#\s]+(?:/[^?#]*)?", base, flags=re.IGNORECASE)
+        or any(ord(character) < 32 or ord(character) == 127 for character in base)
+    ):
+        raise ValueError("Invalid Foundry project endpoint.")
+
+    parsed = urlsplit(base)
+    try:
+        invalid_authority = (
+            not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or "\\" in parsed.netloc
+            or parsed.port == 0
+        )
+    except ValueError as exc:
+        raise ValueError("Invalid Foundry project endpoint.") from exc
+    if invalid_authority:
+        raise ValueError("Invalid Foundry project endpoint.")
+
+    path = parsed.path
+    if any(unquote(part) in {".", ".."} for part in path.split("/")):
+        raise ValueError("Foundry project endpoints cannot contain URL dot segments.")
+    if "/api/projects/" not in path:
+        if not project_name:
+            raise ValueError("Foundry project name is required when endpoint does not include /api/projects/.")
+        project_part = quote(str(project_name).strip(), safe="")
+        if (
+            not re.fullmatch(r"(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+", project_part)
+            or project_part in {".", ".."}
+        ):
+            raise ValueError("Invalid Foundry project name.")
+        path = f"{path}/api/projects/{project_part}"
+
+    # Preserve existing URI escapes while encoding raw Unicode and spaces.
+    path = quote(path, safe="/%:@!$&'()*+,;=-._~")
+    if not re.fullmatch(r"/(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})+", path):
+        raise ValueError("Invalid Foundry project endpoint path.")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 def resolve_foundry_project_api_version(api_version):
     version = (api_version or "").strip()

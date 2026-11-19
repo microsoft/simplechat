@@ -1,8 +1,8 @@
-# Local runtime assets fix (0.261.456)
+# Local runtime assets fix (0.261.458)
 
 ## Issue and root cause
 
-**Fixed in version: 0.261.456**, recorded in `application/single_app/config.py`.
+**Fixed in version: 0.261.458**, recorded in `application/single_app/config.py`.
 
 The application already served its main browser libraries locally, but the
 local-only rule was not enforced across every repository-owned browser surface.
@@ -138,6 +138,9 @@ to use the shared minimum-version helper.
   the full-repository test deselected; every inventory hash matched both the
   working distribution and its committed Git blob. The regression accepts
   CRLF/LF differences but still rejects changed loader content.
+- After merging `Development` and resolving the version to `0.261.458`, the
+  complete integrated scanner, V2, documentation and OpenLayers suites passed:
+  52 tests, including the full repository scan and inventory.
 
 Two additional historical Teams SSO tests fail independently of this change:
 one requires the obsolete exact application version `0.242.072`, and another

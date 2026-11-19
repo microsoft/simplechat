@@ -1,8 +1,8 @@
 # test_local_runtime_assets.py
 """Exercise real local browser libraries with external runtime assets blocked.
 
-Version: 0.261.456
-Implemented in: 0.261.456
+Version: 0.261.458
+Implemented in: 0.261.458
 """
 
 from contextlib import contextmanager
