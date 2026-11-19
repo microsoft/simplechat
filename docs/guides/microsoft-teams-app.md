@@ -201,3 +201,16 @@ Set `teamsFrameAncestors`, `customTeamsOrigins`, and `teamsAppResource` explicit
 ## Local Teams SDK Asset
 
 SimpleChat vendors the Teams JavaScript SDK under `application/single_app/static/js/MicrosoftTeams.min.js` so disconnected and sovereign environments do not load browser runtime JavaScript from a public CDN.
+
+Since version **0.261.456**, the SDK's trusted-domain metadata is local too:
+`/static/js/teams-2.19.0/validDomains.json`. It contains the same 35 origins as
+the embedded list in SDK 2.19.0. A small documented patch changes only the
+metadata-fetch URL; host validation, its embedded-list fallback and SSO service
+calls are unchanged.
+
+Treat SDK and trusted-domain updates as one reviewed change. Preserve the
+upstream license, inspect domain additions/removals, and update the provenance
+and checksums in `functional_tests/browser_asset_inventory.json`. CDN changes
+do not automatically expand the locally trusted hosts. Run
+`python scripts/check_browser_assets.py` and the real-SDK initialization tests
+in `ui_tests/test_local_runtime_assets.py` after an update.

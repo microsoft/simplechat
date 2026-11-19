@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for documentation site quality and URL contracts.
-Version: 0.250.230
+Version: 0.261.456
 Implemented in: 0.250.230
 
 This test protects the documentation site redesign from regressing:
@@ -31,27 +31,14 @@ import yaml
 from test_support.versioning import assert_app_version_at_least
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from check_browser_assets import scan
+
 DOCS_ROOT = REPO_ROOT / "docs"
 SITE_ROOT = DOCS_ROOT / "_site"
 CONFIG_FILE = DOCS_ROOT / "_config.yml"
 SUPPORT_MENU = REPO_ROOT / "application" / "single_app" / "support_menu_config.py"
-
-# Hosts that must never serve browser runtime code or its companion assets.
-FORBIDDEN_ASSET_HOSTS = (
-    "cdn.jsdelivr.net",
-    "cdnjs.cloudflare.com",
-    "code.jquery.com",
-    "unpkg.com",
-    "cdn.datatables.net",
-    "stackpath.bootstrapcdn.com",
-    "fonts.googleapis.com",
-    "fonts.gstatic.com",
-    "esm.sh",
-    "skypack.dev",
-)
-
-ASSET_SEARCH_DIRS = ("_layouts", "_includes")
-ASSET_SEARCH_SUFFIXES = (".html", ".scss", ".css", ".js")
 
 DOCS_SITE_BASE = "https://microsoft.github.io/simplechat"
 
@@ -136,30 +123,7 @@ def test_no_cdn_browser_assets():
     """Browser runtime assets must be served locally."""
     print("Checking for CDN-hosted browser assets...")
 
-    offenders = []
-
-    def scan(path):
-        text = io.open(path, encoding="utf-8", errors="ignore").read()
-        for host in FORBIDDEN_ASSET_HOSTS:
-            if host in text:
-                for number, line in enumerate(text.splitlines(), start=1):
-                    if host in line:
-                        offenders.append(f"{path.relative_to(REPO_ROOT)}:{number}: {host}")
-
-    for directory in ASSET_SEARCH_DIRS:
-        for path in (DOCS_ROOT / directory).rglob("*"):
-            if path.is_file() and path.suffix in ASSET_SEARCH_SUFFIXES:
-                scan(path)
-
-    assets_dir = DOCS_ROOT / "assets"
-    for path in assets_dir.rglob("*"):
-        if not path.is_file() or path.suffix not in ASSET_SEARCH_SUFFIXES:
-            continue
-        # Vendored third-party files legitimately carry upstream URLs in their
-        # license and homepage comments.
-        if "vendor" in path.parts:
-            continue
-        scan(path)
+    offenders = [str(finding) for finding in scan(paths=["docs"])]
 
     if offenders:
         print(f"  {len(offenders)} CDN asset reference(s) found:")

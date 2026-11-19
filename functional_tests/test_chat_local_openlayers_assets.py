@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for local chat OpenLayers assets.
-Version: 0.242.053
+Version: 0.261.456
 Implemented in: 0.241.116
 CSP allowlist regression fixed in: 0.242.053
 
@@ -16,6 +16,7 @@ import re
 import sys
 import traceback
 
+from test_support.versioning import assert_app_version_at_least
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHAT_TEMPLATE = os.path.join(REPO_ROOT, "application", "single_app", "templates", "chats.html")
@@ -34,13 +35,6 @@ def _read(path):
 
 def _strip_html_comments(content):
     return re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
-
-
-def _get_current_version():
-    for line in _read(CONFIG_FILE).splitlines():
-        if line.strip().startswith("VERSION = "):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise AssertionError("Unable to find VERSION in config.py.")
 
 
 def test_openlayers_assets_are_local():
@@ -85,12 +79,12 @@ def test_csp_keeps_scripts_and_styles_local():
     content = _read(CONFIG_FILE)
     errors = []
 
-    if _get_current_version() != "0.242.053":
-        errors.append("config.py VERSION must match the test header version 0.242.053.")
+    assert_app_version_at_least("0.242.053")
 
     for csp_fragment in [
         "script-src 'self' 'unsafe-inline' 'unsafe-eval';",
         "style-src 'self' 'unsafe-inline';",
+        "worker-src 'self';",
     ]:
         if csp_fragment not in content:
             errors.append(f"Missing CSP fragment: {csp_fragment}")
