@@ -2,10 +2,11 @@
 
 **Fixed/Implemented in version: 0.261.457**
 
-`application/single_app/config.py` records the implementation version. This is
-the reserved Azure slot after Graph 0.261.456; the initial PR is based on
-Development 0.261.455 and must be reconciled with live Development after Graph
-lands before it is considered merge-ready.
+`application/single_app/config.py` records the implementation version. The branch
+now incorporates merged Graph Development commit
+`709426a41ffda5a34de453f9f00677a50fe6bcf0` (0.261.456), making Azure 0.261.457
+the next patch version. Passing required checks and specific user approval are
+still required before merging the Azure PR.
 
 ## Issue and root cause
 
@@ -87,21 +88,45 @@ objects at `Session.send`, checking the effective origin/path/query,
 authorization, method, JSON body, timeout, and refusal before credential/token/HTTP
 operations.
 
+### Initial publication (historical)
+
 On Development `21f2b9c8c2d795df445eadaf3250532edf972b08`, the combined ARM,
 Foundry, identity, scoped discovery/membership/transport, and both query-owner
-witness selections pass: **256 tests**. The optimized-Python boundary and
-synchronous-credential selection passes: **107 tests**.
+witness selections passed: **256 tests**. The optimized-Python boundary and
+synchronous-credential selection passed: **107 tests**.
 
-The route policy scripts pass 15/15, 10/10, and 5/5 checks respectively. The
-changed-line broken-access-control and XSS guardrails pass for the four modified
-production files, and `git diff --check` passes.
+The route policy scripts passed 15/15, 10/10, and 5/5 checks respectively. The
+changed-line broken-access-control and XSS guardrails passed for the four modified
+production files, and `git diff --check` passed.
 
-`python scripts\check_cosmos_response_boundaries.py --run-contracts` stops
-before its runtime selection on **31 inherited module-fingerprint review gaps**:
+At that publication, the Cosmos gate stopped before runtime contracts on
+**31 inherited owner-review gaps**:
 eight in `functions_settings.py`, 18 in `route_backend_orchestration.py`, and
-five in `route_backend_users.py`. These three modules are unchanged from the
-live base. The Azure-owned Foundry review matches the current module; no
-unrelated inventory entry is changed or approved.
+five in `route_backend_users.py`. The five profile reviews were subsequently
+addressed within the separately merged Graph module scope; 31 is not the
+post-Graph gate count.
+
+### Post-Graph base synchronization
+
+After merging Development `709426a41ffda5a34de453f9f00677a50fe6bcf0`, the combined
+Azure, Graph, scoped compatibility, and installed-SDK owner-witness selection
+passes: **457 tests**. The optimized-Python boundary and synchronous-credential
+selection passes: **107 tests**. The sole merge conflict was the application
+version; retaining 0.261.457 resolves it as the next version after Graph 0.261.456.
+The route policy scripts again pass 15/15, 10/10, and 5/5 checks. The four-file
+changed-line access-control and XSS guardrails, plus staged/unstaged whitespace
+checks, also pass against the merged base.
+
+All canonical Graph, profile, and interface-selection inventory reviews and
+witnesses are preserved exactly from that base. Only the Azure-owned unchanged
+Foundry query-owner entry differs from the base inventory.
+
+`python scripts\check_cosmos_response_boundaries.py --run-contracts` still stops
+before runtime contracts on **26 inherited owner-review gaps**: eight in
+`functions_settings.py` and 18 in `route_backend_orchestration.py`. Of these,
+25 differ only in the module fingerprint; `orchestration_plan` also differs in
+its owner AST fingerprint. No fingerprint is blanket-approved, no affected
+storage consumer is repaired in this PR, and no runtime-contract pass is claimed.
 
 The regression files are:
 
@@ -148,9 +173,13 @@ The exact baseline analysis is Python SARIF `2117078539`, CodeQL 2.27.4,
 result at each selected baseline sink and zero results in either corrected sink
 function. Both selected files are present in both finalized source archives.
 
-This local comparison predates final integration. GitHub confirmation must use
-the final PR ref and `.github/workflows/codeql.yml:analyze`, category
-`/language:python`, rather than unrelated fixed instances on default/main setup.
+The initial publication scan at head
+`dda0be25f30cb0bb728e4157a2a3bed512c74895`, PR merge-ref SHA
+`78d6f3411474321612096ff816254c3662e39ad8`, also reported no selected sinks.
+That clearance is historical after the Graph base merge, not clearance for the
+new source head. Fresh GitHub confirmation must use the post-sync PR ref and
+`.github/workflows/codeql.yml:analyze`, category `/language:python`, rather than
+unrelated fixed instances on default/main setup.
 No exclusions, suppressions, dismissals, severity changes, or query/configuration
 changes are used. Other alerts and inherited unrelated CI review gaps remain
 outside this fix.
