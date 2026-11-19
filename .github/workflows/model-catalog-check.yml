@@ -10,6 +10,10 @@ on:
       - model-catalog/**
       - scripts/publish_model_catalog.py
       - scripts/requirements-model-catalog*.txt
+      - scripts/requirements-build.txt
+      - scripts/prepare_model_catalog_sdk.py
+      - docker-customization/requirements-build.lock.*
+      - .github/dependencies/model-catalog/**
       - functional_tests/test_model_catalog_publication_lifecycle.py
       - .github/workflows/*model-catalog*
       - .github/aw/actions-lock.json
@@ -20,7 +24,7 @@ permissions:
 
 jobs:
   publication-contracts:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,8 +32,10 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: '3.12'
-      - run: python -m pip install -r scripts/requirements-model-catalog-tests.txt
+          python-version: '3.12.12'
+      - run: |
+          python -m pip install pip==26.0.1
+          python -m pip install --build-constraint docker-customization/requirements-build.lock.txt -r scripts/requirements-model-catalog-tests.txt
       - name: Verify isolation and promotion contracts
         run: python -m pytest -q functional_tests/test_model_catalog_publication_lifecycle.py
       - name: Verify compiled weekly workflow is current

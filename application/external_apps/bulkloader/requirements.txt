@@ -1,3 +1,4 @@
+-c ../requirements.lock.txt
 requests==2.33.0
 msal==1.31.0
 python-dotenv==1.2.2

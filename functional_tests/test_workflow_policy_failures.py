@@ -1,7 +1,7 @@
 # test_workflow_policy_failures.py
 """
 Functional regressions for deterministic workflow policy failures.
-Version: 0.261.430
+Version: 0.261.460
 Implemented in: 0.261.362
 
 Real request budgets, durable controllers, task sequence bodies and runtime projections
@@ -132,6 +132,8 @@ def test_refused_first_request_is_a_terminal_diagnosable_failure(integration, mo
     workflow, runner, services, make_store = prepare(integration, monkeypatch, structured=structured, group=group, retries=retries)
     calls = []
     runner["_execute_workflow_dispatch"] = budget_dispatch(calls)
+    usage = []
+    runner["log_workflow_run"] = lambda **fields: usage.append(fields)
     task_items = []
     save_item = runner["_save_workflow_run_item_record"]
 
@@ -145,6 +147,8 @@ def test_refused_first_request_is_a_terminal_diagnosable_failure(integration, mo
     assert calls == []
     assert record["status"] == control["state"] == "failed", control
     assert record["error_code"] == "workflow_context_budget_exceeded"
+    assert len(usage) == 1
+    assert usage[0]["outcome"] == "failed"
     assert "input budget" in record["error"]
     assert record["completed_at"]
     current_workflow = services["load_workflow"]()

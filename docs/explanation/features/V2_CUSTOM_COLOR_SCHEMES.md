@@ -5,6 +5,7 @@
 Administrators can set the colors the modern (V2) interface uses in light mode and dark mode. Users can also build a custom color mode of their own, unless an administrator turns that off (it is on by default). A custom color mode can be shared as a **Theme Card**: a PNG image with the mode's name, a stripe of its colors and a colored QR code. Dropping the card into SimpleChat on any site imports the same colors.
 
 - **Version:** 0.261.452
+- **Sidebar cycle enhancement implemented in version: 0.261.459** (`application/single_app/config.py`).
 - **Scope:** V2 interface only. Classic interface colors are unchanged, but its shared `darkModeEnabled` preference stays in step with the base the user's mode resolves to.
 - **Dependencies:**
   - Pinned npm packages `qrcode-generator@1.4.4` (draws the QR code) and `jsqr@1.4.0` (reads it back).
@@ -62,7 +63,9 @@ None of the admin keys contain a sensitive term, so `sanitize_settings_for_user(
 - **No flash on load:** the generated CSS is cached in `localStorage` (`simplechat.v2.color-css`), and the inline script in `index.html` applies it before the first paint, just as the theme class is applied.
 - **Color mode state:** `uiStore` adds `colorMode` and `customColorMode`.
   - `system` follows `prefers-color-scheme` and updates live.
-  - The sidebar's Dark mode toggle still works and sets `light` or `dark`.
+  - The sidebar button cycles Light -> Dark -> Custom -> Light when a saved custom palette exists and the administrator allows it; otherwise it switches only between Light and Dark. Custom is a distinct step whether its base is light or dark.
+  - The button names the next mode. **Custom mode** uses the same palette icon as Custom in Settings; the collapsed rail's tooltip names the next action.
+  - From Match system, the button enters the cycle using the current resolved appearance. Match system remains available in Settings.
 
 ### Theme Card format
 
@@ -113,9 +116,16 @@ checksum = base64url(first 16 bytes of SHA-256("SCTHEME1." + payload))
 3. **Share as Theme Card** downloads the card image. **Copy as text code** copies the code instead.
 4. **Import Theme Card** accepts a PNG, JPG or WebP up to 2 MB, or a pasted text code. The card is checked and previewed, and nothing changes until you save.
 
+After saving a custom mode, use the button above your account in the sidebar to
+cycle **Light -> Dark -> Custom -> Light** without reopening Settings. Switching
+away does not erase your palette. Custom is skipped if no valid palette is saved
+or your administrator disables custom modes. The selection saves as an account
+preference and works in expanded, collapsed, and mobile navigation.
+
 ## Testing and Validation
 
 - `functional_tests/test_color_schemes_validation.py`: palette, scheme, custom mode and contrast rules, including injection attempts.
+- `ui_tests/test_v2_sidebar_color_mode_cycle.py`: sidebar cycling with light/dark custom bases, unavailable palettes, administrator policy, Match system, palette icon, keyboard activation, persistence, and expanded/collapsed/mobile navigation.
 - `functional_tests/test_theme_card_code_format.py`:
   - A code made by the browser decodes on the server, and the Python encoder reproduces it exactly.
   - Edited cards and cards carrying unsafe values are refused.

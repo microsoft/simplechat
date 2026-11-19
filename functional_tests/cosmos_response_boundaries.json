@@ -31464,9 +31464,13 @@
         "queries": [],
         "sha256": "22acc754f250e1f43e216ac38a72d4f6f86940db24340fdb1a534d3848cb3ecc"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "SDK mapping.get verifies ownership/deletion and source access before consumers receive the authorized mapping.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py",
+        "functional_tests/test_orchestration_conversation_sources.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_checkpoint_artifact_versions": {
       "boundary": {
@@ -31482,9 +31486,12 @@
         "queries": [],
         "sha256": "1c83df7e9294278003effafc350fa505ef60e47463b758e2ac25477e19f8e44a"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "Authorized SDK point mappings enter the existing canonical fingerprint function; context-route runtime tests exercise checkpoint behavior.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_conversation_context_for_run": {
       "boundary": {
@@ -31500,9 +31507,13 @@
         "queries": [],
         "sha256": "285797ca8e6a453e9284bfdb04486f76457e63ae0e122b77b486487ca857db49"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "SDK point mappings are passed through normalize_history_message and ownership/fingerprint checks before building plain planner context.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py",
+        "functional_tests/test_orchestration_conversation_sources.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_ensure_conversation": {
       "boundary": {
@@ -31528,9 +31539,12 @@
         "queries": [],
         "sha256": "16e2e62456a9d1d728e0985459f8625413e0d4c5a8a08d19b36f506ce01ef06f"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "Existing SDK point mappings use mapping.get/update for backing metadata; create/upsert responses are unused.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_link_regeneration_thread": {
       "boundary": {
@@ -31546,9 +31560,12 @@
         "queries": [],
         "sha256": "d679a3d90d078defe9de7faaae37dde08f24433e8b7311987a0a07be7802deb8"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "SDK answer mapping is checked for partition/deletion and patched through the metadata owner, preserving source identity.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_load_conversation_snapshot": {
       "boundary": {
@@ -31570,9 +31587,12 @@
         ],
         "sha256": "1b4d30f5e09b77e861bd836b0be885ac7e122285dfd6aa68d34417b971863a5c"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "An authorized SDK point mapping supplies the before timestamp; plain query rows enter checked history and snapshot builders.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_load_ledger": {
       "boundary": {
@@ -31588,9 +31608,13 @@
         ],
         "sha256": "990f12bf5ea6fd0a8bf5b44e2764f1a3d5ae74fd928ff21f06fa8955e8bd5edd"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "Authorized plain query projections are checked for visible source turns before ledger projection; no point wrapper crosses a strict consumer.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py",
+        "functional_tests/test_orchestration_selected_source_planning.py::test_hidden_source_turn_cannot_restore_its_requested_documents"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_load_regeneration_snapshot": {
       "boundary": {
@@ -31606,9 +31630,12 @@
         ],
         "sha256": "5637554bb021fcd62df90f70c98e9e6e33cc15489898e46f2df2ed1203a80c45"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "Plain query history rows are checked and sanitized before building a logical-order snapshot.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_mirror_planned_turn": {
       "boundary": {
@@ -31629,9 +31656,12 @@
         "queries": [],
         "sha256": "2b7b2cea2b66e84450b97f0d71558f182401a4a971bdae757bc283935589334f"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "SDK conversation/message mappings use authorized mapping access and the existing public_planning_message projection before mirroring.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_shared_conversations.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_persist_planned_turn": {
       "boundary": {
@@ -31647,9 +31677,13 @@
         "queries": [],
         "sha256": "25bb1dc5e7d8a112e8a60ac4f7d3c6460e40798b43fb201286a15d38147462a5"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "Saved SDK question mapping receives nested orchestration metadata through mapping operations before the existing metadata-patch boundary.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_planning_persistence.py::test_explicit_retry_uses_saved_inputs_and_one_question",
+        "functional_tests/test_orchestration_message_regeneration.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_run_response_removed": {
       "boundary": {
@@ -31665,9 +31699,12 @@
         "queries": [],
         "sha256": "7abf6197e4f767ff81c376db34ae031cb104e4d275e5ac078621113362fcbaba"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "SDK point mapping is consumed by the existing retraction predicate; missing messages remain removed.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_save_message": {
       "boundary": {
@@ -31683,8 +31720,9 @@
         "queries": [],
         "sha256": "a8e211f24561985c44a87b387ee773a243a5e36e48bd1d58bfcad00a24c861a6"
       },
-      "classification": "review-required",
-      "contract": "",
+      "classification": "response-unused",
+      "contract": "Write response is deliberately unused; success returns the locally allocated message ID, and write failures retain the existing failure path.",
+      "evidence_scope": "owner-runtime",
       "tests": []
     },
     "application/single_app/route_backend_orchestration.py::_save_turn_message": {
@@ -31706,9 +31744,12 @@
         "queries": [],
         "sha256": "8cd23b87b2c3989b2aa847ba8aaa35721582ddc84c23d93e1515466a9c2a6f09"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "Authorized SDK point reads enter the existing history normalization and content/fingerprint checks; deterministic IDs preserve retry identity.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_planning_persistence.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_save_turn_message.create_question": {
       "boundary": {
@@ -31729,9 +31770,12 @@
         "queries": [],
         "sha256": "01efdae81d08f614c19e366aef28e19081e9d69dbe230d3f4eeab182599b811f"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "Create response is unused; conflict reads use the same normalized-history validation so the winner is never overwritten.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_planning_persistence.py::test_concurrent_question_creation_never_upserts_over_the_winner"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_touch_conversation": {
       "boundary": {
@@ -31752,9 +31796,12 @@
         "queries": [],
         "sha256": "99d4c36c67f84cce3003b1743cd74df2a0c457539fd6f0e4d185db2bd3ce140c"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "SDK mapping.get validates owner/deletion; mapping mutation preserves the ETag for conditional replace, whose return is unused.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_validate_checkpoint_artifacts": {
       "boundary": {
@@ -31770,9 +31817,12 @@
         "queries": [],
         "sha256": "d93f00edfdb22533b2e2b578313d4cee8da2ace69d7ffca425ed4332425b2366"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "Authorized SDK point mappings use mapping.get to validate artifact identity, visibility, owner, and expiry.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::_validate_saved_conversation_context": {
       "boundary": {
@@ -31788,9 +31838,13 @@
         ],
         "sha256": "3afd2be38d4155c2b68890b3e5e6ba79339d9aa43b23dbbdb9674de36cdc642e"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "Authorized plain query rows pass checked/sanitized history before validating the saved snapshot.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_conversation_context_routes.py",
+        "functional_tests/test_orchestration_followup_citation_provenance.py"
+      ]
     },
     "application/single_app/route_backend_orchestration.py::register_route_backend_orchestration.orchestration_plan": {
       "boundary": {
@@ -31806,9 +31860,16 @@
         "queries": [],
         "sha256": "08720811b6873604a8788b0a3c6e2ba86fb16e53ae7009e7f9638efd263cea07"
       },
-      "classification": "review-required",
-      "contract": "",
-      "tests": []
+      "classification": "sdk-compatible",
+      "contract": "Point/write/query consumers retain their authorized mapping-compatible contracts; the only owner AST change removes an unused export_catalog assignment while keeping context publication.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text",
+        "functional_tests/test_orchestration_planning_persistence.py::test_typed_contract_failure_survives_reload_and_clears_on_explicit_retry",
+        "functional_tests/test_orchestration_document_action_end_to_end.py",
+        "functional_tests/test_orchestration_selected_source_planning.py::test_referenced_failed_turn_restores_all_nine_sources_through_current_authority",
+        "functional_tests/test_orchestration_selected_source_planning.py::test_main_planner_missing_source_question_reauthorizes_before_publication"
+      ]
     },
     "application/single_app/route_backend_plugins.py::edit_plugin": {
       "boundary": {
@@ -32244,7 +32305,7 @@
         "sha256": "7eb60bbca933fed959e0f812a220727b924946eaf355b9da9147aa8dac19479e"
       },
       "classification": "sdk-compatible",
-      "contract": "Plain query rows identify conversations; the installed SDK point response is read through Mapping.get for membership status. No strict top-level dictionary contract consumes the response. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
+      "contract": "Plain query rows identify conversations; target SDK point mapping.get checks accepted membership without exact-dict validation.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
@@ -32266,7 +32327,7 @@
         "sha256": "2ce3fc862935814ebf6d1d0028cdeec20fb1ad7ff90a4f47550e4160de492e26"
       },
       "classification": "sdk-compatible",
-      "contract": "The SELECT VALUE query returns a plain list of document IDs, consumed only for existence after parameterized relationship filtering; it is not a point-document response. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
+      "contract": "Query results are plain scalar document IDs, materialized only for an existence check.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
@@ -32288,7 +32349,7 @@
         "sha256": "201caf9181199545783634b7f638fc3efeacdd9e8f07d408c902b8595f86bb38"
       },
       "classification": "sdk-compatible",
-      "contract": "The authorized current-account SDK mapping is returned intact with metadata; downstream consumers project fields through Mapping reads. Runtime coverage exercises the real authorization and reader. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
+      "contract": "Object authorization precedes the SDK point read; mapping consumers project allowed profile fields.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
@@ -32310,7 +32371,7 @@
         "sha256": "73abc50267e15ec0134f0862538bafa5ee4ca7ea8f04769443700f81da89d2d8"
       },
       "classification": "sdk-compatible",
-      "contract": "Plain query rows are projected into a new suggestion dictionary; the account settings SDK document is read through Mapping.get. The real route executes with installed-SDK account storage and plain query results. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
+      "contract": "Plain query rows are projected into normalized suggestion fields; SDK-backed user settings remain compatible through their existing owner.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
@@ -32332,7 +32393,7 @@
         "sha256": "b6027682ae3b7b3b8c0ffdda269ea18f19e2ed46c8b0dad51ea5f89d52a1c8e0"
       },
       "classification": "sdk-compatible",
-      "contract": "The real route authorizes the target, reads an installed-SDK point response and projects only identity fields through Mapping.get into JSON; it never requires an exact top-level dict. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
+      "contract": "Object authorization precedes the SDK point read; mapping.get feeds a new plain allowlisted response dictionary.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
