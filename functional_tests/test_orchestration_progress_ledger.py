@@ -187,6 +187,38 @@ def test_recovery_is_admitted_by_registry_policy_not_by_the_failure_alone(runtim
     assert ledger.entries == [] and not getattr(context, 'accepted_partial_inputs', None)
 
 
+def test_a_prepared_answer_that_failed_its_check_is_checked_again(runtime):
+    progress = _progress(runtime)
+    context = SimpleNamespace(run_id='run-1', conversation_id='conversation-1', task_results={})
+    ledger = progress.ProgressLedger(REACTIVE, context)
+    step = {'step_id': 'answer', 'capability_id': 'compose'}
+    for code in ('completeness_incomplete', 'completeness_unavailable'):
+        failed = {
+            'status': 'failed', 'failure': {'code': code}, 'observation': {'preparation_status': 'prepared'},
+        }
+        applied = ledger.recover(step, failed, context)
+        assert applied['recovery'] == 'recheck_answer'
+        assert context.completeness_recheck_step_ids == {'answer'}
+        ledger.settle(applied, failed)
+        # The same failure after its recovery is a stall.
+        assert ledger.recover(step, failed, context) is None
+    # Without a prepared answer there is nothing to check again.
+    other = progress.ProgressLedger(REACTIVE, SimpleNamespace(run_id='r', conversation_id='c', task_results={}))
+    unprepared = {'status': 'failed', 'failure': {'code': 'completeness_incomplete'}}
+    assert other.recover(step, unprepared, other.context) is None and other.entries == []
+
+
+def test_a_reply_that_holds_an_answer_carries_one_plain_sentence(runtime):
+    schema = runtime.schema
+    failures = [schema.build_failure('completeness_incomplete')]
+    note = schema.failure_explanation(failures, partial=True, answered=True)
+    assert note == schema.ANSWERED_PARTIAL_NOTE
+    assert '\n' not in note and 'run details' not in note and 'saved' not in note
+    # With no answer to show, or a stopped run, the full explanation is kept.
+    for kwargs in ({'partial': True}, {'partial': False, 'answered': True}, {'partial': True, 'cancelled': True, 'answered': True}):
+        assert schema.failure_explanation(failures, **kwargs) != note
+
+
 def test_round_limit_reads_the_bounded_setting(runtime):
     progress = _progress(runtime)
     assert progress.round_limit({}) == 2

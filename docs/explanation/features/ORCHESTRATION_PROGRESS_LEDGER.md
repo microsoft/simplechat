@@ -1,6 +1,6 @@
 # Orchestration progress ledger, step recoveries and automatic continuation
 
-Version: **0.261.458**
+Version: **0.261.461**
 
 Implemented in version: **0.261.457** (ledger and step recovery), **0.261.458** (automatic
 continuation). Off by default.
@@ -43,7 +43,14 @@ says. A recovery adds no capability, source or external action.
 | --- | --- | --- | --- |
 | `input_partial_not_accepted` | `accept_partial_input` | The consuming capability declares `partial_inputs_supported` (today: `compose`) and the partial producer is known | The step reads the partial result. Its own result is partial and carries the producer's limitations, the same as a plan that declared the input partial |
 
-In the 17-18 November run this failure ended 7 of 34 failed or partial runs. Each time a
+| `completeness_incomplete`, `completeness_unavailable` | `recheck_answer` (0.261.461) | The answer itself was prepared (`preparation_status` `prepared`); only its check did not pass or could not finish | The retained answer is checked again in the same run with a new allowance of corrections, exactly as the retained check of a new attempt is. The answer is not written again |
+
+`recheck_answer` exists because the automatic next attempt below is started by the browser
+page, and on 19 November 2026 the server offered it for two such runs and the page started
+neither. A recovery inside the run needs no page. See
+`docs/explanation/fixes/ORCHESTRATION_PARTIAL_ANSWER_NOTICE_FIX.md`.
+
+In the 17-18 November run the partial-input failure ended 7 of 34 failed or partial runs. Each time a
 document analysis had covered every source and reported limitations, and the answer step,
 planned before any result existed, had declared it would accept only a complete input.
 
@@ -170,7 +177,7 @@ To measure the change, run the same scenarios with the setting off and then on.
 
 ### Limitations and not done
 
-- **One recovery.** Only the partial-input refusal is recoverable. Calculation failures
+- **Two recoveries.** The partial-input refusal and a failed answer check. Calculation failures
   (15 `result_invalid`, 4 `calculation_program_invalid` in the same run) are not covered here;
   the prepared calculation path has its own correction loop from Phase 1.
 - **No model-written plan revision.** The automatic successors are server-defined: the same

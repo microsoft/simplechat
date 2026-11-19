@@ -3148,7 +3148,17 @@ def failure_repeats_on_retry(failure):
     )
 
 
-def failure_explanation(failures, *, partial=False, cancelled=False):
+ANSWERED_PARTIAL_NOTE = 'Part of this request could not be completed, so this answer may be incomplete.'
+
+
+def failure_explanation(failures, *, partial=False, cancelled=False, answered=False):
+    """The fixed text a reply carries when its run did not complete.
+
+    A reply that already holds an answer gets one plain sentence: the details and the retry
+    controls belong to the run's own notice, not to the body of the answer.
+    """
+    if answered and partial and not cancelled:
+        return ANSWERED_PARTIAL_NOTE
     facts = [safe_failure(value)['message'] for value in failures or []]
     facts = list(dict.fromkeys(facts))
     heading = 'The run was stopped.' if cancelled else (

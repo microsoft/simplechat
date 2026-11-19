@@ -460,7 +460,8 @@ def test_a_chart_that_could_not_be_drawn_is_not_delivered_and_a_retry_draws_it_a
     assert saved["status"] == "failed" and saved["outcome"] == "partial"
     assert saved["failure"]["code"] == "visual_not_delivered"
     assert f"- Not delivered: {CHART_DESCRIPTION} The chart could not be created from the retrieved data." in answer
-    assert "The request was only partially completed." in answer
+    assert "Part of this request could not be completed, so this answer may be incomplete." in answer
+    assert "The request was only partially completed." not in answer
     state = {
         "id": "battery_chart", "state": "not_delivered",
         "message": "The chart could not be created from the retrieved data.",

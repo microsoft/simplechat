@@ -905,8 +905,21 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             completeness_store.load_completeness(step['step_id'], binding=completeness_binding)
             if check_policy['enabled'] and completeness_store is not None else None
         )
+        retained_check, renewed_corrections = None, False
+        recheck_steps = getattr(context, 'completeness_recheck_step_ids', None)
+        if (
+            saved_completeness is not None and isinstance(recheck_steps, set)
+            and step['step_id'] in recheck_steps
+            and saved_completeness.get('status') in ('verification_unavailable', 'incomplete')
+        ):
+            # The progress ledger admitted one more check of this prepared answer inside the same
+            # run. It is treated exactly as the retained check of a new attempt is, once.
+            recheck_steps.discard(step['step_id'])
+            retained_check, saved_completeness = saved_completeness, None
+            renewed_corrections = True
         if saved_completeness is None and check_policy['enabled']:
-            retained_check = (getattr(context, 'completeness_retry_states', None) or {}).get(step['step_id'])
+            if retained_check is None:
+                retained_check = (getattr(context, 'completeness_retry_states', None) or {}).get(step['step_id'])
             if retained_check is not None:
                 saved_completeness = deepcopy(retained_check)
                 preparation = saved_completeness.get('native_audit_preparation') or {}
@@ -943,6 +956,10 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                         status='checking', reason_code='', report_repairs=0,
                         deterministic_status='pending', semantic_status='pending',
                     )
+                    if renewed_corrections:
+                        # The recovery is bounded by the ledger's rounds, so each admitted round
+                        # may correct the answer again from what the check reported.
+                        saved_completeness['corrections'] = 0
         if audit_contract and saved_completeness:
             preparation_state = saved_completeness.get('native_audit_preparation') or {}
             if preparation_state.get('version') == NATIVE_AUDIT_ANSWER_VERSION:
@@ -1139,6 +1156,8 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     status=STEP_STATUS_FAILED, failure=failure, summary=failure['message'], error=failure['message'],
                 )
                 result['task_completeness'] = completeness_report
+                # What the progress ledger needs to decide a recovery; a server status only.
+                result['observation'] = {'preparation_status': completeness_report.get('preparation_status')}
                 return result
             values = prepared_values(response)
         reply_error = None

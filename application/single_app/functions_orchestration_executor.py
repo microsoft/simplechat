@@ -1923,7 +1923,9 @@ def _execute_dependency_plan(
     elif (cancelled or not complete) and not answer_qualified:
         if not context.failures:
             context.failures.append(build_failure('result_partial' if partial else 'result_invalid'))
-        facts = failure_explanation(context.failures, partial=partial, cancelled=cancelled)
+        facts = failure_explanation(
+            context.failures, partial=partial, cancelled=cancelled, answered=bool(message),
+        )
     else:
         facts = '' if message else (
             'The requested files are ready.' if committed_artifacts

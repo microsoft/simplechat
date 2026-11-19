@@ -1730,7 +1730,9 @@ class HarnessExecution:
         if status == "waiting":
             content.append(build_failure("result_not_ready")["message"])
         elif status in {"failed", "cancelled"} and not answer_qualified:
-            content.append(failure_explanation(failures, partial=outcome == "partial", cancelled=status == "cancelled"))
+            content.append(failure_explanation(
+                failures, partial=outcome == "partial", cancelled=status == "cancelled", answered=bool(prepared),
+            ))
         elif not content:
             # A plan saved before every gather step needed a reader can gather without answering.
             content.append(

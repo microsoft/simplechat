@@ -37,6 +37,7 @@ DEFAULT_ROUND_LIMIT = 2
 MAX_ROUND_LIMIT = 5
 
 RECOVERY_ACCEPT_PARTIAL_INPUT = 'accept_partial_input'
+RECOVERY_RECHECK_ANSWER = 'recheck_answer'
 RECOVERY_CONTINUE_ATTEMPT = 'continue_attempt'
 RECOVERY_CONTINUE_AVAILABLE = 'continue_available_information'
 
@@ -74,12 +75,32 @@ def _accept_partial_input(step, observation, context):
     accepted.add((step['step_id'], observation['producer_step_id']))
 
 
+def _answer_recheck_admitted(step, observation):
+    """The answer itself was prepared; only its check did not pass or could not finish."""
+    return observation.get('preparation_status') == 'prepared'
+
+
+def _recheck_answer(step, observation, context):
+    """Give this step's prepared answer one more check, with a new allowance of corrections."""
+    admitted = getattr(context, 'completeness_recheck_step_ids', None)
+    if not isinstance(admitted, set):
+        admitted = context.completeness_recheck_step_ids = set()
+    admitted.add(step['step_id'])
+
+
+_RECHECK_ANSWER = ((
+    RECOVERY_RECHECK_ANSWER, _answer_recheck_admitted, _recheck_answer,
+    'Checking the answer once more and adjusting it where needed.',
+),)
+
 # failure code -> ((recovery id, admission policy, application, progress summary), ...)
 RECOVERIES = {
     'input_partial_not_accepted': ((
         RECOVERY_ACCEPT_PARTIAL_INPUT, _partial_input_admitted, _accept_partial_input,
         'Earlier work finished with limitations. Continuing with what it produced and stating the limits.',
     ),),
+    'completeness_incomplete': _RECHECK_ANSWER,
+    'completeness_unavailable': _RECHECK_ANSWER,
 }
 
 
