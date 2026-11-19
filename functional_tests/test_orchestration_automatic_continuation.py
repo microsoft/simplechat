@@ -2,7 +2,7 @@
 # test_orchestration_automatic_continuation.py
 """
 Functional test for automatic continuation of a failed orchestration attempt.
-Version: 0.261.458
+Version: 0.261.459
 Implemented in: 0.261.458
 
 This test ensures that a failed attempt is followed by the next one without the user's
@@ -157,6 +157,48 @@ def test_the_ledger_line_is_server_vocabulary(runtime, monkeypatch):
     for _message, extra in logs:
         assert extra['stage'] == 'automatic_continuation'
         assert 'run-1' not in str(extra) and 'run-2' not in str(extra) and 'conversation-1' not in str(extra)
+
+
+def test_what_the_server_offered_is_recorded_once_per_run(runtime, monkeypatch):
+    progress = _progress(runtime)
+    logs = []
+    monkeypatch.setattr(progress, 'log_event', lambda message, **kwargs: logs.append(kwargs.get('extra') or {}))
+    monkeypatch.setattr(progress, '_OFFERS_LOGGED', set())
+    record, recovery = _record(), _recovery()
+    decision, reason = progress.automatic_continuation(record, recovery, REACTIVE)
+    for _read_again in range(3):
+        progress.log_continuation_offer(decision, reason, record, recovery)
+    assert len(logs) == 1
+    assert logs[0]['stage'] == 'automatic_continuation_offer' and logs[0]['progress_outcome'] == 'offered'
+    assert logs[0]['recovery'] == 'continue_attempt'
+    # Why an attempt was not offered is recorded too, with the server's own reason.
+    blocked = _recovery(eligible=False, reason_code='retry_would_repeat')
+    decision, reason = progress.automatic_continuation(record, blocked, REACTIVE)
+    progress.log_continuation_offer(decision, reason, record, blocked)
+    assert logs[1]['progress_outcome'] == 'not_eligible' and logs[1]['recovery_reason'] == 'retry_would_repeat'
+    # A live attempt, a run that did not fail and a setting that is off are not answers.
+    live = _recovery(eligible=False, reason_code='execution_live')
+    progress.log_continuation_offer(None, 'not_eligible', _record('run-2'), live)
+    progress.log_continuation_offer(None, 'disabled', _record('run-3'), recovery)
+    progress.log_continuation_offer(None, 'not_failed', _record('run-4'), recovery)
+    assert len(logs) == 2
+    for extra in logs:
+        assert 'run-1' not in str(extra) and 'conversation-1' not in str(extra)
+
+
+def test_the_client_reads_the_decision_itself_and_waits_for_the_conversation_to_be_idle():
+    controller = _read('v2_ui', 'src', 'lib', 'orchestrationController.ts')
+    helper = controller[controller.index('async function continueFailedRunAutomatically('):]
+    helper = helper[:helper.index('\n}\n')]
+    # The shared loader drops a read that lost to another reader of the same run.
+    assert 'loadOrchestrationRecovery(' not in helper
+    assert helper.count('await fetchOrchestrationRun(runId, { conversationId })') == 2
+    # A retry is refused while the failed attempt's stream is still closing.
+    assert 'useChatStore.getState().streaming' in helper and '.inFlight)' in helper
+    assert helper.index('if (!busy) {') < helper.index('await retryOrchestrationRun(')
+    assert 'tries < 2' in helper
+    route = _read('single_app', 'route_backend_orchestration.py')
+    assert "log_continuation_offer(decision, reason, record, public.get('recovery'))" in route
 
 
 def test_the_route_decides_and_a_click_is_not_held_to_the_rule():

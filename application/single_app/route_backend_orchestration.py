@@ -212,7 +212,7 @@ from functions_orchestration_planner import (
 )
 from functions_orchestration_models import resolve_orchestration_model
 from functions_orchestration_progress import (
-    automatic_continuation, log_automatic_continuation, reactive_loop_enabled,
+    automatic_continuation, log_automatic_continuation, log_continuation_offer, reactive_loop_enabled,
 )
 from functions_orchestration_registry import (
     DEPENDENCY_PLAN_CONTRACT_VERSION,
@@ -4443,9 +4443,10 @@ def register_route_backend_orchestration(bp):
                 record, lambda: _authorize_context_conversation(record['conversation_id'], user_id),
             )
             public = _run_detail_row(record)
-            decision, _reason = _automatic_continuation(
+            decision, reason = _automatic_continuation(
                 record, public.get('recovery'), user_id, get_settings(),
             )
+            log_continuation_offer(decision, reason, record, public.get('recovery'))
             if decision is not None:
                 public['recovery'] = {**public['recovery'], 'auto_continue': {'kind': decision['kind']}}
         except (ConversationContextError, PermissionError) as exc:

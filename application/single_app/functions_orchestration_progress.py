@@ -20,7 +20,7 @@ recovery codes), so entries are safe to log and to keep with the run.
 
 The loop is off unless ``enable_chat_orchestration_reactive_loop`` is set.
 
-Version: 0.261.458
+Version: 0.261.459
 Implemented in: 0.261.457
 """
 
@@ -47,7 +47,13 @@ OUTCOME_STALLED = 'stalled'
 OUTCOME_ROUND_LIMIT = 'round_limit'
 OUTCOME_AMBIGUOUS = 'ambiguous'
 
+OUTCOME_OFFERED = 'offered'
+STAGE_CONTINUATION = 'automatic_continuation'
+STAGE_CONTINUATION_OFFER = 'automatic_continuation_offer'
+
 _LOG_PREFIX = '[ORCHESTRATION_PROGRESS]'
+_OFFERS_LOGGED = set()
+_OFFERS_LOGGED_LIMIT = 2048
 _RECOVERED_STATUSES = ('completed', 'partial', 'waiting')
 
 
@@ -152,7 +158,30 @@ def automatic_continuation(record, recovery, settings, *, parent=None):
     return {'kind': kind, 'recovery': recovery_id, 'round': rounds + 1, 'round_limit': limit}, None
 
 
-def log_automatic_continuation(decision, reason, record, *, successor_run_id=None):
+def log_continuation_offer(decision, reason, record, recovery):
+    """Record once what the server told the client about a failed attempt: offered, or why not.
+
+    The run detail is read many times; each (run, answer) pair is logged once per worker. An
+    attempt that is still live, or a setting that is off, is not an answer and is not logged.
+    """
+    if reason in ('disabled', 'not_failed') or (recovery or {}).get('reason_code') == 'execution_live':
+        return
+    key = (record.get('id'), OUTCOME_OFFERED if decision else reason)
+    if key in _OFFERS_LOGGED:
+        return
+    if len(_OFFERS_LOGGED) >= _OFFERS_LOGGED_LIMIT:
+        _OFFERS_LOGGED.clear()
+    _OFFERS_LOGGED.add(key)
+    log_automatic_continuation(
+        decision, reason, record, stage=STAGE_CONTINUATION_OFFER,
+        outcome=OUTCOME_OFFERED if decision else reason, recovery_reason=(recovery or {}).get('reason_code'),
+    )
+
+
+def log_automatic_continuation(
+    decision, reason, record, *, successor_run_id=None, stage=STAGE_CONTINUATION, outcome=None,
+    recovery_reason=None,
+):
     """One ledger line per automatic successor, or per refusal of one. Server codes only."""
     failure = record.get('failure') if isinstance(record.get('failure'), dict) else {}
     log_event(
@@ -162,10 +191,11 @@ def log_automatic_continuation(decision, reason, record, *, successor_run_id=Non
             **workflow_log_context(
                 run_id=successor_run_id or record.get('id'), conversation_id=record.get('conversation_id'),
             ),
-            'stage': 'automatic_continuation', 'failure_code': failure.get('code'),
+            'stage': stage, 'failure_code': failure.get('code'),
             'capability_id': failure.get('capability_id'),
             'recovery': (decision or {}).get('recovery'),
-            'progress_outcome': OUTCOME_APPLIED if decision else reason,
+            'progress_outcome': outcome or (OUTCOME_APPLIED if decision else reason),
+            'recovery_reason': recovery_reason,
             'round': (decision or {}).get('round'), 'round_limit': (decision or {}).get('round_limit'),
         },
     )

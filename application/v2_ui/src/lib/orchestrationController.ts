@@ -1548,20 +1548,39 @@ async function continueFailedRunAutomatically(conversationId: string, runId: str
     if (automaticContinuations.has(key)) return;
     automaticContinuations.add(key);
     const shownError = useOrchestrationStore.getState().runRecovery[runId]?.error ?? null;
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 1500));
     try {
-        let record = await loadOrchestrationRecovery(conversationId, runId);
+        // Read the saved run directly. `loadOrchestrationRecovery` returns nothing when another
+        // reader of the same run (the recovery notice, the plan panel) stored its copy first,
+        // and the decision must not be lost to that.
+        let record = await fetchOrchestrationRun(runId, { conversationId });
         // The terminal frame can arrive just before the server releases the attempt it ended.
         for (let check = 0; check < 4 && record && (isOrchestrationRunPending(record)
             || normalizeOrchestrationRecovery(record.recovery)?.reason_code === 'execution_live'); check += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            record = await loadOrchestrationRecovery(conversationId, runId);
+            await pause();
+            record = await fetchOrchestrationRun(runId, { conversationId });
         }
         const decision = normalizeOrchestrationRecovery(record?.recovery)?.auto_continue;
         if (!decision) return;
-        const result = await retryOrchestrationRun(
-            conversationId, runId, undefined, decision.kind === 'available_information', true,
-        );
-        if (!result.started) useOrchestrationStore.getState().updateRunRecovery(runId, { error: shownError });
+        // The failed attempt's own stream is still closing when its terminal frame arrives, and
+        // a retry is refused while the conversation is busy. Wait for it to become idle; the
+        // second try covers a saved-run read that lost to another reader.
+        let tries = 0;
+        for (let check = 0; check < 12 && tries < 2; check += 1) {
+            if (useChatStore.getState().activeConversationId !== conversationId) break;
+            const busy = useChatStore.getState().streaming
+                || Object.values(useOrchestrationStore.getState().inFlight)
+                    .some((run) => run.conversationId === conversationId);
+            if (!busy) {
+                tries += 1;
+                const result = await retryOrchestrationRun(
+                    conversationId, runId, undefined, decision.kind === 'available_information', true,
+                );
+                if (result.started || result.confirmationRequired) return;
+            }
+            await pause();
+        }
+        useOrchestrationStore.getState().updateRunRecovery(runId, { error: shownError });
     } catch {
         useOrchestrationStore.getState().updateRunRecovery(runId, { error: shownError });
     }
