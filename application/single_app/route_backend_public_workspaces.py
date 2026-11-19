@@ -3,6 +3,7 @@
 from urllib.parse import quote
 
 from config import *
+from functions_appinsights import log_event
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_prompts import count_public_prompts_for_workspace
@@ -90,12 +91,16 @@ def get_user_details_from_graph(user_id):
     Returns a dict with displayName and email, or empty strings if not found.
     """
     try:
+        normalized_user_id = str(user_id or "").strip()
+        if not normalized_user_id:
+            raise ValueError("Microsoft Graph user identifier is required")
+        user_endpoint = get_graph_endpoint(f"/users/{quote(normalized_user_id, safe='')}")
+
         token = get_valid_access_token()
         if not token:
+            log_event("[USERS] Graph member info lookup has no access token", level=logging.WARNING)
             return {"displayName": "", "email": ""}
 
-        user_endpoint = get_graph_endpoint(f"/users/{user_id}")
-            
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
@@ -105,7 +110,9 @@ def get_user_details_from_graph(user_id):
             "$select": "id,displayName,mail,userPrincipalName"
         }
 
-        response = requests.get(user_endpoint, headers=headers, params=params)
+        response = requests.get(user_endpoint, headers=headers, params=params, allow_redirects=False)
+        if 300 <= response.status_code < 400:
+            raise requests.exceptions.HTTPError("Microsoft Graph metadata redirects are not allowed", response=response)
         response.raise_for_status()
 
         user_data = response.json()
@@ -116,8 +123,15 @@ def get_user_details_from_graph(user_id):
             "email": email
         }
 
-    except Exception as e:
-        print(f"Failed to get user details for {user_id}: {e}")
+    except Exception as error:
+        log_event(
+            "[USERS] Graph member info lookup failed",
+            extra={
+                "error_type": type(error).__name__,
+                "status_code": getattr(getattr(error, "response", None), "status_code", None),
+            },
+            level=logging.WARNING,
+        )
         return {"displayName": "", "email": ""}
 
 
