@@ -8114,12 +8114,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "9c735c78900afacfd26a7ae01ec09caa3d99fda126c2e85b320d5d9fa0c46ec1"
+        "module_sha256": "fcac773b845606b6bbf12e5923fd67093d8b19e40c827f8ed2894178bcbb1825"
       },
       "classification": "sdk-compatible",
-      "contract": "Unchanged query owner consumes plain query-row dictionaries through get(), then passes scalar upload fields to the external file-input boundary; conversation partition routing is verified. No point response or exact-dict sink.",
+      "contract": "Unchanged query owner consumes plain query-row dictionaries through get(), then passes scalar upload fields to the external file-input boundary; conversation partition routing is verified. The real-module SDK witness also verifies point wrappers, upload filtering, size limits and deduplication with Blob I/O isolated. Azure project URL validation changes separate helpers/imports, not this query consumer. No point response or exact-dict sink.",
       "tests": [
-        "functional_tests/test_agent_credential_owner_runtime.py::test_foundry_chat_upload_query_owner_contract"
+        "functional_tests/test_agent_credential_owner_runtime.py::test_foundry_chat_upload_query_owner_contract",
+        "functional_tests/test_foundry_orchestration_polling_budget.py::test_recent_chat_upload_inputs_consume_sdk_query_rows"
       ],
       "evidence_scope": "owner-runtime"
     },
