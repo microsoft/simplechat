@@ -7,18 +7,20 @@
 - Prepared: **2026-11-14**
 - Initial implementation version: **0.261.429**
 - Corrective tranche: **0.261.430–0.261.438**
-- Related application version: `application/single_app/config.py` and
-  authenticated staging bootstrap both report **0.261.438**.
+- Staging application version: authenticated bootstrap reported **0.261.438**.
+  The local Development merge uses **0.261.460** in
+  `application/single_app/config.py`; it has not been deployed.
 - Latest live validation: **2026-11-19 UTC**.
-- Local source-control checkpoint: HEAD `55168baefe52`, no staged paths;
-  corrective changes remain uncommitted. No Git write was performed by the
-  live validation.
+- Pre-merge feature tip: `a8c17078a4e684e2f036eb02afbe7bd5c5b0cf44`
+  (`.438`), preserved at `backup/feature-customendpoints-before-development-20261119`.
 - Working branch: `feature/customendpoints`
 - Reviewed feature base: `a3f9df38470b8e7c6475028bc4464f27c9f3e64e`
-- Pinned Development source for the reviewed merge:
+- Pinned Development source for the original content integration:
   `5f2390160f1c3274d55ddc311b3b102fdfa415a7`
 - Preserved reviewed merge:
   `bf923068ab3d8ae2e286060246ecb9ad6e671f60`
+- Current merge source (`MERGE_HEAD`):
+  `1137910e57d094b5ea97018f3e0b1debc5c25530` (`origin/Development`, `.459`)
 - Known tracking issue:
   [microsoft/simplechat#1928](https://github.com/microsoft/simplechat/issues/1928),
   "Embedding-only models appear in V1 and V2 chat model pickers"
@@ -34,10 +36,40 @@ baseline and rerunning merge validation.
 
 ## Current State — Read This First
 
-**The original merge and Responses integration are complete.** There are no
-unresolved merge conflicts and no active Git merge operation. The remaining
-work is stabilization, source-control closeout and separately tracked UI
-parity—not another merge.
+The originally resolved source and Responses integration are in the feature
+branch. The earlier two-parent merge is preserved on
+`wip/feature-customendpoints-development-merge-20261112`, but is not an
+ancestor of `.438`. The feature branch picked up the resolved code in
+single-parent commit `864bfe8eb`; the only differences from the preserved
+merge are a dependency pin and its compatibility test.
+
+On November 19, 2026, a new real Git merge started on `feature/customendpoints`
+with `.438` as `HEAD` and `.459` as `MERGE_HEAD`. The ordinary merge reported 491
+unmerged paths. Comparing the same two trees against the earlier reviewed
+Development snapshot reused existing resolutions for 464 paths and identified
+one incorrectly combined clean path. The remaining 27 paths were reconciled
+without changing `MERGE_HEAD`. The user requested an uncommitted, staged
+handoff. Development ancestry will be recorded only when the merge is
+committed. The live checks below establish staging behavior for their listed
+builds, not for the new merged tree.
+
+### Development Merge Handoff (0.261.460)
+
+- All conflicts resolved and staged. No merge commit, push, PR, or deployment.
+- Local verification: V2 typecheck and production build; 120 Chromium tests
+  for Retry/Stop, credential recovery, catalog, embeddings, workflow history,
+  theme behavior, Classic math, and local assets. Focused offline backend,
+  route-policy, MCP fingerprint, request-boundary, dependency, and Terms
+  checks passed. The two generated docs checks, browser-asset gate, and
+  PR-scoped XSS/access-control guards also passed.
+- Not PR-green: the Cosmos review gate reports 280 owners and four test doubles
+  without matching review evidence (568 diagnostics). The inventory records
+  these as `review-required`; no check was weakened. Existing endpoint and
+  workflow test-harness failures were reproduced against `.438` and are not
+  counted as new merge regressions. Repository-wide collection and the
+  broader test/inventory overhaul remain deferred.
+- The remote `Development` tip advanced to `6613136e` while validating. This
+  staged result is against the approved `1137910e5` parent, not the later tip.
 
 ### Already complete
 

@@ -983,11 +983,24 @@ CAPABILITY_REGISTRY = (
         'request_gate': None,
         'summary': "Compute over CSV or Excel data rather than reading it as prose.",
         'when_to_use': (
-            'Compute over exactly one authorized replayable CSV or workbook without publishing files. '
+            'Compute over authorized replayable CSV or workbook data without publishing files. '
             'Query requires a row-local query_expression and explicit columns; transformations require '
             'an executable transformation_spec or explicit schema. Analysis-only returns analysis, '
             'not implicit source rows. Declare exactly the selected result_output_variants outputs. '
-            'Mixed/multiple sources and bare prose aggregate plans are unsupported.'
+            'query/transform/analysis accept one file. For precise multi-file calculations or grouped '
+            'totals, use native_operation=prepare first to retain complete rule/context columns and '
+            'declared key profiles. A newly authored multi-file native_operation=relate must set '
+            'calculation_mode=prepared-v1, bind exactly that preparation context input, and omit '
+            'relational_spec; its native owner authors and executes the bounded deterministic program. '
+            'Direct trusted explicit-spec plans are a legacy compatibility path, not a new planner choice. '
+            'Each dataset column is alias.header. '
+            'datasets[].columns is an optional assertion of the complete ordered native header, '
+            'including unused fields, not a projection. Copy the inspected header or omit that '
+            'assertion; a project step selects fields. Never infer complete rows from schema samples. '
+            'Join how/cardinality/on are explicit; null keys never match. Aggregated sum/min/max are '
+            'decimal strings, not floats. Preparation declares context and coverage; calculation '
+            'declares records, lineage and coverage. '
+            'All bound datasets must contribute to the result. No prose-only calculation or narrative source is admitted.'
         ),
         'settings_gates': (),
         'settings_gates_any': (
@@ -1004,7 +1017,7 @@ CAPABILITY_REGISTRY = (
         'result_contract_version': 'native-tabular-result-v1',
         'result_outputs': {'coverage': 'structured-v1'},
         'optional_result_outputs': {'records': 'records-v1', 'analysis': 'structured-v1'},
-        'result_input_kinds': {},
+        'result_input_kinds': {'preparation': ('structured-v1',)},
         'partial_inputs_supported': False,
         'produces': (PRODUCES_RETAINED_RESULTS,),
         'cost_class': COST_CLASS_MEDIUM,
@@ -1475,7 +1488,9 @@ CAPABILITY_REGISTRY = (
             "Bind earlier research or prepared content as named inputs. Do not duplicate agent work."
             " When the action catalog says document_binding_supported, bind selected workspace "
             "documents in arguments.document_ids. Native metadata inspection can then satisfy "
-            "the selected-source requirement without a redundant Search or Analyze step."
+            "the selected-source requirement without a redundant Search or Analyze step. "
+            "Declare document_read_mode=content for text, native for native properties/layout/comments, "
+            "or mixed for both; a native report is never a CSV data or calculation reader."
         ),
         'settings_gates': (
             'enable_chat_orchestration',
@@ -1509,6 +1524,14 @@ CAPABILITY_REGISTRY = (
                         'Exact selected workspace document IDs. Only an action whose catalog says '
                         'document_binding_supported may use this field. Every read is confined to '
                         'these sources and the action/user permissions.'
+                    ),
+                },
+                'document_read_mode': {
+                    'type': 'string', 'enum': ['content', 'native', 'mixed'],
+                    'description': (
+                        'Purpose of a document-bound action: content reads, native metadata inspection, '
+                        'or both. Requires document_ids and a Document Search action. '
+                        'Source format and current permissions still restrict every function.'
                     ),
                 },
                 'visuals': {
@@ -1640,6 +1663,36 @@ CAPABILITY_REGISTRY = (
                 'knowledge_basis': {'type': 'string', 'enum': list(KNOWLEDGE_BASES)},
                 'response_policy': {
                     'type': 'string', 'enum': ['available_information', 'complete_inputs'],
+                },
+                'tabular_requirement': {
+                    'type': 'object',
+                    'additionalProperties': False,
+                    'required': ['mode', 'document_ids'],
+                    'properties': {
+                        'mode': {'type': 'string', 'enum': [
+                            'overview', 'complete_records', 'calculation', 'calculation_answer',
+                        ]},
+                        'version': {'type': 'string', 'const': 'tabular-calculation-answer-v1'},
+                        'document_ids': {
+                            'type': 'array', 'minItems': 1, 'maxItems': 100,
+                            'uniqueItems': True,
+                            'items': {'type': 'string', 'minLength': 1, 'maxLength': 256},
+                        },
+                    },
+                    'description': (
+                        'Declare how named tabular evidence is used. complete_records requires '
+                        'complete retained rows; calculation requires complete native records, '
+                        'lineage and coverage from tabular_analyze relate.'
+                    ),
+                },
+                'annotation_provenance_input': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'maxLength': 128,
+                    'description': (
+                        'Name the bound native Word comments input that authorizes deterministic '
+                        'author, date, root and reply metadata for a single records-v1 output.'
+                    ),
                 },
                 'semantic_review': {
                     'type': 'string', 'enum': ['auto', 'on', 'off'],
@@ -2033,6 +2086,7 @@ def _resolve_descriptor(descriptor):
             for operation, task_type in (
                 ('query', 'structured_export'), ('transform', 'structured_export'),
                 ('analysis', 'hierarchical_analysis'), ('transform', 'combined'),
+                ('prepare', 'structured_export'), ('relate', 'structured_export'),
             )
         ]
     return capability

@@ -34,6 +34,7 @@ PLUGIN_INFRASTRUCTURE_FILES = {
     "__init__.py",
     "base_plugin.py",
     "logged_plugin_loader.py",
+    "mcp_guarded_transport.py",  # Native transport infrastructure, not an authorable action.
     "plugin_health_checker.py",
     "plugin_invocation_logger.py",
     "plugin_invocation_thoughts.py",
@@ -307,10 +308,14 @@ def get_route_urls(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
 
 
 def iter_rendered_templates(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
-    """Return static template names rendered inside a function."""
+    """Return static template names rendered inside a function.
+
+    ``render_page(classic, modern, ...)`` names the classic template first, and that is the
+    page this inventory describes, so its first argument counts like ``render_template``'s.
+    """
     templates: set[str] = set()
     for child in ast.walk(node):
-        if not isinstance(child, ast.Call) or get_ast_name(child.func) != "render_template":
+        if not isinstance(child, ast.Call) or get_ast_name(child.func) not in {"render_template", "render_page"}:
             continue
         if child.args and isinstance(child.args[0], ast.Constant) and isinstance(child.args[0].value, str):
             templates.add(child.args[0].value)

@@ -194,6 +194,17 @@ Use destination governance to limit which remote MCP servers personal, group, an
 actions may contact. Policies apply to saves, discovery, connection tests, and tool
 execution, not just to the server choices shown in the action editor.
 
+Starting in **0.261.435** (`application/single_app/config.py`), remote MCP
+connections also have a mandatory safety floor independent of the switches
+below. Loopback, link-local and cloud infrastructure destinations cannot be
+enabled by an allowlist, including when a hostname resolves to such an address.
+The transport checks the addresses it actually connects to.
+
+This is not a blanket private-network ban: legitimate enterprise private
+FQDNs/IPs remain supported unless an existing stricter policy excludes them.
+See [action connection compatibility]({{ '/guides/workspace-agents-and-actions/' | relative_url }}#connection-destinations-and-compatibility)
+for Yamcs reverse proxies and upgrade considerations.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -211,12 +222,13 @@ it is enforced even while the switch above is off.
 
 A destination is decided in this order:
 
-1. With blocking on, an unsafe address is refused.
-2. With enforcement off, everything else is allowed.
-3. A policy that blocks the person refuses any destination its pattern matches, even if
+1. The mandatory connection safety floor always refuses forbidden destinations.
+2. With optional private/local IP blocking on, its additional literal-address restrictions apply.
+3. With enforcement off, other destinations remain eligible under the safety floor.
+4. A policy that blocks the person refuses any destination its pattern matches, even if
    another policy allows it.
-4. A policy that allows the person allows any destination its pattern matches.
-5. Anything else is refused.
+5. A policy that allows the person allows any destination its pattern matches.
+6. Anything else is refused.
 
 #### Destination policies
 

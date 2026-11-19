@@ -1,10 +1,11 @@
 # test_orchestration_planning_persistence.py
 """
 Regression coverage for durable initial orchestration turns.
-Version: 0.261.423
+Version: 0.261.446
 Implemented in: 0.261.415
 Typed planner failure persistence added in: 0.261.419
 Shared two-correction allowance updated in: 0.261.422
+Protocol-draft retry coverage updated in: 0.261.446
 
 Real authenticated routes and SDK-default offline storage exercise admission,
 clarification, failure, disconnect, Auto handoff, cancellation, and explicit retry.
@@ -68,7 +69,9 @@ def test_initial_question_and_outcome_are_saved(empty_history_runtime, outcome):
     proposal = {"kind": "plan", "steps": []} if outcome == "failed" else (
         style_question() if outcome == "clarification" else plan_doc()
     )
-    runtime.harness.replies.append(json.dumps(proposal))
+    runtime.harness.replies.extend(
+        [json.dumps(proposal)] * (3 if outcome == "failed" else 1)
+    )
     response = runtime.client.post(PLAN_PATH, json=body(), buffered=True)
     frames = sse_frames(response)
     saved = questions(runtime)

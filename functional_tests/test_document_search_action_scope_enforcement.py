@@ -2,8 +2,9 @@
 # test_document_search_action_scope_enforcement.py
 """
 Functional test for document search action scope enforcement.
-Version: 0.261.311
+Version: 0.261.444
 Implemented in: 0.261.276
+Explicit native slide request validation added in: 0.261.444
 
 This test ensures that document-search action settings narrow runtime scopes
 without broadening user access, and that page-based summary target lengths are
@@ -15,12 +16,40 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_PATH = REPO_ROOT / "application" / "single_app" / "semantic_kernel_plugins" / "document_search_plugin.py"
 sys.path.insert(0, str(PLUGIN_PATH.parents[1]))
 
 from public_chat_scope_state import public_chat_scope_context  # noqa: E402
+
+
+STUB_MODULE_NAMES = (
+    "semantic_kernel",
+    "semantic_kernel.functions",
+    "content_screening.contracts",
+    "functions_authentication",
+    "functions_agent_document_citations",
+    "functions_search",
+    "functions_search_service",
+    "semantic_kernel_plugins.base_plugin",
+    "semantic_kernel_plugins.plugin_invocation_logger",
+)
+
+
+@pytest.fixture(autouse=True)
+def restore_injected_modules():
+    previous = {name: sys.modules.get(name) for name in STUB_MODULE_NAMES}
+    try:
+        yield
+    finally:
+        for name, module in previous.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
 
 def normalize_search_scope(doc_scope, default_scope="all"):
@@ -82,6 +111,9 @@ def install_module_stubs():
     search_service.SUMMARY_DEFAULT_WINDOW_SUMMARY_TARGET = "2 pages"
     search_service.SUMMARY_DEFAULT_WINDOW_UNIT = "pages"
     search_service.get_document_chunks_payload = lambda **kwargs: {"operation": "chunks", **kwargs}
+    search_service.get_document_accessibility_payload = lambda **kwargs: {
+        "operation": "accessibility", **kwargs,
+    }
     search_service.search_documents = lambda **kwargs: {"operation": "search", "results": [], **kwargs}
     search_service.summarize_document_content = lambda **kwargs: {"operation": "summary", **kwargs}
     sys.modules["functions_search_service"] = search_service
@@ -120,6 +152,38 @@ def test_scope_helper_defaults_and_restrictions():
     assert plugin_module.intersect_allowed_search_ids("g1,g2", ["g2", "g3"]) == ["g2"]
     assert plugin_module.intersect_allowed_search_ids("", ["g2", "g3"]) == ["g2", "g3"]
     assert plugin_module.intersect_allowed_search_ids("g1,g2", []) == "g1,g2"
+
+
+def test_explicit_invalid_native_slide_number_reaches_owner_while_omission_stays_none(monkeypatch):
+    plugin_module = load_plugin_module()
+    from native_document_evidence import NativeInspectionRequestError
+
+    calls = []
+
+    def inspect(**kwargs):
+        calls.append(kwargs)
+        value = kwargs["native_slide_number"]
+        if value is not None and (type(value) is not int or value <= 0):
+            raise NativeInspectionRequestError(
+                "native_slide_number_invalid", field="native_slide_number",
+            )
+        return {"native_slide_number": value}
+
+    monkeypatch.setattr(plugin_module, "get_document_accessibility_payload", inspect)
+    plugin = plugin_module.DocumentSearchPlugin({
+        "additionalFields": {"allowed_scopes": ["personal"]},
+    })
+    invalid = plugin.get_document_accessibility_report(
+        document_id="deck", doc_scope="personal", native_section="objects",
+        native_slide_number=-2,
+    )
+    assert invalid["error_code"] == "native_slide_number_invalid"
+    omitted = plugin.get_document_accessibility_report(
+        document_id="deck", doc_scope="personal", native_section="objects",
+    )
+    assert omitted["native_slide_number"] is None
+    assert [call["native_slide_number"] for call in calls] == [-2, None]
+    assert all(name in sys.modules for name in STUB_MODULE_NAMES)
 
 
 def test_aggregate_public_scope_cannot_bypass_action_scope_or_workspace_restrictions():

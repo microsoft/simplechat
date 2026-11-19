@@ -2,7 +2,7 @@
 """
 Functional test for V2 UI local browser asset compliance.
 
-Version: 0.261.003
+Version: 0.261.458
 Implemented in: 0.261.003
 
 This test ensures the compiled V2 bundle loads no browser runtime code from the public
@@ -22,23 +22,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 V2_SOURCE_DIR = REPO_ROOT / "application" / "v2_ui"
 V2_BUILD_DIR = REPO_ROOT / "application" / "single_app" / "static" / "v2"
 
-# Hosts that serve browser runtime code. Matching any of these in a shipped asset means
-# the browser would fetch executable code from outside the application.
-FORBIDDEN_CDN_HOSTS = (
-    "cdn.jsdelivr.net",
-    "unpkg.com",
-    "cdnjs.cloudflare.com",
-    "esm.sh",
-    "skypack.dev",
-    "code.jquery.com",
-    "stackpath.bootstrapcdn.com",
-    "maxcdn.bootstrapcdn.com",
-    "ajax.googleapis.com",
-    "fonts.googleapis.com",
-    "fonts.gstatic.com",
-    "cdn.skypack.dev",
-    "jspm.dev",
-)
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from check_browser_assets import check_text, scan
 
 # Matches src/href/url()/import() targets pointing at an absolute external URL.
 EXTERNAL_ASSET_REFERENCE_RE = re.compile(
@@ -69,12 +55,11 @@ def test_built_bundle_has_no_cdn_hosts():
         )
         return True
 
-    violations = []
-    for path in assets:
-        content = path.read_text(encoding="utf-8", errors="ignore")
-        for host in FORBIDDEN_CDN_HOSTS:
-            if host in content:
-                violations.append(f"{path.relative_to(REPO_ROOT)} references {host}")
+    violations = [
+        str(finding)
+        for path in assets
+        for finding in check_text(path, path.read_text(encoding="utf-8"))
+    ]
 
     assert violations == [], "CDN references found in the compiled V2 bundle:\n  " + "\n  ".join(
         violations
@@ -120,26 +105,15 @@ def test_source_declares_no_cdn_dependency():
     """The SPA source contains no CDN URL, so violations are caught pre-build."""
     print("Testing V2 source for CDN references...")
 
-    source_files = [
-        path
-        for path in V2_SOURCE_DIR.rglob("*")
-        if path.is_file()
-        and path.suffix.lower() in {".ts", ".tsx", ".css", ".html"}
-        and "node_modules" not in path.parts
+    assert (V2_SOURCE_DIR / "src").is_dir(), f"No V2 source found under {V2_SOURCE_DIR}"
+    violations = [
+        str(finding)
+        for finding in scan(paths=[V2_SOURCE_DIR.relative_to(REPO_ROOT)])
     ]
-
-    assert source_files, f"No V2 source files found under {V2_SOURCE_DIR}"
-
-    violations = []
-    for path in source_files:
-        content = path.read_text(encoding="utf-8", errors="ignore")
-        for host in FORBIDDEN_CDN_HOSTS:
-            if host in content:
-                violations.append(f"{path.relative_to(REPO_ROOT)} references {host}")
 
     assert violations == [], "CDN references found in V2 source:\n  " + "\n  ".join(violations)
 
-    print(f"  Checked {len(source_files)} source file(s); no CDN hosts found.")
+    print("  Checked V2 source and vendor assets; no external asset loaders found.")
     print("V2 source CDN test passed!")
     return True
 

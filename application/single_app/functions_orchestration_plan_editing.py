@@ -52,7 +52,7 @@ from functions_orchestration_plan_revisions import (
     resolve_revision_result_aliases,
 )
 from functions_orchestration_planner import conversation_retrieval_allowed, plan_request
-from functions_orchestration_registry import resolve_available_capabilities
+from functions_orchestration_registry import required_capability_ids, resolve_available_capabilities
 from functions_orchestration_schema import (
     PlanValidationError,
     apply_plan_edits,
@@ -485,7 +485,8 @@ def validate_edited_plan(
         validate_plan_document_source_kinds(checked, {
             item['document_id']: item['source_kind']
             for item in candidates if item.get('source_kind')
-        })
+        }, selected_document_ids=(seeds or {}).get('document_ids'),
+           required_capabilities=required_capability_ids(seeds))
     except PlanValidationError as exc:
         raise PlanRevisionError(
             'That version cannot be used with the current capabilities. Your current plan is unchanged.',

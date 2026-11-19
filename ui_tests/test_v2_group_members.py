@@ -1,8 +1,9 @@
 # test_v2_group_members.py
 """
 Production-SPA coverage for the native V2 group Members section.
-Version: 0.261.165
+Version: 0.261.448
 Implemented in: 0.261.155
+An inactive or unknown group's owners and admins keep Members, with adding turned off and explained: 0.261.448
 
 Exercises the real Members section -- a section of the group WorkspaceShell in its Manage group,
 built on the M7B native membership routes -- against closed synthetic HTTP. The fixture
@@ -13,8 +14,10 @@ that read a personal, tenant-admin or classic membership route, invented a contr
 withhold, or kept an optimistic row would fail the run rather than pass.
 
 It pins one navigation tree (Members in the rail and on the overview, no second button), reads and
-gating for every role and status, the search, role filter and page in the URL, add with each
-directory outcome, CSV import with mixed results and a retry of the failed rows, role change with
+gating for every role and status -- including a locked, inactive or unknown group, where an owner or
+admin keeps the list, role changes, removal and requests but not Add member or Import CSV, and any
+other member is told why Members is unavailable -- the search, role filter and page in the URL, add
+with each directory outcome, CSV import with mixed results and a retry of the failed rows, role change with
 the self-demotion confirmation, remove, leave, bulk role change and bulk remove with per-item
 results, transfer with its consequences, approve and reject with `already_member` and
 `no_pending_request` as already handled, every refusal the page handles, a malformed envelope as a
@@ -48,6 +51,12 @@ LAYOUTS = [
 
 MEMBERS_PATH = "/api/groups/group-a/membership/members"
 REQUESTS_PATH = "/api/groups/group-a/membership/requests"
+
+# The notice a manager sees where Add member and Import CSV would be, as the page words it.
+STILL_WORKS = "Changing roles, removing members and reviewing requests to join still work."
+LOCKED_ADD_BLOCKED = f"This group is locked, so members can\u2019t be added or imported. {STILL_WORKS}"
+INACTIVE_ADD_BLOCKED = f"This group is inactive, so members can\u2019t be added or imported. {STILL_WORKS}"
+UNKNOWN_ADD_BLOCKED = f"This group\u2019s status isn\u2019t recognized, so members can\u2019t be added or imported. {STILL_WORKS}"
 
 
 # --------------------------------------------------------------------------
@@ -162,11 +171,14 @@ def test_members_is_a_section_of_the_one_workspace_navigation(group_members_ui):
     expect(nav.get_by_text("Manage", exact=True)).to_be_visible()
     expect(page.get_by_role("heading", name="Manage", exact=True)).to_be_visible()
     expect(page.get_by_role("link").filter(has_text="Who belongs to this group, their roles, and who is asking to join.")).to_be_visible()
-    # M7C landed native Settings/Activity/Statistics, so an active group no longer hands off to
-    # classic from the header; the button now survives only for inactive or unknown statuses (§8.9).
+    # No classic handoff remains in the header for any status: every Manage section is native, and
+    # an inactive or unknown group's owner and admins keep Members, Settings, Activity and Statistics.
     expect(page.get_by_role("button", name=re.compile("Manage group \\(classic\\)"))).to_have_count(0)
     expect(page.get_by_role("button", name=re.compile("members", re.IGNORECASE))).to_have_count(0)
-    assert not ui.membership_requests(), "The overview must not read the member list."
+    # The overview counts the members with a one-row page; it must never read the member list itself.
+    assert all(entry.query.get("page_size") == ["1"] for entry in ui.membership_requests()), (
+        "The overview must not read the member list."
+    )
     nav.get_by_role("link", name="Members", exact=True).click()
     expect(page).to_have_url(f"{ORIGIN}/v2/groups/group-a/members")
     expect(page.get_by_role("heading", name="Members", exact=True)).to_be_visible()
@@ -252,11 +264,60 @@ def test_a_locked_group_hides_adding_but_keeps_the_rest(group_members_ui):
     expect(request_row(ui, "Priya Pending")).to_be_visible()
     expect(page.get_by_role("button", name="Add member", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Import CSV", exact=True)).to_have_count(0)
+    # The missing controls are explained, in words that match what the server still allows.
+    expect(page.get_by_test_id("members-add-blocked")).to_have_text(LOCKED_ADD_BLOCKED)
 
 
-def test_an_inactive_group_offers_no_members_section(group_members_ui):
+@pytest.mark.parametrize("role", ["Owner", "Admin"])
+@pytest.mark.parametrize("status,notice", [
+    ("inactive", INACTIVE_ADD_BLOCKED), ("unknown", UNKNOWN_ADD_BLOCKED),
+])
+def test_an_inactive_or_unknown_groups_managers_keep_members_with_adding_off(group_members_ui, role, status, notice):
+    """Classic keeps the member list for an owner or admin of a locked or inactive group, and the
+    membership routes refuse only an add in such a status, so V2 keeps Members for them too."""
     ui, page = group_members_ui, group_members_ui.page
-    ui.set_viewer_role("group-a", "Owner", status="inactive")
+    ui.set_viewer_role("group-a", role, status=status)
+    open_members(ui)
+    assert calls(ui, "GET", MEMBERS_PATH) and calls(ui, "GET", REQUESTS_PATH), (
+        "A manager reads the list and the pending requests."
+    )
+    maya = row(ui, "Maya Member")
+    expect(maya.get_by_label("Role for Maya Member")).to_be_visible()
+    expect(maya.get_by_role("button", name="Remove Maya Member", exact=True)).to_be_visible()
+    expect(request_row(ui, "Priya Pending")).to_be_visible()
+    expect(page.get_by_role("button", name="Add member", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Import CSV", exact=True)).to_have_count(0)
+    expect(page.get_by_test_id("members-add-blocked")).to_have_text(notice)
+    # Nothing in the group workspace sends a manager to classic any more.
+    expect(page.get_by_role("button", name=re.compile("classic", re.IGNORECASE))).to_have_count(0)
+    expect(page.get_by_text("Members is not available", exact=True)).to_have_count(0)
+    assert not ui.classic_visits
+    assert_no_foreign_membership_traffic(ui)
+
+
+@pytest.mark.parametrize("status", ["inactive", "unknown"])
+def test_a_manager_still_changes_roles_removes_members_and_reviews_requests_in_an_inactive_group(group_members_ui, status):
+    """The membership routes check the group's status only for an add, so these stay offered and work."""
+    ui, page = group_members_ui, group_members_ui.page
+    ui.set_viewer_role("group-a", "Owner", status=status)
+    open_members(ui)
+    row(ui, "Maya Member").get_by_label("Role for Maya Member").select_option("DocumentManager")
+    expect(status_text(ui, "Maya Member's role is now Document manager.")).to_be_visible()
+    row(ui, "Lee Reader").get_by_role("button", name="Remove Lee Reader", exact=True).click()
+    dialog(ui, "Remove Lee Reader?").get_by_role("button", name="Remove member", exact=True).click()
+    expect(status_text(ui, "Lee Reader was removed from the group.")).to_be_visible()
+    expect(row(ui, "Lee Reader")).to_have_count(0)
+    assert [entry.body for entry in calls(ui, "PATCH", f"{MEMBERS_PATH}/{MAYA['userId']}")] == [{"role": "DocumentManager"}]
+    assert len(calls(ui, "DELETE", f"{MEMBERS_PATH}/{LEE['userId']}")) == 1
+    assert not calls(ui, "POST", MEMBERS_PATH), "No add is ever sent for a group that cannot take members."
+    expect(page.get_by_test_id("members-add-blocked")).to_be_visible()
+
+
+@pytest.mark.parametrize("role", ["DocumentManager", "User"])
+def test_an_inactive_group_offers_a_plain_member_no_members_section(group_members_ui, role):
+    """Only owners and admins keep Members in an inactive group; everyone else still gets the reason."""
+    ui, page = group_members_ui, group_members_ui.page
+    ui.set_viewer_role("group-a", role, status="inactive")
     ui.open("/groups/group-a/members")
     expect(page.get_by_text("Members is not available", exact=True)).to_be_visible()
     expect(page.get_by_text(GROUP_INACTIVE_REASON, exact=True)).to_be_visible()

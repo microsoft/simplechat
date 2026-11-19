@@ -39,6 +39,7 @@ import {
 } from '../../lib/userSettings';
 import { Toggle, Skeleton } from '../ui/primitives';
 import { SettingsCard, SettingsGroup } from './SettingsCard';
+import { ColorModeCard } from './ColorModeCard';
 import { CompletionAudioCard, MicrophoneCard, SpokenRepliesCard } from './VoiceAudioCards';
 import { RetentionCard } from './RetentionCard';
 import { FactMemoryBench } from './FactMemoryBench';
@@ -61,6 +62,7 @@ import {
     setWorkflowAlertSoundsDeviceEnabled,
     useWorkflowAlertDevicePreference,
 } from '../../lib/workflowAlertDevicePreferences';
+
 
 function FontSizeChoice({
     value,
@@ -299,6 +301,8 @@ export function PreferencesTab() {
                         onChange={(next) => update({ fontSizePreference: next })}
                     />
                 </SettingsCard>
+
+                <ColorModeCard />
 
                 <SettingsCard
                     title="Conversation list"

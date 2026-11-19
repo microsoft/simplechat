@@ -1,8 +1,9 @@
 # orchestration_harness_execution.py
 """Initialized headless harness fixtures; only external storage/model I/O is doubled.
 
-Version: 0.261.355
+Version: 0.261.445
 Implemented in: 0.261.127
+Completion-marker test responses added in: 0.261.445
 Publication-only admission guard updated in: 0.261.129
 Direct result-store binding guard updated in: 0.261.130
 
@@ -101,6 +102,8 @@ class CompletionClient:
             reply = reply()
         if isinstance(reply, Exception):
             raise reply
+        if isinstance(reply, SimpleNamespace) and hasattr(reply, "choices"):
+            return reply
         return SimpleNamespace(
             usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3, total_tokens=10),
             choices=[SimpleNamespace(
@@ -209,8 +212,8 @@ class HarnessEnvironment:
             "enable_fact_memory_plugin": False,
             "enable_semantic_kernel": False,
             "chat_orchestration_max_steps": 8,
-            "chat_orchestration_total_timeout_seconds": 600,
-            "chat_orchestration_step_timeout_seconds": 120,
+            "chat_orchestration_total_timeout_seconds": 900,
+            "chat_orchestration_step_timeout_seconds": 180,
             "gpt_model": {"selected": [{
                 "deploymentName": "gpt-4o", "modelName": "gpt-4o", "responseLength": 1024,
             }]},

@@ -1052,6 +1052,13 @@ export interface CustomPageNavItem {
     icon: string;
     url: string;
     open_in_new_tab: boolean;
+    /**
+     * Whether the page can be shown inside V2's own shell, as a chrome-less frame of
+     * `/custom/<slug>?embed=1`. Static pages always can; a Python-backed page only when its
+     * extension declares `supports_embed`. Absent on a payload from a server that predates the
+     * field, which reads as false and keeps the classic link.
+     */
+    embeddable?: boolean;
 }
 
 /** An administrator-approved link shown in the navigation rail. */
@@ -1183,7 +1190,26 @@ export interface ActiveScopePayload {
     scope: ActiveScope;
 }
 
+/**
+ * The idle-session timeout an administrator configured, as bootstrap reports it under
+ * `session.idle_timeout`. The server normalizes the values with the same helper it enforces
+ * the timeout with, so the minutes here are the ones that will sign the user out.
+ */
+export interface IdleTimeoutBootstrap {
+    enabled: boolean;
+    timeout_minutes: number;
+    warning_minutes: number;
+    /** The administrator's sentence for the warning dialog. Plain text, rendered as text. */
+    warning_message: string;
+}
+
 export interface BootstrapPayload {
+    ui?: {
+        policy: 'both' | 'classic' | 'modern';
+        default: 'classic' | 'modern';
+        effective: 'classic' | 'modern';
+        can_switch: boolean;
+    };
     version: string;
     user: {
         id: string;
@@ -1289,6 +1315,13 @@ export interface BootstrapPayload {
     safety_warnings?: {
         pending: number;
     };
+    /**
+     * How the signed-in session ends. Absent from older servers, which reads as "no idle
+     * warning": the interface then behaves as it did before the warning existed.
+     */
+    session?: {
+        idle_timeout?: IdleTimeoutBootstrap;
+    };
     /** Sanitized settings. Never contains keys, secrets or connection strings. */
     settings: Json;
 }
@@ -1323,6 +1356,12 @@ export interface WorkspaceAvailability {
  * signalled by the presence of `content` / `done` rather than by a `type` value, which is
  * why almost everything here is optional.
  */
+export interface AgentCredentialRecovery {
+    scope: 'personal' | 'group' | 'global';
+    can_edit: boolean;
+    edit_url?: string;
+}
+
 export interface ChatStreamEvent {
     input_request?: import('../stores/userInputStore').UserInputRequest;
     credential_request?: CredentialRequest;
@@ -1346,6 +1385,7 @@ export interface ChatStreamEvent {
     /** Direct image generation completes with a source URL rather than assistant text. */
     image_url?: string;
     error?: string;
+    agent_credential_recovery?: AgentCredentialRecovery;
     auth_required?: boolean;
     /** Same-origin handoff that reauthorizes the target and starts Foundry consent. */
     auth_url?: string;

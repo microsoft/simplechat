@@ -35,7 +35,9 @@ from pypdf.generic import BooleanObject
 from functions_appinsights import log_event
 from content_screening.extraction import current_extraction
 from native_document_evidence import bound_native_metadata, drawing_native_fields, inaccessible_field, native_field
-from functions_pdf_native_evidence import bind_pdf_node, inspect_pdf_content, pdf_content_references
+from functions_pdf_native_evidence import (
+    MAX_NATIVE_TEXT_CHARACTERS, bind_pdf_node, inspect_pdf_annotations, inspect_pdf_content, pdf_content_references,
+)
 from functions_pptx_native_evidence import inspect_pptx_slide_objects, pptx_core_native_fields
 from functions_excel_accessibility import (
     extract_excel_accessibility_metadata,
@@ -164,6 +166,67 @@ def _pdf_container_state(catalog, key):
     if not hasattr(value, 'get'):
         return 'inaccessible'
     return 'present_value' if value else 'present_empty'
+
+
+def _pdf_catalog_text_field(catalog, key, source):
+    """The exact stored catalog text, keeping absent, empty and unreadable states distinct."""
+    if not hasattr(catalog, 'get'):
+        return {**inaccessible_field('container_unavailable'), 'source': source}
+    if key not in catalog:
+        return {'state': 'absent', 'value': None, 'source': source}
+    value = _safe_deref(catalog.get(key))
+    if isinstance(value, bytes):
+        try:
+            value = value.decode('utf-8')
+        except UnicodeDecodeError:
+            value = None
+    return {**native_field({key: str(value) if isinstance(value, str) else value}, key), 'source': source}
+
+
+def _pdf_outline_field(catalog, entries, count, inspected):
+    """Bookmark inventory from the catalog's actual /Outlines container.
+
+    The catalog decides presence, never how many entries the outline reader returned: only a missing
+    key is absent, a container with no first item is present but empty, and a container that cannot
+    be read as an outline is inaccessible. Entries are published only for a container whose first item
+    is a dictionary and that the outline reader actually returned. Only the container and its first
+    item are validated here; deeper damage is reported as the outline reader sees it.
+    """
+    source = '/Root/Outlines'
+
+    def inaccessible(reason):
+        return {**inaccessible_field(reason), 'source': source}
+
+    if not hasattr(catalog, 'get'):
+        return inaccessible('container_unavailable')
+    if '/Outlines' not in catalog:
+        # Absence is asserted only when the outline reader also found nothing.
+        if inspected and count:
+            return inaccessible('outline_readers_disagree')
+        return {'state': 'absent', 'value': None, 'source': source}
+    container = _safe_deref(catalog.get('/Outlines'))
+    if not hasattr(container, 'get'):
+        return inaccessible('outline_container_unreadable')
+    if '/First' not in container:
+        declared = _safe_deref(container.get('/Count'))
+        if isinstance(declared, (int, float)) and not isinstance(declared, bool) and declared != 0:
+            return inaccessible('outline_container_inconsistent')
+        return {
+            'state': 'present_empty', 'source': source,
+            'value': {'count': 0, 'entries': [], 'entries_truncated': False},
+        }
+    if not hasattr(_safe_deref(container.get('/First')), 'get'):
+        return inaccessible('outline_first_item_unreadable')
+    if not inspected:
+        return inaccessible('outline_unavailable')
+    if not count:
+        return inaccessible('outline_unreadable')
+    return {
+        'state': 'present_value', 'source': source,
+        'value': {
+            'count': count, 'entries': [dict(entry) for entry in entries], 'entries_truncated': count > len(entries),
+        },
+    }
 
 
 def _clean_pdf_date(date_str):
@@ -306,6 +369,7 @@ def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000, native_conte
                 result['role_map'][c_name] = s_name
 
     visited_ids = set()
+    annotation_budget = {"remaining": MAX_NATIVE_TEXT_CHARACTERS}
 
     def _inspect_table_subtree(table_dict, page_num, depth=0):
         """Summarize rows, TH header cells, TD data cells, and scopes inside a <Table> tag."""
@@ -398,7 +462,9 @@ def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000, native_conte
                 'raw_tag': raw_tag if raw_tag != mapped_tag else None,
                 'page_number': page_num,
                 'depth': depth,
-                'content_refs': pdf_content_references(deref_node.get('/K'), page_num, page_map),
+                'content_refs': pdf_content_references(
+                    deref_node.get('/K'), page_num, page_map, annotation_budget=annotation_budget,
+                ),
                 'native_fields': {
                     name: native_field(deref_node, key)
                     for name, key in (('alt', '/Alt'), ('actual_text', '/ActualText'), ('title', '/T'))
@@ -605,7 +671,8 @@ def extract_pdf_accessibility_metadata(pdf_path):
         'schema_version': '2.0',
         'native_inspection_status': 'inaccessible',
         'native_properties': {
-            key: inaccessible_field('source_not_inspected') for key in ('title', 'author', 'keywords', 'subject')
+            key: inaccessible_field('source_not_inspected')
+            for key in ('title', 'author', 'keywords', 'subject', 'language', 'bookmarks')
         },
         'is_tagged': False,
         'suspects': False,
@@ -651,6 +718,7 @@ def extract_pdf_accessibility_metadata(pdf_path):
     fitz_doc = None
     per_page_visual_images = {}
     pdf_page_style_lines = {}
+    outline_inspected = False
     try:
         fitz_doc = fitz.open(pdf_path)
         cosmos_meta['page_count'] = len(fitz_doc)
@@ -668,6 +736,7 @@ def extract_pdf_accessibility_metadata(pdf_path):
             for item in toc[:100]
             if len(item) >= 3
         ]
+        outline_inspected = True
 
         for idx, page in enumerate(fitz_doc, start=1):
             try:
@@ -716,6 +785,12 @@ def extract_pdf_accessibility_metadata(pdf_path):
                 cosmos_meta['title_present'] = True
 
         root_catalog = _safe_deref(reader.trailer.get('/Root')) if reader.trailer else None
+        # /Lang and the outline are source facts, not normalized display aliases: the exact
+        # stored text and an absent, empty or unreadable state must reach the audit unchanged.
+        cosmos_meta['native_properties']['language'] = _pdf_catalog_text_field(root_catalog, '/Lang', '/Root/Lang')
+        cosmos_meta['native_properties']['bookmarks'] = _pdf_outline_field(
+            root_catalog, cosmos_meta['bookmarks'], cosmos_meta['bookmark_count'], outline_inspected,
+        )
         cosmos_meta['native_catalog'] = {
             'mark_info_state': _pdf_container_state(root_catalog, '/MarkInfo'),
             'struct_tree_state': _pdf_container_state(root_catalog, '/StructTreeRoot'),
@@ -783,6 +858,9 @@ def extract_pdf_accessibility_metadata(pdf_path):
             cosmos_meta['native_inspection_status'] = 'partial'
 
         page_map = _build_pdf_page_id_map(reader)
+        native_annotations = inspect_pdf_annotations(reader)
+        if any(page["status"] != "complete" for page in native_annotations.values()):
+            cosmos_meta['native_inspection_status'] = 'partial'
 
         # Inspect per-page /Tabs, /Artifact in content streams, and /Link or /Widget annotations
         structure_order_pages = 0
@@ -841,6 +919,9 @@ def extract_pdf_accessibility_metadata(pdf_path):
                 'form_widgets': page_widgets,
                 'tag_nodes': [],
                 'native_content': native_page,
+                'native_annotations': native_annotations.get(page_idx, {
+                    'status': 'inaccessible', 'records': [], 'limitations': ['annotation_page_unavailable'],
+                }),
                 'artifacts': native_artifacts,
                 'formatting_line': pdf_page_style_lines.get(page_idx, ''),
                 'formatted_accessibility_block': '',
@@ -2072,12 +2153,13 @@ def _extract_pptx_accessibility(file_path):
             )
         except (DefusedParseError, ValueError):
             cosmos_meta['native_properties'] = {
-                name: inaccessible_field('malformed_core_properties') for name in ('title', 'author', 'keywords', 'subject')
+                name: inaccessible_field('malformed_core_properties')
+                for name in ('title', 'author', 'keywords', 'subject', 'language')
             }
         if not cosmos_meta['native_package_verified']:
             cosmos_meta['native_properties'] = {
                 name: inaccessible_field('unsupported_presentation_package')
-                for name in ('title', 'author', 'keywords', 'subject')
+                for name in ('title', 'author', 'keywords', 'subject', 'language')
             }
             log_event("[DOCUMENT_METADATA] Native presentation package could not be verified.", level=30)
         cosmos_meta['title'] = core_props['title']

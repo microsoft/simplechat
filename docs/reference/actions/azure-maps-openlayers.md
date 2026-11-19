@@ -30,6 +30,22 @@ Azure Maps now has no separate Configuration section in the V2 action editor bec
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
+## Troubleshoot the connection check
+
+The check requests a road tile through SimpleChat using the action's subscription key.
+It reports success only when Azure returns HTTP 200 with an image content type.
+If the first tile returns **HTTP 204 (No Content)**, SimpleChat tries one different tile
+using the time remaining in the connection check's request timeout budget.
+
+If both tiles return 204, Azure was reached but did not return tile content, so map
+image retrieval remains unverified. This response is not a subscription-key rejection.
+Try the check again; if it persists, check Azure Maps service availability.
+HTTP 401 or 403 follows a separate failure path: verify the action's subscription key
+and that it belongs to the intended Azure Maps account.
+
+The alternate-tile check was implemented in version **0.261.453**. It does not change
+tile rendering in chat or prove why Azure returned no content for a particular request.
+
 ## V2 editor cleanup
 
 The V2 editor no longer offers ad hoc custom fields for this action. Use **Advanced → JSON** only when reviewing preserved legacy values that are not part of the supported Azure Maps setup.

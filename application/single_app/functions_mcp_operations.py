@@ -8,6 +8,7 @@ from jsonschema import Draft7Validator
 from jsonschema.exceptions import SchemaError
 
 from functions_action_manifest import McpConfigurationError, McpStdioRemovedError
+from functions_outbound_destinations import OutboundDestinationError
 from functions_mcp_fingerprint_metadata import (
     MCP_PROMPTS_FIELD,
     MCP_TOOL_DRIFT_FIELD,
@@ -340,6 +341,21 @@ def redact_mcp_error_detail(value):
 
 def classify_mcp_exception(exc, operation="mcp"):
     """Classify MCP exceptions into safe, actionable categories."""
+    pending = [exc]
+    visited = set()
+    while pending and len(visited) < 32:
+        candidate = pending.pop()
+        if id(candidate) in visited:
+            continue
+        visited.add(id(candidate))
+        if isinstance(candidate, OutboundDestinationError):
+            return {
+                "category": "destination_policy", "message": candidate.public_message,
+                "detail": candidate.public_message, "operation": operation, "retryable": False,
+            }
+        pending.extend(getattr(candidate, "exceptions", ()))
+        if candidate.__cause__ is not None:
+            pending.append(candidate.__cause__)
     detail = redact_mcp_error_detail(str(exc))
     detail_lower = detail.lower()
     operation_text = str(operation or "mcp").strip() or "mcp"
@@ -401,7 +417,7 @@ def classify_mcp_exception(exc, operation="mcp"):
 
 def get_mcp_error_http_status(category):
     """Map an MCP error category to an HTTP status suitable for discovery responses."""
-    if category in {"validation", "mcp_stdio_removed"}:
+    if category in {"validation", "mcp_stdio_removed", "destination_policy"}:
         return 400
     if category == "authorization":
         return 403

@@ -20,6 +20,8 @@ import requests
 from semantic_kernel.functions import kernel_function
 
 from functions_appinsights import log_event, sanitize_log_message
+from functions_outbound_destinations import normalize_outbound_url
+from functions_outbound_http import create_guarded_session
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 
@@ -62,7 +64,7 @@ def normalize_rocksdb_base_url(base_url: str) -> str:
         raise ValueError("RocksDB service URLs must use the http or https scheme.")
     if not parsed_url.netloc:
         raise ValueError("RocksDB service URLs must include a host name.")
-    return cleaned_url
+    return normalize_outbound_url(cleaned_url).url.rstrip("/")
 
 
 class RocksDbResult:
@@ -734,7 +736,7 @@ class RocksDbPlugin(BasePlugin):
     ) -> Dict[str, Any]:
         session = self._http_session
         if session is None:
-            session = requests.Session()
+            session = create_guarded_session()
             self._http_session = session
 
         request_payload = None
@@ -746,7 +748,7 @@ class RocksDbPlugin(BasePlugin):
 
         response = session.request(
             method,
-            f"{self.base_url}{path}",
+            normalize_outbound_url(f"{self.base_url}{path}").url,
             json=request_payload,
             headers=self._build_remote_headers(),
             timeout=self.timeout,

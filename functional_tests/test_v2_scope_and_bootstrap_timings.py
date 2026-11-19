@@ -79,7 +79,7 @@ def environment():
     for name in (
         "_build_branding", "_build_navigation", "_build_feature_flags", "_build_capabilities",
         "get_control_center_capabilities", "_build_orchestration", "_build_notices",
-        "_build_workspace_uploads",
+        "_build_workspace_uploads", "_build_session",
     ):
         namespace[name] = Mock(return_value={})
     execute_functions("functions_authentication.py", {

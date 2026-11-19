@@ -33,10 +33,11 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.304
+Version: 0.261.437
 Missing signed-in session reported as its own step failure in: 0.261.209
 Microsoft 365 step failures, with their sources, added in: 0.261.238
 Microsoft 365 approval stops carry their pending approval id in: 0.261.304
+Typed multi-file computation and document read purposes added in: 0.261.437
 """
 
 import hashlib
@@ -58,6 +59,7 @@ from functions_model_catalog import ModelCatalogError
 from functions_document_analysis_results import AnalysisOptionsError, normalize_analysis_options
 from functions_action_manifest import is_document_search_action
 from functions_web_iq import WebIQError, get_web_search_provider, resolve_web_iq_types
+from functions_schema_diagnostics import schema_error_location
 from functions_orchestration_registry import (
     APPROVAL_FLOOR_MANUAL,
     CAPABILITY_ACTION_INVOKE,
@@ -92,8 +94,8 @@ from functions_orchestration_deliverables import DeliverableError, compile_deliv
 from functions_orchestration_workflow_run_wait import compute_workflow_run_waits, stored_workflow_run_waits
 # The merge engine imports only the standard library; plan validation shares its option rules.
 from functions_tabular_merge import (
-    TABULAR_COLUMN_MAPPING_PROFILE, TabularMergeError, tabular_inspect_options_from_arguments,
-    tabular_merge_options_from_arguments,
+    TABULAR_COLUMN_MAPPING_PROFILE, TabularMergeError, display_header_name,
+    tabular_inspect_options_from_arguments, tabular_merge_options_from_arguments,
 )
 
 ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 2
@@ -201,6 +203,16 @@ ELICITATION_MAX_ARRAY_ITEMS = 100
 # Hard ceilings, independent of the administrator's own limits. These bound what the
 # validator will even consider, so a malformed plan cannot cost anything to reject.
 PLAN_HARD_MAX_STEPS = 30
+
+
+def effective_plan_step_limit(settings):
+    """Return the same effective step cap used by planning and compilation."""
+    try:
+        return min(PLAN_HARD_MAX_STEPS, max(1, int((settings or {}).get('chat_orchestration_max_steps') or 8)))
+    except (TypeError, ValueError):
+        return 8
+
+
 PLAN_MAX_TITLE_LENGTH = 200
 PLAN_MAX_RATIONALE_LENGTH = 600
 PLAN_MAX_SUMMARY_LENGTH = 600
@@ -507,9 +519,13 @@ def available_information_plan(raw, *, step_ids=None):
         if step_ids is not None and step.get('step_id') not in step_ids:
             continue
         outputs = step.get('outputs')
+        requirement = step['arguments'].get('tabular_requirement') or {}
+        complete_tabular = requirement.get('mode') in ('complete_records', 'calculation')
+        calculation_answer = requirement.get('mode') == 'calculation_answer'
         if (
             step.get('capability_id') == CAPABILITY_COMPOSE
             and type(outputs) is list and outputs and all(is_narrative_output(item) for item in outputs)
+            and (calculation_answer or not complete_tabular)
         ):
             step['arguments'].setdefault('response_policy', AVAILABLE_INFORMATION_POLICY)
         narrative = uses_available_information(step) or (
@@ -521,6 +537,12 @@ def available_information_plan(raw, *, step_ids=None):
                 if (
                     type(value) is dict and 'binding' in value
                     and type(value.get('allow_partial', False)) is bool
+                    and (calculation_answer or not complete_tabular)
+                    and not (
+                        calculation_answer
+                        and (value.get('binding') or {}).get('output_name')
+                        in {'context', 'records', 'lineage', 'coverage'}
+                    )
                 ):
                     value['allow_partial'] = True
     return plan
@@ -562,6 +584,36 @@ def _dependency_outputs(raw, capability, composition_profiles, arguments):
                                        code='plan_outputs_invalid', rule='fixed_output_missing')
         return deepcopy(outputs)
     supported = capability['result_output_kinds']
+    tabular_requirement = arguments.get('tabular_requirement') or {}
+    if (
+        tabular_requirement.get('mode') == 'overview'
+        and type(outputs) is list
+        and not all(
+            isinstance(output, dict) and is_narrative_output(output)
+            for output in outputs
+        )
+    ):
+        raise _step_contract_error(
+            'Tabular overview work may prepare narrative outputs, not records or structured datasets.',
+            raw, code='plan_outputs_invalid', rule='tabular_overview_output_invalid',
+        )
+    if (
+        tabular_requirement.get('mode') in ('complete_records', 'calculation')
+        and arguments.get('response_policy') == AVAILABLE_INFORMATION_POLICY
+    ):
+        raise _step_contract_error(
+            'Complete tabular work cannot use an available-information response policy.',
+            raw, code='plan_arguments_invalid', rule='tabular_complete_policy_required',
+        )
+    annotation_provenance = arguments.get('annotation_provenance_input')
+    if annotation_provenance and (
+        type(outputs) is not list or len(outputs) != 1
+        or not isinstance(outputs[0], dict) or outputs[0].get('kind') != 'records-v1'
+    ):
+        raise _step_contract_error(
+            'Native Word comment provenance requires exactly one records-v1 composition output.',
+            raw, code='plan_outputs_invalid', rule='annotation_provenance_records_required',
+        )
     for item in outputs:
         if (
             type(item) is not dict or set(item) - {'name', 'kind', 'columns', 'schema', 'profile'}
@@ -585,6 +637,15 @@ def _dependency_outputs(raw, capability, composition_profiles, arguments):
             parsed = tuple(RecordColumn.from_dict(column) for column in columns)
             if len(parsed) > 256 or len({column.name for column in parsed}) != len(parsed):
                 raise PlanValidationError('The record column schema is invalid.')
+            if annotation_provenance:
+                from functions_orchestration_excel import WORD_COMMENT_PROVENANCE_COLUMNS
+
+                required = set(WORD_COMMENT_PROVENANCE_COLUMNS)
+                if not required <= {column.name for column in parsed}:
+                    raise _step_contract_error(
+                        'The disposition records do not declare every native Word provenance column.',
+                        raw, code='plan_outputs_invalid', rule='annotation_provenance_columns_required',
+                    )
         elif 'columns' in item:
             raise PlanValidationError('Only records may declare columns.')
         if 'schema' in item:
@@ -662,6 +723,7 @@ def _apply_image_input_policy(steps, existing_results):
     produced = {
         (step['step_id'], output['name']): output['kind'] for step in steps for output in step['outputs']
     }
+    steps_by_id = {step['step_id']: step for step in steps}
     for step in steps:
         for value in step['inputs'].values():
             if type(value) is not dict or type(value.get('binding')) is not dict:
@@ -680,9 +742,26 @@ def _apply_image_input_policy(steps, existing_results):
             if spec.optional and _optional_input_kind(spec, produced, existing_results) != IMAGE_ASSET_KIND
         ]
         if knowledge_optional and step['arguments'].get('knowledge_basis') not in GENERAL_KNOWLEDGE_BASES:
-            raise PlanValidationError(
-                'An optional input requires an answer basis that allows general knowledge.',
+            calculation_answer = False
+            requirement_matches = (
+                (step['arguments'].get('tabular_requirement') or {}).get('mode')
+                == 'calculation_answer'
+                and step['arguments'].get('knowledge_basis') == 'sources'
             )
+            if requirement_matches:
+                calculation_answer = all(
+                    spec.binding.step_id is not None
+                    and spec.binding.output_name in {'records', 'lineage', 'coverage'}
+                    and (producer := steps_by_id.get(spec.binding.step_id)) is not None
+                    and producer.get('capability_id') == CAPABILITY_TABULAR_ANALYZE
+                    and (producer.get('arguments') or {}).get('native_operation') == 'relate'
+                    and (producer.get('arguments') or {}).get('calculation_mode') == 'prepared-v1'
+                    for spec in knowledge_optional
+                )
+            if not calculation_answer:
+                raise PlanValidationError(
+                    'An optional input requires an answer basis that allows general knowledge.',
+                )
 
 
 def _require_merge_mapping_producers(steps):
@@ -996,10 +1075,7 @@ def validate_dependency_plan(
     """
     settings = settings or {}
     canonical_bytes(composition_profiles or {})
-    try:
-        max_steps = min(PLAN_HARD_MAX_STEPS, max(1, int(settings.get('chat_orchestration_max_steps') or 8)))
-    except (TypeError, ValueError):
-        max_steps = 8
+    max_steps = effective_plan_step_limit(settings)
     raw_steps = plan.get('steps')
     if type(raw_steps) is not list or not raw_steps or len(raw_steps) > max_steps:
         if type(raw_steps) is list and raw_steps and _offers_handoff(available_capability_ids):
@@ -1007,8 +1083,16 @@ def validate_dependency_plan(
                 'The complete plan exceeds the available step budget. Reduce the plan, or hand the '
                 'work off with one workflow_handoff step.',
                 code=PLAN_BUDGET_EXCEEDED_CODE, rule='plan_step_budget',
+                # The raw list length and effective limit, which a count of dictionary steps cannot show.
+                diagnostics={'plan_step_count': len(raw_steps), 'plan_step_limit': max_steps},
             )
-        raise PlanValidationError('The complete plan exceeds the available step budget.', code='result_step_limit')
+        raise PlanValidationError(
+            'The complete plan exceeds the available step budget.', code='result_step_limit',
+            diagnostics={
+                'plan_step_count': len(raw_steps) if type(raw_steps) is list else 0,
+                'plan_step_limit': max_steps,
+            },
+        )
     # A plan over a budget names hand-off as a way out only when the request offered it.
     handoff_offered = _offers_handoff(available_capability_ids)
     if available_capability_ids is None:
@@ -1128,6 +1212,7 @@ def validate_dependency_plan(
                 argument_problems.append({
                     'argument_field': field if field in capability['inputs']['properties'] else 'unknown',
                     'schema_keyword': argument_error.validator.lower(),
+                    **schema_error_location(argument_error),
                 })
                 if len(argument_problems) == 8:
                     break
@@ -1138,13 +1223,19 @@ def validate_dependency_plan(
                 ):
                     # These owners have their own correction/drop policy; preserve its boundary.
                     raise PlanValidationError('Step arguments do not match the capability contract.')
-                field = argument_problems[0]['argument_field']
-                keyword = argument_problems[0]['schema_keyword']
+                first = argument_problems[0]
+                field = first['argument_field']
+                keyword = first['schema_keyword']
                 raise _step_contract_error(
                     'Step arguments do not match the capability contract.', raw,
                     code='plan_arguments_invalid',
                     rule='unknown_argument' if keyword == 'additionalproperties' else 'argument_schema_invalid',
                     schema_keyword=keyword, argument_field=field, argument_problems=argument_problems,
+                    **{
+                        name: first[name]
+                        for name in ('argument_keyword', 'argument_path', 'argument_branch', 'expected_type')
+                        if first.get(name)
+                    },
                 )
             arguments = deepcopy(arguments)
             if analysis_options is not None:
@@ -1161,12 +1252,28 @@ def validate_dependency_plan(
                     raise PlanValidationError('A requested web discovery type is disabled.') from exc
             if capability_id == CAPABILITY_TABULAR_ANALYZE:
                 # Native query/transform validators run only for explicitly admitted native work.
-                from functions_orchestration_native_results import validate_native_orchestration_arguments
+                from functions_orchestration_native_results import (
+                    NativeOrchestrationBridgeError, validate_native_orchestration_arguments,
+                )
+                from functions_tabular_relational import native_error_diagnostics
 
                 try:
                     arguments = validate_native_orchestration_arguments(arguments)
-                except ValueError as exc:
-                    raise PlanValidationError('The native computation arguments are unsupported.') from exc
+                except NativeOrchestrationBridgeError as exc:
+                    raise _step_contract_error(
+                        'The native computation arguments are unsupported. Correct the declared '
+                        'operation and its query, transformation or relationship rules; do not '
+                        'replace the calculation with source previews.',
+                        raw, code='plan_arguments_invalid', rule=exc.rule, **native_error_diagnostics(exc),
+                    ) from exc
+                if arguments['native_operation'] == 'relate':
+                    from functions_orchestration_merge import tabular_merge_limits
+
+                    if len(arguments['document_ids']) > tabular_merge_limits(settings).max_sources:
+                        raise PlanValidationError(
+                            'The complete calculation source selection exceeds the document limit.',
+                            code=PLAN_BUDGET_EXCEEDED_CODE, rule='plan_document_budget',
+                        )
             if capability_id == CAPABILITY_WORKFLOW_PROPOSE:
                 # Loaded only when a plan proposes a workflow; the draft service is not needed otherwise.
                 from functions_orchestration_workflows import prepare_workflow_proposal_arguments
@@ -1236,6 +1343,13 @@ def validate_dependency_plan(
                         'The selected action cannot bind workspace documents.', raw,
                         code='source_binding_invalid', rule='action_document_reader_required',
                     )
+            if capability_id == CAPABILITY_ACTION_INVOKE and (
+                'document_read_mode' in arguments and 'document_ids' not in arguments
+            ):
+                raise _step_contract_error(
+                    'A document read purpose requires an exact document source binding.', raw,
+                    code='source_binding_invalid', rule='source_binding_required',
+                )
             limit = get_capability_document_limit(capability, settings=settings)
             for name in ('document_ids', 'right_document_ids'):
                 if name in arguments:
@@ -1413,13 +1527,24 @@ def validate_dependency_plan(
         # any required binding keep it required.
         final_producer = final_binding.step_id if final_binding is not None else None
         consumers = {}
+        required_optional_calculations = set()
         for step in accepted:
             for spec in step_input_specs(step):
                 if spec.binding.step_id is not None:
                     consumers.setdefault(spec.binding.step_id, []).append(spec.optional)
+                    if (
+                        spec.optional
+                        and (step.get('arguments') or {}).get('tabular_requirement', {}).get('mode')
+                        == 'calculation_answer'
+                        and spec.binding.output_name in {'records', 'lineage', 'coverage'}
+                    ):
+                        required_optional_calculations.add(spec.binding.step_id)
         for step in accepted:
             uses = consumers.get(step['step_id'])
-            if uses and all(uses) and step['step_id'] != final_producer:
+            if (
+                uses and all(uses) and step['step_id'] != final_producer
+                and step['step_id'] not in required_optional_calculations
+            ):
                 step['optional'] = True
         deliverables = compile_deliverables(
             plan.get('deliverables'), accepted, final_response=plan.get('final_response'),
@@ -1526,11 +1651,36 @@ def effective_plan_document_ids(plan, seeds=None):
     return list(dict.fromkeys(document_ids))
 
 
-def validate_plan_document_source_kinds(plan, document_source_kinds, *, document_source_formats=None):
+def validate_plan_document_source_kinds(
+    plan, document_source_kinds, *, document_source_formats=None,
+    selected_document_ids=None, required_capabilities=None,
+):
     """Check known source kinds without treating model-supplied labels as authority."""
     if not isinstance(document_source_kinds, dict):
         raise PlanValidationError('Document type metadata is unavailable.', code='source_metadata_invalid')
+    _validate_tabular_composition_requirements(
+        plan, document_source_kinds, selected_document_ids=selected_document_ids,
+        required_capabilities=required_capabilities,
+    )
+    steps_by_id = {
+        step['step_id']: step for step in (plan.get('steps') or ())
+        if isinstance(step, dict) and step.get('enabled', True)
+    }
     for step in plan.get('steps') or []:
+        provenance_input = (step.get('arguments') or {}).get('annotation_provenance_input')
+        if step.get('enabled', True) and step.get('capability_id') == CAPABILITY_COMPOSE and provenance_input:
+            named_input = (step.get('inputs') or {}).get(provenance_input) or {}
+            binding = named_input.get('binding') or {}
+            producer = steps_by_id.get(binding.get('step_id'))
+            formats = [
+                (document_source_formats or {}).get(document_id)
+                for document_id in plan_document_ids({'steps': [producer]}) if producer
+            ]
+            if not formats or any(item not in ('docx', 'docm', 'dotx') for item in formats):
+                raise _step_contract_error(
+                    'Native annotation provenance requires an authorized Word comment inventory.',
+                    step, code='source_kind_invalid', rule='word_annotation_provenance_required',
+                )
         if (
             step.get('enabled', True) and step.get('capability_id') == 'document_search'
             and (step.get('arguments') or {}).get('native_section') == 'comments'
@@ -1596,6 +1746,70 @@ def validate_plan_document_source_kinds(plan, document_source_kinds, *, document
             )
 
 
+def validate_plan_native_source_schemas(plan, selected_sources):
+    """Check known complete headers, never infer a schema from samples or another table.
+
+    A column no step can have, judged by the runtime's own propagation rules from a complete
+    inspected header, is corrected at planning time. A dataset whose header is not known exactly,
+    including one whose names the calculation reader spells differently from the planning
+    preview (it collapses repeated spaces and normalizes Unicode), is left to the run, which
+    checks the same references against the real table.
+    """
+    from functions_tabular_relational import (
+        TabularRelationalError, check_relational_columns, native_error_diagnostics,
+    )
+
+    inspections = {
+        source['document_id']: source.get('inspection') or {}
+        for source in selected_sources or [] if isinstance(source, dict) and source.get('document_id')
+    }
+    for step in plan.get('steps') or []:
+        arguments = step.get('arguments') or {}
+        if (
+            not step.get('enabled', True) or step.get('capability_id') != CAPABILITY_TABULAR_ANALYZE
+            or arguments.get('native_operation') != 'relate'
+        ):
+            continue
+        headers = {}
+        for dataset in arguments['relational_spec']['datasets']:
+            if dataset.get('cell_range') or dataset.get('table_id'):
+                continue
+            inspection = inspections.get(dataset['document_id'], {})
+            if inspection.get('status') != 'inspected':
+                continue
+            tables = [
+                table for table in inspection.get('tables') or []
+                if isinstance(table, dict)
+                and table.get('header_row') == dataset.get('header_row', 1)
+                and (not dataset.get('sheet') or table.get('sheet') == dataset['sheet'])
+            ]
+            if len(tables) != 1 or not isinstance(tables[0].get('columns'), list):
+                continue
+            columns = tables[0]['columns']
+            if dataset.get('columns') and columns != dataset['columns']:
+                raise _step_contract_error(
+                    f'Dataset "{dataset["alias"]}" declares a different header from the inspected '
+                    'source. datasets[].columns asserts the complete ordered native header, including '
+                    'unused columns; it is not a projection. Use that exact header or omit the '
+                    'assertion, and use a project step to select calculation fields.',
+                    step, code='plan_arguments_invalid', rule='relational_schema_mismatch',
+                    expected_count=len(columns), actual_count=len(dataset['columns']),
+                )
+            if all(isinstance(name, str) and name and display_header_name(name) == name for name in columns):
+                headers[dataset['alias']] = columns
+        try:
+            check_relational_columns(arguments['relational_spec'], headers)
+        except TabularRelationalError as exc:
+            raise _step_contract_error(
+                'A join key, aggregate column, expression or output field uses a column that is not '
+                'available at that step. Dataset columns are alias.header; a derive, project or '
+                'aggregate step adds stepid.field or stepid.name, and project and aggregate drop every '
+                'other column. Correct the listed step and role without removing a source or the '
+                'calculation.',
+                step, code='plan_arguments_invalid', rule=exc.code, **native_error_diagnostics(exc),
+            ) from exc
+
+
 def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
     """Do not silently lose selected operations or sources during normalization.
 
@@ -1629,7 +1843,236 @@ def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
             warning = f'{message} Review this change before running.'
             if warning not in repairs:
                 repairs.append(warning)
+    _validate_tabular_composition_requirements(
+        plan, required_capabilities=required_capability_ids(seeds),
+    )
     return plan
+
+
+def _input_producer_steps(step, steps_by_id):
+    result = []
+    for value in (step.get('inputs') or {}).values():
+        binding = value.get('binding') if isinstance(value, dict) else None
+        producer = steps_by_id.get(binding.get('step_id')) if isinstance(binding, dict) else None
+        if producer is not None:
+            result.append((producer, binding.get('output_name')))
+    return result
+
+
+def _tabular_upstream_producers(step, steps_by_id, visited=None):
+    visited = set() if visited is None else visited
+    producers = []
+    for producer, output_name in _input_producer_steps(step, steps_by_id):
+        if producer['step_id'] in visited:
+            continue
+        visited.add(producer['step_id'])
+        producers.append((producer, output_name))
+        producers.extend(_tabular_upstream_producers(producer, steps_by_id, visited))
+    return producers
+
+
+def _validate_tabular_composition_requirements(
+    plan, document_source_kinds=None, *, selected_document_ids=None, required_capabilities=None,
+):
+    source_kind_validation = document_source_kinds is not None
+    document_source_kinds = document_source_kinds or {}
+    selected_document_ids = set(_string_list(selected_document_ids))
+    required_capabilities = set(required_capabilities or ())
+    steps_by_id = {
+        step['step_id']: step for step in (plan.get('steps') or ())
+        if isinstance(step, dict) and step.get('enabled', True)
+    }
+    for step in steps_by_id.values():
+        if step.get('capability_id') != CAPABILITY_COMPOSE:
+            continue
+        provenance_input = (step.get('arguments') or {}).get('annotation_provenance_input')
+        if provenance_input:
+            binding = (step.get('inputs') or {}).get(provenance_input)
+            producer = None
+            if isinstance(binding, dict) and isinstance(binding.get('binding'), dict):
+                producer = steps_by_id.get(binding['binding'].get('step_id'))
+            if (
+                producer is None
+                or producer.get('capability_id') != CAPABILITY_DOCUMENT_SEARCH
+                or (producer.get('arguments') or {}).get('native_section') != 'comments'
+                or binding.get('allow_partial') is not False
+                or binding['binding'].get('output_name') != 'prepared'
+            ):
+                raise _step_contract_error(
+                    'Word provenance must name the complete prepared output of one native comments reader.',
+                    step, code='plan_arguments_invalid', rule='annotation_provenance_binding_invalid',
+                )
+        upstream = _tabular_upstream_producers(step, steps_by_id)
+        native_tabular = [
+            (producer, output_name) for producer, output_name in upstream
+            if producer.get('capability_id') in {
+                CAPABILITY_TABULAR_ANALYZE, CAPABILITY_TABULAR_INSPECT, CAPABILITY_TABULAR_MERGE,
+            }
+        ]
+        upstream_ids = {
+            document_id for producer, _output in upstream
+            for document_id in plan_document_ids({'steps': [producer]})
+        }
+        for producer, _output in upstream:
+            if (
+                producer.get('capability_id') == 'document_search'
+                and not plan_document_ids({'steps': [producer]})
+            ):
+                upstream_ids.update(selected_document_ids)
+        search_source_ids = {
+            document_id
+            for producer, _output in upstream
+            if producer.get('capability_id') == 'document_search'
+            for document_id in plan_document_ids({'steps': [producer]})
+        }
+        for producer, _output in upstream:
+            if (
+                producer.get('capability_id') == 'document_search'
+                and not plan_document_ids({'steps': [producer]})
+            ):
+                search_source_ids.update(selected_document_ids)
+        selected_tabular_ids = {
+            document_id for document_id in search_source_ids
+            if document_source_kinds.get(document_id) == 'tabular'
+        }
+        has_tabular_evidence = bool(native_tabular or selected_tabular_ids)
+        if not source_kind_validation and not native_tabular:
+            # Source-kind admission runs earlier in new-plan normalization; the later
+            # generic requirements pass still protects native producer contracts.
+            continue
+        requirement = (step.get('arguments') or {}).get('tabular_requirement')
+        if requirement is None:
+            if has_tabular_evidence:
+                raise _step_contract_error(
+                    'Composed tabular content must declare how complete rows or calculations are used.',
+                    step, code='plan_arguments_invalid', rule='tabular_requirement_required',
+                )
+            continue
+        required_ids = set(requirement['document_ids'])
+        if not required_ids <= upstream_ids:
+            raise _step_contract_error(
+                'A tabular requirement may name only sources bound to this compose step.',
+                step, code='plan_arguments_invalid', rule='tabular_requirement_sources_invalid',
+            )
+        if not selected_tabular_ids <= required_ids:
+            raise _step_contract_error(
+                'A tabular requirement must declare every selected tabular source used by this compose step.',
+                step, code='plan_arguments_invalid', rule='tabular_requirement_sources_incomplete',
+            )
+        direct = _input_producer_steps(step, steps_by_id)
+        if requirement['mode'] == 'calculation_answer':
+            if (
+                requirement.get('version') != 'tabular-calculation-answer-v1'
+                or not any(
+                    producer.get('capability_id') == CAPABILITY_TABULAR_ANALYZE
+                    and (producer.get('arguments') or {}).get('native_operation') == 'prepare'
+                    and output_name == 'context'
+                    and (step.get('inputs') or {}).get(input_name, {}).get('optional', False) is False
+                    and (step.get('inputs') or {}).get(input_name, {}).get('allow_partial', False) is False
+                    for input_name, producer, output_name in (
+                        (
+                            name,
+                            steps_by_id.get((value.get('binding') or {}).get('step_id')),
+                            (value.get('binding') or {}).get('output_name'),
+                        )
+                        for name, value in (step.get('inputs') or {}).items()
+                        if isinstance(value, dict)
+                    )
+                    if isinstance(producer, dict)
+                )
+            ):
+                raise _step_contract_error(
+                    'A calculation answer requires one complete native preparation input.',
+                    step, code='plan_arguments_invalid', rule='tabular_preparation_required',
+                )
+            calculation = {
+                producer['step_id'] for producer, output_name in direct
+                if producer.get('capability_id') == CAPABILITY_TABULAR_ANALYZE
+                and (producer.get('arguments') or {}).get('native_operation') == 'relate'
+                and output_name in {'records', 'lineage', 'coverage'}
+            }
+            calculation_outputs = {
+                output_name for producer, output_name in direct
+                if producer['step_id'] in calculation
+            }
+            invalid_calculation_inputs = [
+                value for value in (step.get('inputs') or {}).values()
+                if isinstance(value, dict)
+                and (value.get('binding') or {}).get('step_id') in calculation
+                and (value.get('binding') or {}).get('output_name') in {
+                    'records', 'lineage', 'coverage',
+                }
+                and (
+                    value.get('optional') is not True
+                    or value.get('allow_partial') is not False
+                )
+            ]
+            if (
+                len(calculation) != 1
+                or calculation_outputs != {'records', 'lineage', 'coverage'}
+                or invalid_calculation_inputs
+            ):
+                raise _step_contract_error(
+                    'A calculation answer must bind all calculation members from one producer.',
+                    step, code='plan_arguments_invalid', rule='tabular_calculation_bundle_invalid',
+                )
+            continue
+        if requirement['mode'] == 'overview':
+            if not has_tabular_evidence:
+                raise _step_contract_error(
+                    'Tabular overview work requires a named tabular reader input.',
+                    step, code='plan_arguments_invalid', rule='tabular_requirement_producer_invalid',
+                )
+            if (
+                required_capabilities
+                & {CAPABILITY_TABULAR_ANALYZE, CAPABILITY_TABULAR_MERGE}
+                and not native_tabular
+            ):
+                raise _step_contract_error(
+                    'An explicitly selected complete tabular operation cannot be satisfied by Search previews.',
+                    step, code='plan_arguments_invalid', rule='tabular_complete_operation_required',
+                )
+            continue
+        complete_producers = {
+            producer['step_id'] for producer, output_name in direct
+            if output_name == 'records' and producer.get('capability_id') in {
+                CAPABILITY_TABULAR_ANALYZE, CAPABILITY_TABULAR_MERGE,
+            }
+            and (next((
+                value for value in (step.get('inputs') or {}).values()
+                if isinstance(value, dict)
+                and isinstance(value.get('binding'), dict)
+                and value['binding'].get('step_id') == producer['step_id']
+                and value['binding'].get('output_name') == 'records'
+            ), {}) or {}).get('allow_partial') is False
+        }
+        record_coverage = {
+            document_id for producer, _output in direct
+            if producer['step_id'] in complete_producers
+            for document_id in plan_document_ids({'steps': [producer]})
+        }
+        if not required_ids <= record_coverage:
+            raise _step_contract_error(
+                'Complete tabular work must bind complete records from every declared source.',
+                step, code='plan_arguments_invalid', rule='tabular_complete_records_required',
+            )
+        if requirement['mode'] == 'calculation':
+            calculations = {
+                producer['step_id'] for producer, output_name in direct
+                if producer.get('capability_id') == CAPABILITY_TABULAR_ANALYZE
+                and (producer.get('arguments') or {}).get('native_operation') == 'relate'
+                and output_name in {'records', 'lineage', 'coverage'}
+            }
+            outputs = {
+                output_name for producer, output_name in direct
+                if producer['step_id'] in calculations
+            }
+            if len(calculations) != 1 or not {'records', 'lineage', 'coverage'} <= outputs:
+                raise _step_contract_error(
+                    'A complete calculation must bind records, lineage and coverage from one '
+                    'native tabular relate producer.',
+                    step, code='plan_arguments_invalid', rule='tabular_calculation_required',
+                )
 
 
 def workflow_run_catalog_entry(workflow_planning, handle):
@@ -1796,6 +2239,38 @@ def build_plan_outputs(plan):
     ]
 
 
+def generated_plan_admission_stamp(plan):
+    """Server-owned admission facts for generated multi-file calculation plans."""
+    prepared = []
+    for step in (plan or {}).get('steps') or []:
+        if not isinstance(step, dict) or step.get('capability_id') != CAPABILITY_TABULAR_ANALYZE:
+            continue
+        arguments = step.get('arguments') or {}
+        if arguments.get('native_operation') == 'relate' and len(arguments.get('document_ids') or []) > 1:
+            prepared.append({
+                'step_id': step.get('step_id'),
+                'policy': (
+                    'prepared-v1'
+                    if arguments.get('calculation_mode') == 'prepared-v1'
+                    else 'legacy-explicit-v1'
+                ),
+            })
+    return {
+        'version': 'generated-tabular-admission-v1',
+        'steps': sorted(prepared, key=lambda item: str(item.get('step_id'))),
+    }
+
+
+def validate_generated_plan_tabular_admission(plan):
+    """Newly model-authored multi-source calculations require complete preparation."""
+    for step in generated_plan_admission_stamp(plan)['steps']:
+        if step['policy'] != 'prepared-v1':
+            raise PlanValidationError(
+                'Multi-file calculation must bind complete preparation before authoring a program.',
+                code='plan_arguments_invalid', rule='prepared_calculation_required',
+            )
+
+
 def normalize_plan(
     plan,
     conversation_id,
@@ -1838,6 +2313,7 @@ def normalize_plan(
     for step in plan.get('steps') or []:
         if isinstance(step, dict):
             step.pop('model_binding', None)
+    validate_generated_plan_tabular_admission(plan)
 
     intent = plan.get('intent') if isinstance(plan.get('intent'), dict) else {}
     complexity = _text(intent.get('complexity')).lower()
@@ -2094,6 +2570,10 @@ FAILURE_MESSAGES = {
         'The action could not complete the selected document read. Check the file availability '
         'and requested inspection, then retry.'
     ),
+    'document_action_read_unsupported': (
+        'The requested native inspection is not supported for the selected source or task. '
+        "The file's content may still be readable."
+    ),
     'action_results_missing': (
         'The action returned no usable function results. No findings from this step were used. '
         'Ask an admin to check the action and model tool support if it keeps failing.'
@@ -2159,6 +2639,10 @@ FAILURE_MESSAGES = {
         'saved. Ask again to read the current result.'
     ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
+    'source_schema_mismatch': (
+        "The calculation's column assertion does not match the complete source header. "
+        'Review the source schema and calculation plan; no result was published.'
+    ),
     STORAGE_FAILURE_CODE: STORAGE_FAILURE_MESSAGE,
     'completeness_incomplete': "The answer still needs an adjustment after checking. Your progress is saved.",
     'completeness_unavailable': "I couldn't finish checking the prepared answer. Your progress is saved.",
@@ -2174,6 +2658,17 @@ FAILURE_MESSAGES = {
     'result_not_ready': 'Required computation is still pending. Its result is not ready to consume.',
     'result_commit_unconfirmed': 'The producer stopped before its retained completion checkpoint was confirmed. Its work will not be repeated automatically.',
     'result_partial': 'Required work produced only an explicitly limited partial result.',
+    'calculation_program_invalid': (
+        'The complete calculation could not be expressed by a valid deterministic program. '
+        'No financial result was published.'
+    ),
+    'generation_incomplete': (
+        'The calculation program generation did not complete, so no unverified calculation was used.'
+    ),
+    'relationship_grain_invalid': (
+        'The declared relationship did not match the complete source grains. Valid split or '
+        'multi-line records were not treated as duplicate or fraudulent activity.'
+    ),
     'visual_not_delivered': (
         'A chart or diagram you asked for could not be created or shown. Retry runs the steps that '
         'make it again.'
@@ -2275,7 +2770,7 @@ M365_STEP_FAILURE_CODES = frozenset({
 EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {
     'external_session_required', 'operation_recovery_required', 'integration_input_unavailable',
     'action_initialization_failed', 'document_reader_identity_mismatch',
-    'document_action_read_failed', 'action_results_missing',
+    'document_action_read_failed', 'document_action_read_unsupported', 'action_results_missing',
     STORAGE_FAILURE_CODE,
 }
 # Steps that hand work to an integration; input-reading failures have their own code.
@@ -2298,7 +2793,7 @@ def _m365_approval_id(value):
 
 def build_failure(
     code='step_failed', *, step_id=None, capability_id=None, provider_status=None, m365_sources=None,
-    approval_id=None,
+    approval_id=None, calculation_cause=None,
 ):
     """Only application-owned text may cross a failure boundary."""
     code = code if code in FAILURE_MESSAGES else 'step_failed'
@@ -2322,17 +2817,27 @@ def build_failure(
         approval = _m365_approval_id(approval_id)
         if approval:
             result['approval_id'] = approval
+    if calculation_cause in {
+        'generation_incomplete', 'relationship_grain_invalid', 'calculation_program_invalid',
+    }:
+        result['calculation_cause'] = calculation_cause
     return result
 
 
 def safe_failure(value, *, step_id=None, capability_id=None):
     value = value if isinstance(value, dict) else {}
+    calculation_cause = value.get('calculation_cause')
+    public_code = calculation_cause if calculation_cause in {
+        'generation_incomplete', 'relationship_grain_invalid',
+        'calculation_program_invalid',
+    } else value.get('code')
     return build_failure(
-        value.get('code'), step_id=step_id or value.get('step_id'),
+        public_code, step_id=step_id or value.get('step_id'),
         capability_id=capability_id or value.get('capability_id'),
         provider_status=value.get('provider_status'),
         m365_sources=value.get('m365_sources'),
         approval_id=value.get('approval_id'),
+        calculation_cause=calculation_cause,
     )
 
 
@@ -2408,7 +2913,13 @@ REQUEST_REFUSAL_FAILURE_CODES = frozenset({
 def failure_repeats_on_retry(failure):
     """Whether resending the same planned request would reproduce this failure."""
     failure = failure if isinstance(failure, dict) else {}
-    return failure.get('code') in REQUEST_REFUSAL_FAILURE_CODES
+    return (
+        failure.get('code') in REQUEST_REFUSAL_FAILURE_CODES
+        or failure.get('calculation_cause') in {
+            'generation_incomplete', 'relationship_grain_invalid',
+            'calculation_program_invalid',
+        }
+    )
 
 
 def failure_explanation(failures, *, partial=False, cancelled=False):
@@ -2449,9 +2960,8 @@ def build_step_result(
     tries to re-describe them -- ``functions_mixed_source_orchestration.build_evidence_envelope``
     already owns that contract, complete with its byte bounds.
 
-    ``replan_hint`` is how a step says the plan was wrong: a short sentence about what it
-    discovered, handed back to the planner. It is bounded by the run's replan budget, so a
-    step cannot loop the plan forever by always asking for another one.
+    ``replan_hint`` is inert diagnostic context retained for run-summary metadata. Its summary
+    cap never invokes a planner, tool or automatic revision.
     """
     if status not in STEP_STATUSES:
         status = STEP_STATUS_COMPLETED

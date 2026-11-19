@@ -1,9 +1,9 @@
 # functions_yamcs_operations.py
-"""Shared defaults and normalization helpers for Yamcs mission control action plugins."""
+"""Shared configuration and request helpers for Yamcs mission control action plugins."""
 
 import base64
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 
 YAMCS_PLUGIN_TYPE = "yamcs"
@@ -222,3 +222,43 @@ def build_yamcs_basic_auth_header(username: Any, password: Any) -> str:
     credential = f"{str(username or '')}:{str(password or '')}"
     encoded = base64.b64encode(credential.encode("utf-8")).decode("ascii")
     return f"Basic {encoded}"
+
+
+def build_yamcs_api_key_credentials(key):
+    # Schema discovery must not import the optional connection SDK.
+    try:
+        from yamcs.client import APIKeyCredentials
+    except ImportError:
+        try:
+            from yamcs.client import Credentials
+        except ImportError:
+            from yamcs.core.auth import Credentials
+
+        class APIKeyCredentials(Credentials):
+            def __init__(self, value):
+                super().__init__(password=value)
+
+            def before_request(self, session, auth_url):
+                session.headers.update({"x-api-key": self.password})
+
+    return APIKeyCredentials(key)
+
+
+def wrap_yamcs_login_credentials(
+    credentials: Any,
+    request_wrapper: Callable[[Callable], Callable],
+) -> Any:
+    """Configure the SDK session before login and retain it for token renewal."""
+    if credentials is None:
+        return None
+
+    class RequestConfiguredCredentials:
+        def login(self, session, *args, **kwargs):
+            session.request = request_wrapper(session.request)
+            try:
+                return credentials.login(session, *args, **kwargs)
+            except Exception:
+                session.close()
+                raise
+
+    return RequestConfiguredCredentials()

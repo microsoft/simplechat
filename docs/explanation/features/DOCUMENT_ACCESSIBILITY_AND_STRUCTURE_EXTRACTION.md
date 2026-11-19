@@ -6,7 +6,9 @@
 **Native Word comment inspection fixed/implemented in version: 0.261.422**
 **Native fidelity fixed/implemented in version: 0.261.424**
 **Native audit answer delivery fixed/implemented in version: 0.261.425**
-**Related config.py version: `0.261.425`**
+**Native language and bookmark facts, partial-page disclosure and exact prose values fixed in version: 0.261.443**
+**Focused PPTX native object inspection fixed in version: 0.261.444**
+**Related config.py version: `0.261.444`**
 
 ## 1. Overview and Purpose
 
@@ -41,6 +43,14 @@ decorative shapes, with object-linked run formatting and placeholder origins.
 Slide-local footer text is not master-derived content just because formatting
 can be inherited. Contrast is checked only for supported native solid colors
 with known foreground/background and text size; this is not rendered validation.
+
+Version **0.261.444** retains an explicit XML traversal ordinal, source part,
+object identity, direct native text and text-completeness state. For a focused
+PowerPoint object question, `native_slide_number` may be used only with
+`native_section="objects"`. Filtering happens before pagination and the slide
+number joins source identity, revision, section and schema version in the
+opaque cursor. A cursor cannot move to another slide or the old unfiltered
+sequence. This remains native metadata inspection, not rendered slide reading.
 
 For retained, authorized active PDF/PPTX sources, Document Search can inspect
 native evidence locally on request. `native_inspection.page` has bounded records
@@ -86,6 +96,52 @@ questions. This does not read every worksheet cell or calculate formulas.
 Source/schema/section-bound cursors and direct saved-cell range limits are
 unchanged. Aggregate returned-page coverage is distinct from full source or
 rendered accessibility coverage.
+
+### Language and bookmark facts, partial pages and exact title values
+
+Fixed/Implemented in version: **0.261.443**
+(`application/single_app/config.py`).
+
+Native readers already returned a PDF's `/Lang` and bookmark outline, and a
+PowerPoint's `dc:language`, but the audit's canonical facts did not carry them,
+so an answer could report that evidence as missing. These are now typed native
+facts with the same `absent`, `present_empty`, `present_value` and `inaccessible`
+states as the other properties. A PDF's `language` comes from `/Root/Lang`. Its
+`bookmarks` come from the catalog's own `/Root/Outlines` entry, not from how many
+entries the outline reader returned, so the four states stay distinct:
+
+| `bookmarks` state | What the catalog and reader established |
+| --- | --- |
+| `absent` | The catalog has no `/Outlines` entry, and the outline reader found no entries either. |
+| `present_empty` | An outline container exists but has no first item and declares no entries. The value is `{count: 0, entries: [], entries_truncated: false}`. |
+| `present_value` | The container's first item is a readable dictionary and the outline reader returned entries. The value is a bounded count and entry list. |
+| `inaccessible` | The outline exists but cannot be established. The `reason` names why: `outline_container_unreadable` (the entry is a number, array, null or dangling reference), `outline_container_inconsistent` (a non-zero count with no first item), `outline_first_item_unreadable`, `outline_unavailable` (the outline reader could not run), `outline_unreadable` (a valid-looking outline that returned no entries), `outline_readers_disagree` (no `/Outlines` entry, yet the reader returned entries) or `container_unavailable` (the catalog could not be read). |
+
+Only the container and its first item are validated. Damage deeper in the chain is
+reported as the outline reader sees it, and the chain is never walked, so a
+malformed loop cannot stall an inspection. The legacy display aliases
+(`has_bookmarks`, `bookmark_count`, `bookmarks`) and the "no bookmarks" accessibility
+issue still come from the outline reader. A PowerPoint's `language` comes from
+`docProps/core.xml`. The properties inventory therefore gains two records for a
+PDF (`language` and `bookmarks`) and one for a PowerPoint (`language`), so the
+native inspection version is **1.2**: a continuation cursor issued by an earlier
+version is refused as a changed source instead of silently shifting.
+
+A page of native records is bounded. `native_audit_contract.inventory_coverage`
+now states how many whole records were returned from the start of the chain
+(`returned_records_from_start`) next to `total_records`. When the chain is not
+complete, an answer must say that only that many records were reviewed and must
+not treat an unreturned record as absent. Large documents can therefore be
+reported as partially reviewed instead of appearing fully inspected.
+
+An exact native title that contains a vertical bar is escaped (`\|`) only inside a
+Markdown table row, so it stays in one cell. In prose, lists, headings and inline
+code the exact native value is written without an added backslash, and the answer
+decoder restores that value if a preparation or correction step added one.
+Table serialization, fenced code, legitimate backslashes in a native value and
+the browser's rendering safeguards are unchanged. This does not identify which
+earlier step inserted an extra backslash in a particular saved answer; it makes
+the final boundary deterministic.
 
 ---
 

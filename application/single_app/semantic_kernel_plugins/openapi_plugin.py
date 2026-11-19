@@ -62,6 +62,8 @@ from semantic_kernel_plugins.plugin_invocation_logger import (
     report_plugin_invocation_failure,
 )
 from functions_debug import debug_print
+from functions_outbound_destinations import OutboundDestinationError
+from functions_outbound_http import guarded_request
 
 
 OPENAPI_REDACTED_VALUE = "***REDACTED***"
@@ -1106,26 +1108,26 @@ class OpenApiPlugin(BasePlugin):
             logging.info(f"[OPEN_API_PLUGIN] Query params: {_redact_openapi_value(query_params)}")
             
             if method.lower() == 'get':
-                response = requests.get(full_url, headers=headers, params=query_params, timeout=30)
+                response = guarded_request("GET", full_url, headers=headers, params=query_params, timeout=30)
                 # Log the actual URL that was requested
                 debug_print(f"Actual GET request URL: {_redact_openapi_url(response.url)}")
                 debug_print(f"Response status: {response.status_code}")
                 logging.info(f"[OPEN_API_PLUGIN] Actual GET request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'post':
-                response = requests.post(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
+                response = guarded_request("POST", full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
                 logging.info(f"[OPEN_API_PLUGIN] Actual POST request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'put':
-                response = requests.put(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
+                response = guarded_request("PUT", full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
                 logging.info(f"[OPEN_API_PLUGIN] Actual PUT request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'delete':
-                response = requests.delete(full_url, headers=headers, params=query_params, timeout=30)
+                response = guarded_request("DELETE", full_url, headers=headers, params=query_params, timeout=30)
                 logging.info(f"[OPEN_API_PLUGIN] Actual DELETE request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'patch':
-                response = requests.patch(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
+                response = guarded_request("PATCH", full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
                 logging.info(f"[OPEN_API_PLUGIN] Actual PATCH request URL: {_redact_openapi_url(response.url)}")
             else:
                 # Default to GET for unknown methods
-                response = requests.get(full_url, headers=headers, params=query_params, timeout=30)
+                response = guarded_request("GET", full_url, headers=headers, params=query_params, timeout=30)
                 logging.info(f"[OPEN_API_PLUGIN] Actual GET request URL: {_redact_openapi_url(response.url)}")
             
             debug_print(f"Response status: {response.status_code}")
@@ -1224,6 +1226,9 @@ class OpenApiPlugin(BasePlugin):
                 report_plugin_invocation_failure(f"HTTP {response.status_code}")
                 return error_result
                 
+        except OutboundDestinationError as exc:
+            report_plugin_invocation_failure("OpenAPI destination policy rejected the request.")
+            return {"error": exc.public_message, "error_type": "destination_blocked", "operation_id": operation_id}
         except requests.exceptions.RequestException as req_error:
             redacted_request_error = _redact_openapi_string(str(req_error))
             debug_print(f"Request exception: {redacted_request_error}")

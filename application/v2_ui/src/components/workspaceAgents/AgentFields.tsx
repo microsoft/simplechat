@@ -31,18 +31,21 @@ export function AgentTextField({
 }
 
 export function AgentSecretField({
-    label, value, original, onChange,
-}: { label: string; value: unknown; original: unknown; onChange: (value: string) => void }) {
+    label, value, original, onChange, requiresReentry = false,
+}: { label: string; value: unknown; original: unknown; onChange: (value: string) => void; requiresReentry?: boolean }) {
     const id = useId();
     const stored = original === EDITOR_SECRET_MASK;
     const [replacing, setReplacing] = useState(() => stored && secretIntent(value, original) === 'replace');
-    const intent = replacing ? 'replace' : secretIntent(value, original);
+    const selectedIntent = secretIntent(value, original);
+    const intent = replacing || (requiresReentry && selectedIntent === 'keep') ? 'replace' : selectedIntent;
     // A fragment, so the keep/replace choice and the replacement sit in the row list as
     // ordinary rows rather than as one box among them.
     return (
         <>
             {stored ? (
-                <AgentField id={`${id}-intent`} label={label} help="The stored value is never sent to this page. Keep it, replace it, or explicitly clear it on save.">
+                <AgentField id={`${id}-intent`} label={label} help={requiresReentry
+                    ? 'A security update requires re-entry before this credential can be used. The old value cannot be kept.'
+                    : 'The stored value is never sent to this page. Keep it, replace it, or explicitly clear it on save.'}>
                     <select id={`${id}-intent`} value={intent} className={AGENT_INPUT_CLASS}
                         onChange={(event) => {
                             const mode = event.target.value;
@@ -51,7 +54,7 @@ export function AgentSecretField({
                             if (mode === 'clear') onChange('');
                             if (mode === 'replace' && !value) onChange(EDITOR_SECRET_MASK);
                         }}>
-                        <option value="keep">Keep saved value</option>
+                        {!requiresReentry ? <option value="keep">Keep saved value</option> : null}
                         <option value="replace">Replace saved value</option>
                         <option value="clear">Clear saved value</option>
                     </select>
@@ -61,7 +64,9 @@ export function AgentSecretField({
                 <AgentTextField label={stored ? `Replacement ${label.toLowerCase()}` : label} type="password"
                     value={value === EDITOR_SECRET_MASK ? '' : value} autoComplete="new-password"
                     onChange={(next) => onChange(stored && !next ? EDITOR_SECRET_MASK : next)}
-                    help={stored ? 'Enter a replacement. An empty replacement keeps the saved value; use Clear saved value to delete it.' : 'Optional. Never included in template submissions.'} />
+                    help={requiresReentry ? 'Re-enter this credential, or explicitly clear it and choose an approved saved connection. An empty field does not restore the old credential.'
+                        : stored ? 'Enter a replacement. An empty replacement keeps the saved value; use Clear saved value to delete it.'
+                            : 'Custom authentication uses its own credential. Application credentials are never inherited.'} />
             ) : null}
             {stored && intent === 'clear' ? <p role="status" className="pb-2 text-xs text-warn">The saved value will be cleared when you save.</p> : null}
         </>

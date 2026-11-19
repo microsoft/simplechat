@@ -1,8 +1,9 @@
 # test_v2_shared_workspace_overview_counts.py
 """
 Real-SPA regression tests for group/public overview counts.
-Version: 0.261.323
+Version: 0.261.448
 Implemented in: 0.261.310
+The public Tags card is counted, as the section is native: 0.261.448
 
 Uses the established Azure Playwright-compatible connection fixture and closed
 HTTP boundary; validates totals, zero/failure badges, scope switches and refresh.
@@ -183,7 +184,7 @@ def nav(ui, label):
 def test_overview_shows_available_resource_totals(overview_ui, theme, width, height):
     ui = overview_ui
     open_overview(ui, theme=theme, width=width, height=height)
-    available = list(TOTALS) if ui.kind == "group" else ["documents", "prompts", "sync", "identities", "members"]
+    available = list(TOTALS) if ui.kind == "group" else ["documents", "tags", "prompts", "sync", "identities", "members"]
     for section in available:
         expect(badge(ui, section, TOTALS[section])).to_be_visible()
     expect(ui.page.get_by_role("img", name=re.compile("count unavailable$"))).to_have_count(0)
@@ -193,7 +194,8 @@ def test_overview_shows_available_resource_totals(overview_ui, theme, width, hei
     for label in ("Settings", "Activity", "Statistics"):
         expect(ui.page.get_by_label(re.compile(f"^{label} count"))).to_have_count(0)
     if ui.kind == "public":
-        expect(ui.page.get_by_label(re.compile("^Tags count"))).to_have_count(0)
+        # Public Tags is a native section from 0.261.448, so its card counts like Documents'. The
+        # sections public workspaces never have still carry no count.
         for label in ("Agents", "Actions", "Workflows", "Endpoints"):
             expect(ui.page.get_by_label(re.compile(f"^{label} count"))).to_have_count(0)
     ui.assert_no_overflow()

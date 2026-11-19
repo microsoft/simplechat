@@ -64,6 +64,9 @@ def normalize_terms_of_use_return_path(value, fallback="/"):
         return fallback
     if "\\" in candidate or not candidate.startswith("/") or candidate.startswith("//"):
         return fallback
+    # Redirect handling may strip control characters and change how the path is interpreted.
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in candidate):
+        return fallback
     return candidate
 
 

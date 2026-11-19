@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for local chat OpenLayers assets.
-Version: 0.261.430
+Version: 0.261.460
 Implemented in: 0.241.116
 CSP allowlist regression fixed in: 0.242.053
 
@@ -35,13 +35,6 @@ def _read(path):
 
 def _strip_html_comments(content):
     return re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
-
-
-def _get_current_version():
-    for line in _read(CONFIG_FILE).splitlines():
-        if line.strip().startswith("VERSION = "):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise AssertionError("Unable to find VERSION in config.py.")
 
 
 def test_openlayers_assets_are_local():
@@ -91,6 +84,7 @@ def test_csp_keeps_scripts_and_styles_local():
     for csp_fragment in [
         "script-src 'self' 'unsafe-inline' 'unsafe-eval';",
         "style-src 'self' 'unsafe-inline';",
+        "worker-src 'self';",
     ]:
         if csp_fragment not in content:
             errors.append(f"Missing CSP fragment: {csp_fragment}")

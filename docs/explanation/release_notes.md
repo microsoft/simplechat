@@ -2,6 +2,161 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.454)**
+
+#### Bug Fixes
+
+*   **Safe Plain-Text OAuth Sign-In Errors**
+    *   `/getAToken` and `/getATokenApi` now return a consistent plain-text HTTP 400 login-failure message without exposing provider error contents.
+    *   Keeps safe diagnostic fields server-side and preserves missing-code handling, Teams sign-in, and separate Microsoft 365 chat/workflow connection callbacks.
+    *   (Ref: `route_frontend_authentication.py`, `test_oauth_error_responses.py`, `OAUTH_ERROR_RESPONSE_XSS_FIX.md`, [#1903](https://github.com/microsoft/simplechat/pull/1903) as a historical non-closing reference)
+
+### **(v0.261.452)**
+
+#### New Features
+
+*   **V2 Custom Color Schemes**
+    *   Administrators set the colors the modern interface uses in light mode and dark mode under Admin Settings > Appearance > Appearance. A table shows the Light and Dark value of each of eleven colors (accent, text on accent, page background, panels, borders, primary and secondary text, and four status colors), with a contrast badge on every color that carries text and live previews of both modes. A low-contrast warning suggests a nearby readable color but does not block the save. **Reset to SimpleChat default** returns to the shipped colors, and saving repaints everyone's interface.
+    *   Users choose **Light**, **Dark**, **Match system** or **Custom** in Settings > Preferences > Color mode. Custom starts from the organization's colors and applies to the whole interface, with no flash of the default colors on load. The sidebar's dark mode toggle still works, and a light or dark choice made in the classic interface is still honoured.
+    *   Three new switches, all on by default: **Let users create a custom color mode**, **Allow Theme Card sharing and import**, and **Require readable contrast (WCAG AA)**. With custom modes off, Custom is hidden, a saved custom mode stops applying, and the server refuses it.
+    *   Every color is reduced to a plain `#RRGGBB` value on the server before it is stored, through the admin settings PATCH and the user settings route. CSS expressions, URLs, unknown color names and over-long names are refused. Contrast is judged on the ratio as displayed, to one decimal place.
+    *   (Ref: `functions_color_schemes.py`, `admin_settings_fields.py`, `route_backend_users.py`, `colorScheme.ts`, `useColorSchemeRuntime.ts`, `ColorSchemeEditor.tsx`, `ColorModeCard.tsx`, `docs/explanation/features/V2_CUSTOM_COLOR_SCHEMES.md`)
+
+*   **Theme Cards**
+    *   A custom color mode can be shared as a Theme Card: a PNG with the mode's name, a stripe of its colors and a QR code drawn in those colors. **Copy as text code** gives the same thing as text. Importing reads the code stored in the PNG, or the QR code when that copy is missing (a screenshot, or an image Teams recompressed). The card is previewed with the checks it passed, and nothing changes until the user saves. Administrators can import a card into the light or dark column of the color scheme.
+    *   Cards import on any SimpleChat deployment. Each carries an open checksum, so a card edited after it was made is refused, and its colors are validated again on save. The image never leaves the browser.
+    *   Adds two pinned V2 dependencies: `qrcode-generator@1.4.4` and `jsqr@1.4.0`.
+    *   (Ref: `themeCardImage.ts`, `ThemeCardDialogs.tsx`, `functional_tests/test_theme_card_code_format.py`)
+
+### **(v0.261.451)**
+
+#### New Features
+
+*   **Read-Only Bitbucket Repository Review Action**
+    *   Review source files and compare branches from self-hosted Bitbucket Data Center or Bitbucket Cloud in chat, without writing to repositories or posting reviews.
+    *   Configure allowed repositories and fixed or unrestricted branches per repository in Classic or V2. Both branches in a comparison must satisfy the action's restrictions; users choose repositories and branches conversationally.
+    *   Connect through per-user Bitbucket OAuth, saved identities or private token credentials. Smart-card/SSO sign-in takes place through Bitbucket's browser authentication; SimpleChat and Microsoft 365 tokens, session cookies and SSH keys are not forwarded.
+    *   OAuth requires deployment configuration for an HTTPS callback and a persistent token-encryption key. Live provider and smart-card acceptance testing remains deployment-specific.
+    *   (Ref: `functions_bitbucket_operations.py`, `functions_bitbucket_connections.py`, `bitbucket_plugin.py`, `BitbucketActionConfiguration.tsx`, `docs/explanation/features/BITBUCKET_REPOSITORY_ACTION.md`, [#1949](https://github.com/microsoft/simplechat/pull/1949))
+
+#### Bug Fixes
+
+*   **Bitbucket Configuration Error Responses**
+    *   Malformed Bitbucket configuration, including missing dictionary keys, returns a safe HTTP 400 response instead of being mistaken for an unavailable action. Unavailable or unauthorized actions retain HTTP 404 responses.
+    *   (Ref: `route_backend_bitbucket.py`, `functional_tests/test_bitbucket_routes.py`, `docs/explanation/fixes/BITBUCKET_ERROR_BOUNDARY_FIX.md`, [#1949](https://github.com/microsoft/simplechat/pull/1949))
+
+### **(v0.261.448)**
+
+#### New Features
+
+*   **V2 Notifications Page**
+    *   The V2 interface has a full Notifications page at `/v2/notifications`: All, Unread and Read filters, search, 10, 20 or 50 notices per page (remembered), numbered paging, **Mark all read**, refresh, and open, mark read, dismiss and acknowledge on each notice. The bell panel's footer and a new **Notifications** entry in the account menu (with the unread count) open it instead of the classic page.
+    *   `GET /api/notifications` accepts optional `status` (`all`, `unread`, `read`) and `q` (search text, up to 100 characters), applied before paging so totals, page numbers and search results cover the whole list. An unknown `status` returns 400; existing callers are unchanged.
+    *   (Ref: `NotificationsPage.tsx`, `functions_notifications.py`, `route_backend_notifications.py`, `docs/explanation/features/V2_NOTIFICATIONS_PAGE.md`)
+
+*   **V2 Workflow Activity Page**
+    *   Workflow runs have an activity page in V2 at `/v2/workflow-activity` that takes the classic page's query (`conversationId`, `workflowId`, `runId`, `scope`, `groupId`), so every existing link maps one to one. It shows the run as a timeline with details and event history, follows a live run, cancels a run, and shows a saved Microsoft 365 email or invitation beside the run that saved it.
+    *   Notifications, Latest Features shortcuts, the chat header of a workflow conversation, a workflow's run history and its header all open the V2 page. No server change was needed: the page reads the same activity routes as classic, and a regression test pins their gates to the classic page's.
+    *   (Ref: `WorkflowActivityPage.tsx`, `workflowActivity*.ts`, `docs/explanation/features/V2_WORKFLOW_ACTIVITY.md`, `docs/guides/view-workflow-activity.md`)
+
+*   **Custom Pages Open Inside V2**
+    *   A custom page chosen from the V2 rail opens at `/v2/custom/<slug>` with the rail still on screen, framing a chrome-less same-origin copy (`/custom/<slug>?embed=1`) instead of leaving for the classic layout. Pages set to open in a new tab, and Python-backed pages that have not set `supports_embed = True`, keep opening in their own tab. Pages open to any signed-in user stay standalone, because those visitors cannot use V2.
+    *   Only the embed response relaxes `X-Frame-Options` from `DENY` to `SAMEORIGIN` (the Content Security Policy already limits `frame-ancestors`); every other response, and Teams SSO deployments, are unchanged. The host's **Open in a new tab** opens the chrome-less document at `/custom/<slug>?embed=1`, which the classic-to-V2 redirect never sends back to V2.
+    *   (Ref: `route_custom_pages.py`, `functions_custom_pages.py`, `custom_page_extension.py`, `custom_page_embed_shell.html`, `CustomPageHost.tsx`, `docs/explanation/features/V2_CUSTOM_PAGES.md`)
+
+*   **Public Workspace Tags, Native Workspace Delete And Manage Sections For Inactive Workspaces In V2**
+    *   A public workspace has a native **Tags** section: everyone who can view the workspace browses its tags, and an Owner, Admin or DocumentManager of an active workspace creates, recolours, renames, merges and deletes them.
+    *   An owner deletes a group or public workspace in V2: the document count is read again at the click and at the confirmation, then the workspace is deleted and V2 returns to the group or public list. The group and public pickers no longer keep a deleted or left workspace selectable.
+    *   The Owner and Admins of a locked, inactive or unrecognised-status group keep Members, Settings, Activity and Statistics in V2, as the classic manage page does. Adding a member stays closed with a read-only note. The **Manage group (classic)** and **Classic tools** buttons are gone.
+    *   The Owner and Admins of a locked, inactive or unrecognised-status public workspace keep Members, Settings and Activity, and every stored role keeps Statistics. The profile and logo stay read-only, and adding members and changing roles stay closed, which is stricter than the classic page. The change-role control no longer shows in a locked public workspace, where the server refuses it.
+    *   (Ref: `functions_workspace_context.py`, `WorkspaceSettingsSection.tsx`, `TagsSection.tsx`, `MembersSection.tsx`, `docs/explanation/features/V2_PUBLIC_TAGS.md`, `docs/explanation/features/V2_GROUP_SETTINGS.md`, `docs/explanation/features/V2_PUBLIC_SETTINGS.md`)
+
+*   **Legacy Document Upgrade In V2**
+    *   The Documents explorer shows the **Update older documents** notice for personal, group and public documents that predate progress tracking, and upgrades them without leaving V2.
+    *   Adds `POST /api/groups/<group_id>/documents/upgrade_legacy` and `POST /api/public-workspaces/<workspace_id>/documents/upgrade_legacy`. Each is authorized as a metadata edit on an active workspace, re-checks the role before every document, accepts no request body, upgrades at most 500 documents per request (the receipt says when more remain) and answers 207 when some could not be updated. Personal documents use the existing classic route.
+    *   (Ref: `functions_legacy_document_upgrade.py`, `route_backend_group_documents.py`, `route_backend_public_document_management.py`, `LegacyUpgradeBanner.tsx`, `docs/explanation/features/V2_LEGACY_DOCUMENT_UPGRADE.md`)
+
+*   **Control Center Refresh, Duplicate Global Agents And Actions, And Administrator-Managed File Sources In V2**
+    *   The V2 Control Center has a **Refresh data** strip with the last refresh and the next scheduled run; it recalculates the user and group figures through the existing refresh routes and reloads the section on screen.
+    *   Global agents and global actions can be duplicated from V2 admin.
+    *   The V2 File Sync card has **Manage sources for someone else**: search for a user, a group or a public workspace (or paste an ID) and open the same file sources workbench a workspace manager uses, over the administrator routes. Adds the administrator-only `GET /api/admin/file-sync/<scope_type>/<scope_id>/source-options` (it takes no parameters or body).
+    *   (Ref: `RefreshDataStrip.tsx`, `FileSyncTargetManager.tsx`, `route_backend_file_sync.py`, `docs/explanation/features/V2_CONTROL_CENTER_REFRESH.md`, `docs/explanation/features/V2_ADMIN_FILE_SYNC_TARGETS.md`)
+
+*   **Global Identities In V2 Admin**
+    *   Administrators can create, edit and delete Global Identities, the deployment-wide saved credentials that File Sync sources and actions use, in V2 under Admin Settings > Security > Global Identities. It is the shared identity editor with a global scope over the existing administrator routes, with the same sign-in methods the classic pane offers. A global record has no version marker, so a save replaces the stored record as in classic.
+    *   A delete is refused while an action still uses the identity, and the refusal lists them.
+    *   Every V2 link to the classic admin page names the tab and carries `ui=classic`, so it is not sent back to V2 once the redirect is on.
+    *   (Ref: `identityWorkbench.ts`, `GlobalIdentitiesList.tsx`, `adminOperations.ts`, `docs/explanation/features/V2_ADMIN_SECTION_LINKS.md`, `docs/explanation/features/V2_WORKSPACE_IDENTITIES.md`)
+
+*   **Conversation Scope Lock Editing And Generated-File Actions In V2 Chat**
+    *   V2 chat can lock and unlock a conversation's workspace scope, with a dialog that lists what the lock covers, using the existing `PATCH /api/conversations/<id>/scope_lock`.
+    *   A generated-file card has **Add to Workspace** and **Create PowerPoint** beside Download and View, using the existing `POST /api/chat_artifacts/promote` and `POST /api/message/export-powerpoint`.
+    *   (Ref: `ScopeLockControl.tsx`, `GeneratedArtifactActions.tsx`, `docs/explanation/features/V2_CONVERSATION_SCOPE_LOCK.md`, `docs/explanation/features/V2_GENERATED_ARTIFACT_ACTIONS.md`, `docs/guides/reuse-generated-files.md`)
+
+*   **User Agreement Before Uploads In V2**
+    *   When an administrator requires the User Agreement (`enable_user_agreement`), V2 now asks for it before every upload it makes: chat attach, paste, drop and retry, the files in an inline follow-up question, and personal, group and public workspace uploads. Acceptance is recorded as in classic and **Accept once per day** is shared with classic.
+    *   While the check runs or the agreement is open, the chat composer and the follow-up card hold Send and the next step and say why, so a message cannot go without a file that is still being checked. The check and the acceptance each give up after 20 seconds and offer Try again or Cancel.
+    *   Unlike classic, V2 holds the upload and says so when the agreement check or the acceptance fails. No upload route enforces the agreement on the server, in either interface.
+    *   (Ref: `userAgreement.ts`, `useUserAgreementGate.ts`, `UserAgreementDialog.tsx`, `ComposerEditor.tsx`, `ElicitationCard.tsx`, `docs/explanation/features/V2_USER_AGREEMENT_GATE.md`)
+
+*   **Idle Session Warning And Profile Photo Refresh In V2**
+    *   When **Sign out inactive users** is on, V2 warns before the sign-out with a countdown, offers **Stay signed in** or **Logout now**, and reports activity to the server so someone who is working is not signed out. The same four idle settings drive both interfaces; the V2 bootstrap carries them (`session.idle_timeout`).
+    *   V2 Settings has **Refresh photo**, which fetches the Microsoft Graph photo again through `POST /api/profile/image/refresh`.
+    *   (Ref: `functions_idle_timeout.py`, `IdleSessionDialog.tsx`, `ProfilePhotoStatus.tsx`, `docs/explanation/features/V2_IDLE_SESSION_WARNING.md`)
+
+*   **Modern Standalone Pages For Visitors V2 Cannot Serve**
+    *   Adds modern variants of the pages that must stay server-rendered because the people who see them cannot use V2: the signed-out and no-role home page, the Acceptable Use Policy, the rate-limited (429) page and the Microsoft 365 sign-in result. They share one small standalone layout with the V2 look and no classic navigation.
+    *   The variants are inactive: a single helper chooses between the classic and modern templates from `get_ui_mode()`, which answers classic for everyone until the interface selector exists, so nothing changes for any user today.
+    *   (Ref: `functions_ui_pages.py`, `templates/modern/`, `modern-standalone.css`, `docs/explanation/features/V2_MODERN_STANDALONE_PAGES.md`)
+
+*   **Classic-To-V2 Page Parity Registry And Interface-Selection Prerequisites**
+    *   Adds one registry of every classic page route and its V2 answer (`ui_route_map.json`, with a loader, a generator for the browser copy and the documentation table, and a guard test that fails when a classic page has no V2 answer). No classic page is left without one.
+    *   Adds the groundwork for choosing "fully modern" or "fully classic": the `functions_ui_mode.get_ui_mode()` seam, a disabled-by-default edge redirect from classic page URLs to their V2 pages (302, `no-store`, query and fragment translated, `?ui=classic` to skip it for one request, never when the V2 bundle is missing), V2 translation of classic fragments, and **Back to classic UI** that opens the counterpart of the current page. All of it is inert until an interface is selected.
+    *   (Ref: `ui_route_map.json`, `ui_routing.py`, `functions_ui_redirect.py`, `classicLinks.ts`, `docs/explanation/features/V2_CLASSIC_PAGE_PARITY.md`, `docs/explanation/features/V2_INTERFACE_SELECTION_PREREQUISITES.md`)
+
+#### Bug Fixes
+
+*   **Admin Settings Links Stay In V2**
+    *   A related-section link, a prerequisite and a Latest Features shortcut open the V2 section when V2 draws it, instead of leaving for the classic admin page. The links that still leave name the classic tab, which the classic page reads, and carry `ui=classic`; the old Global Identities link addressed `/admin_settings#...`, which was never a route, and that section no longer links out. The chat mode notice now points to **Use AI Connections for chat**.
+    *   The stale `classic_only` flag on `enable_dai_debug` is removed, because the V2 Document Access Index panel already draws its diagnostics.
+    *   (Ref: `lib/adminOperations.ts`, `lib/latestFeatures.ts`, `admin_settings_fields.py`, `docs/explanation/features/V2_ADMIN_SECTION_LINKS.md`)
+
+*   **Global Identity Delete Names What Still Uses It**
+    *   Deleting a global identity that a global action still uses answered 400 with one sentence. It now answers 409 with `error_code: identity_in_use` and the referencing actions, as the strict personal, group and public identity routes do. The sentence is unchanged, so the classic editor shows the same text, and the other identity routes are not changed.
+    *   (Ref: `route_backend_workspace_identities.py`, `functional_tests/test_global_identity_admin_routes.py`, `docs/explanation/fixes/GLOBAL_IDENTITY_IN_USE_DELETE_FIX.md`)
+
+*   **Python Custom Page Example Renders**
+    *   The Python-backed custom page example no longer raises a `url_for` build error when rendered.
+    *   (Ref: `docs/how-to/custom_pages_examples/python-jinja-api/`, `docs/explanation/features/V2_CUSTOM_PAGES.md`)
+
+*   **Terms Of Use Return Path Stays On The Site**
+    *   Accepting the Terms of Use in the classic interface could redirect to another site: a `next` value that held a TAB, such as `/terms-of-use?next=/%09/evil.example`, was kept and then sent as `//evil.example`. A return path with any control character now falls back to the default page, and ordinary return paths are unchanged. The V2 terms page already refused such paths in the browser.
+    *   (Ref: `functions_terms_of_use.py`, `functional_tests/test_terms_of_use.py`, `docs/explanation/fixes/TERMS_OF_USE_RETURN_PATH_CONTROL_CHARACTER_FIX.md`)
+
+#### User Interface Enhancements
+
+*   **Identity Rows Wrap At Narrow Widths**
+    *   Identity names no longer disappear at phone width: the rows in the personal, group, public and global identity lists wrap their badges and buttons.
+    *   (Ref: `IdentityWorkbenchSection.tsx`, `docs/explanation/features/V2_WORKSPACE_IDENTITIES.md`)
+
+### **(v0.261.442)**
+
+#### Bug Fixes
+
+*   **Yamcs TLS Verification Setting**
+    *   Yamcs actions and Test Yamcs Connection now honor the selected TLS verification setting even when an environment CA bundle is configured.
+    *   Initial login and token renewal use the same configured TLS policy and timeout as action requests. Verification remains enabled by default, with no automatic insecure retry.
+    *   Existing organization CA support, deployment settings, destination guards, and personal credential recovery are unchanged.
+    *   (Ref: `functions_yamcs_operations.py`, `yamcs_plugin.py`, `route_backend_plugins.py`, `docs/explanation/fixes/YAMCS_TLS_VERIFY_ENV_OVERRIDE_FIX.md`, [#1934](https://github.com/microsoft/simplechat/issues/1934), main fix [#1937](https://github.com/microsoft/simplechat/pull/1937))
+
+### **(v0.261.441)**
+
+#### Bug Fixes
+
+*   **Custom Favicon Persistence Across Instances**
+    *   Restores the saved custom favicon when an instance starts and reconciles it before serving the favicon, preventing fresh or scaled-out instances from displaying the bundled icon instead in classic and V2 interfaces.
+    *   Preserves existing favicon versioning and works with Redis-backed settings or direct Cosmos reads. Changed files are replaced atomically; unchanged icons are not rewritten.
+    *   (Ref: `app.py`, `ensure_custom_favicon_file_exists()`, `docs/explanation/fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md`, [#1932](https://github.com/microsoft/simplechat/issues/1932), main fix [#1935](https://github.com/microsoft/simplechat/pull/1935))
 ### **(v0.261.438)**
 
 #### Bug Fixes

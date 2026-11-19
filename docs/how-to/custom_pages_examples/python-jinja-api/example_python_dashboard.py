@@ -15,6 +15,10 @@ EXAMPLE_REQUEST_COUNT = 0
 class ExamplePythonDashboard(CustomPageExtension):
     """Render a Jinja-backed example page and serve a small backend API."""
 
+    # Lets the V2 interface show this page inside its own content area. When it does,
+    # render() receives context["embed"] == True and returns the chrome-less version.
+    supports_embed = True
+
     metadata = {
         "slug": "example-python-dashboard",
         "title": "Python API Dashboard Example",
@@ -40,21 +44,23 @@ class ExamplePythonDashboard(CustomPageExtension):
 
         user = context.get("user", {}) if isinstance(context, dict) else {}
         user_name = user.get("name") or user.get("preferred_username") or "Signed-in user"
+        embed = bool(context.get("embed")) if isinstance(context, dict) else False
         slug = self.metadata["slug"]
 
         return render_template_string(
             template_source,
+            embed=embed,
             page_title=self.metadata["title"],
             user_name=user_name,
-            api_status_url=url_for("custom_page_api", slug=slug, operation="status"),
+            api_status_url=url_for("custom_pages.custom_page_api", slug=slug, operation="status"),
             stylesheet_url=url_for(
-                "custom_page_asset",
+                "custom_pages.custom_page_asset",
                 slug=slug,
                 folder="css",
                 filename="example-python-dashboard.css",
             ),
             script_url=url_for(
-                "custom_page_asset",
+                "custom_pages.custom_page_asset",
                 slug=slug,
                 folder="js",
                 filename="example-python-dashboard.js",

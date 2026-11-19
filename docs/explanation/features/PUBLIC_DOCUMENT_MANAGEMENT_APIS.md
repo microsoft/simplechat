@@ -52,6 +52,7 @@ parameters are rejected.
 | `PATCH /tags/T` | `new_name` and/or `color` |
 | `DELETE /tags/T` | No body |
 | `POST /bulk-tag` | `document_ids`, `action=add_tags\|remove_tags\|set_tags`, `tags` |
+| `POST /upgrade_legacy` | No body and no query; see [V2 Legacy Document Upgrade](V2_LEGACY_DOCUMENT_UPGRADE.md) |
 
 Document batches accept 1–1000 identifiers and deduplicate them in request
 order. Uploads enforce the configured per-file size limit before creating a
@@ -101,11 +102,12 @@ when nothing succeeds:
 | `POST /extract_metadata`, `POST /reprocess_extraction` | 202 | 207 | 400 |
 | `POST /bulk-tag`, `PATCH /tags/T`, `DELETE /tags/T` | 200 | 207 | **207** |
 | `POST /bulk-delete` | 200 | 207 | **207** |
+| `POST /upgrade_legacy` | 200 | 207 | **207** |
 | `POST /tags` (create) | 201 | — | — |
 
 Upload and the extraction jobs return 400 when no item was accepted. Tagging,
-tag changes, and bulk deletion return 207 whenever **any** item failed, including
-when every item failed.
+tag changes, bulk deletion and the legacy document upgrade return 207 whenever
+**any** item failed, including when every item failed.
 
 So a 207 alone does not tell a client whether anything changed. **Inspect the
 arrays rather than relying on the HTTP status.** In particular, do not treat a

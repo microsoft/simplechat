@@ -1,7 +1,7 @@
 # route_backend_group_documents.py:
 
 from datetime import datetime, timezone
-from functools import wraps
+from functools import partial, wraps
 import json
 import logging
 
@@ -51,7 +51,9 @@ from functions_group_document_collaboration import (
     group_document_sharing_state,
     group_document_sharing_targets,
 )
+from functions_group_document_access import require_group_document_management_context
 from functions_group_document_publication import decide_group_document_publication
+from functions_legacy_document_upgrade import upgrade_legacy_scope_documents
 from content_screening.service import prepare_document_upload
 from functions_appinsights import log_event
 from functions_artifact_publication import decide_artifact_publication
@@ -770,6 +772,30 @@ def register_route_backend_group_documents(bp):
     def api_scoped_group_documents_tag(group_id):
         _group_management_query()
         payload, status = tag_group_documents(get_current_user_id(), group_id, request.get_json(silent=True))
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/upgrade_legacy', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_upgrade_legacy(group_id):
+        """Backfill the group's own documents that predate progress tracking.
+
+        Authorized as a metadata edit, so only a manager of an active group may run it, and
+        the group is revalidated before each document is written.
+        """
+        _group_management_query()
+        if request.get_data():
+            raise GroupDocumentOperationError("A legacy document upgrade does not accept a request body.", 400)
+        user_id = get_current_user_id()
+        payload, status = upgrade_legacy_scope_documents(
+            user_id, group_id=group_id,
+            authorize=partial(require_group_document_management_context, user_id, group_id, "edit_metadata"),
+        )
+        if payload["upgraded_count"]:
+            invalidate_group_search_cache(group_id)
         return jsonify(payload), status
 
     @bp.route('/api/group_documents/upload', methods=['POST'])

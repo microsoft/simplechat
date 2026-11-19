@@ -28,7 +28,8 @@ In a shared conversation the person who started it plans in a hidden backing con
 with the shared conversation's id; the question and each final answer are mirrored into the
 shared thread for every participant (0.261.270).
 
-Version: 0.261.270
+Version: 0.261.437
+Referenced failed-turn source continuation added in: 0.261.437
 """
 
 import hashlib
@@ -101,6 +102,8 @@ from functions_orchestration_context import (
     build_run_ledger,
     enrich_planner_candidates,
     collect_answered_questions,
+    continue_requested_sources,
+    exact_requested_source_matches,
     merge_elicitation_context,
     normalize_elicitation_answer,
     conversation_user_urls,
@@ -776,7 +779,11 @@ def _prepare_execution_stream(record, data, user_id, settings, snapshot, identit
             '[ORCHESTRATION_RUNS] This execution could not be prepared.',
             level=logging.ERROR, extra={
                 **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
-                'stage': 'execution_prepare', 'error_type': type(exc).__name__,
+                'stage': getattr(exc, 'stage', None) or 'execution_prepare',
+                'validation_code': getattr(exc, 'code', None),
+                'validation_rule': getattr(exc, 'validation_rule', None),
+                'producer_capability_id': getattr(exc, 'producer_capability_id', None),
+                'error_type': type(exc).__name__,
             },
         )
         return jsonify({
@@ -876,6 +883,7 @@ def _load_ledger(conversation_id, user_id, settings, *, message_ids=None):
             and isinstance(metadata, dict) and isinstance(thread, dict)
             and not metadata.get('masked') and not metadata.get('masked_ranges')
             and not metadata.get('is_generated_chat_artifact')
+            and not is_soft_deleted_message(source)
             and (metadata.get('saved_analysis') or {}).get('available') is not False
             and thread.get('active_thread') is not False
         ):
@@ -3275,10 +3283,16 @@ def register_route_backend_orchestration(bp):
                 turn_context['memory_scope'] = memory_context['scope']
                 for notice in memory_context['notices']:
                     yield build_planning_thought(notice)
+                context_ids = (
+                    {item['id'] for item in snapshot['messages']}
+                    if turn_context.get('requires_fresh_review') else None
+                )
+                ledger = _load_ledger(resolved_conversation_id, user_id, settings, message_ids=context_ids)
                 resolution = resolve_conversation_request(
                     message, snapshot, settings=settings, answered_questions=answered_record,
                     planner_model=planner_model, seeds=seeds, memory_context=memory_context,
                     selected_sources=selected_sources,
+                    previous_source_requests=ledger.get('runs') or [],
                     conversation_id=resolved_conversation_id, turn_id=turn_id,
                 )
                 log_event(
@@ -3300,6 +3314,17 @@ def register_route_backend_orchestration(bp):
                     turn_context.get('planning_token_usage'), resolution.get('token_usage')
                 )
                 turn_context['planning_token_usage'] = planning_usage
+                if (
+                    resolution.get('relationship') == 'clarification'
+                    and resolution.get('source_requirement') == 'historical_originals'
+                    and exact_requested_source_matches(resolution, ledger)
+                ):
+                    # A missing-source question is not an admission outcome when the
+                    # resolver supplied one exact historical source set. Restore and
+                    # reauthorize that set below, then let the main planner run.
+                    resolution['relationship'] = 'follow_up'
+                    resolution['requires_retrieval'] = True
+                    resolution['clarification'] = ''
                 if resolution['relationship'] == 'clarification':
                     if not allow_elicitation:
                         raise PlannerError(
@@ -3331,6 +3356,114 @@ def register_route_backend_orchestration(bp):
                 effective_message = resolution['resolved_message']
                 turn_context['request_resolution'] = resolution
                 turn_context['resolved_message'] = effective_message
+                try:
+                    continued_seeds = continue_requested_sources(
+                        seeds, resolution, ledger, user_id=user_id,
+                        conversation_id=resolved_conversation_id, settings=settings,
+                        turn_id=turn_id,
+                    )
+                except CatalogResolutionError as exc:
+                    if exc.code not in ('source_continuation_ambiguous', 'source_continuation_limited'):
+                        raise
+                    elicitation = normalize_elicitation({
+                        'message': exc.message,
+                        'requested_schema': {
+                            'type': 'object',
+                            'properties': {
+                                'source_documents': {
+                                    'type': 'array',
+                                    'title': 'Source documents',
+                                    'items': {'type': 'string'},
+                                    'minItems': 1,
+                                },
+                            },
+                            'required': ['source_documents'],
+                        },
+                        'ui_hints': {
+                            'fields': {
+                                'source_documents': {
+                                    'input': 'files',
+                                    'candidate_ids': [
+                                        reference['id']
+                                        for reference in exc.continuation_candidates
+                                    ],
+                                },
+                            },
+                        },
+                    }, run_id=None, revision=current_revision,
+                        candidate_references=exc.continuation_candidates)
+                    _require_planning_owner(planning_holder)
+                    outcome = _save_pending_elicitation(
+                        elicitation, turn_context, user_id, resolved_conversation_id, turn_id,
+                        submission=submission, expected_pending=observed_pending,
+                    )
+                    yield from _elicitation_outcome_events(
+                        outcome, turn_context, user_id, resolved_conversation_id,
+                    )
+                    return
+                if continued_seeds.get('document_ids') != seeds.get('document_ids'):
+                    seeds = continued_seeds
+                    selected_candidates, _probed = resolve_candidate_documents(
+                        effective_message, user_id, seeds=seeds,
+                        conversation_id=resolved_conversation_id, settings=settings,
+                    )
+                    selected_candidates = enrich_planner_candidates(
+                        selected_candidates, user_id, conversation_id=resolved_conversation_id,
+                        seeds=seeds, source_scopes=source_scopes,
+                        selected_source_context_reader=services.selected_source_context_reader,
+                    )
+                    selected_sources = [
+                        item['planning_source'] for item in selected_candidates if item.get('planning_source')
+                    ]
+                    previous_revisions = deepcopy(
+                        (seeds.get('planning_source_revisions') or {})
+                    )
+                    changed_revisions = [
+                        item['document_id'] for item in selected_sources
+                        if previous_revisions.get(item['document_id'])
+                        and previous_revisions[item['document_id']] != item['revision']
+                    ]
+                    if changed_revisions:
+                        elicitation = normalize_elicitation({
+                            'message': (
+                                'The original source selection has changed since that turn. '
+                                'Review and select the current complete set before continuing.'
+                            ),
+                            'requested_schema': {
+                                'type': 'object',
+                                'properties': {
+                                    'source_documents': {
+                                        'type': 'array', 'title': 'Current source documents',
+                                        'items': {'type': 'string'}, 'minItems': 1,
+                                    },
+                                },
+                                'required': ['source_documents'],
+                            },
+                            'ui_hints': {
+                                'fields': {
+                                    'source_documents': {
+                                        'input': 'files', 'candidate_ids': [
+                                            item['document_id'] for item in selected_sources
+                                        ],
+                                    },
+                                },
+                            },
+                        }, run_id=None, revision=current_revision)
+                        _require_planning_owner(planning_holder)
+                        outcome = _save_pending_elicitation(
+                            elicitation, turn_context, user_id, resolved_conversation_id,
+                            turn_id, submission=submission,
+                            expected_pending=observed_pending,
+                        )
+                        yield from _elicitation_outcome_events(
+                            outcome, turn_context, user_id, resolved_conversation_id,
+                        )
+                        return
+                    seeds['planning_source_revisions'] = {
+                        **(seeds.get('planning_source_revisions') or {}),
+                        **{item['document_id']: item['revision'] for item in selected_sources},
+                    }
+                    turn_context['seeds'] = deepcopy(seeds)
                 effective_request = build_elicitation_user_request(effective_message, answered_record)
                 if effective_request != memory_request:
                     memory_context = load_orchestration_memory(
@@ -3369,11 +3502,6 @@ def register_route_backend_orchestration(bp):
                         'image_reference_messages': [],
                     }
                 turn_context['seeds'] = seeds
-                context_ids = (
-                    {item['id'] for item in snapshot['messages']}
-                    if turn_context.get('requires_fresh_review') else None
-                )
-                ledger = _load_ledger(resolved_conversation_id, user_id, settings, message_ids=context_ids)
                 signals = build_conversation_signals(
                     snapshot['messages'], message, truncated=snapshot['truncated'],
                     message_ids=resolution['message_ids'],
@@ -3489,20 +3617,102 @@ def register_route_backend_orchestration(bp):
                 capability_request_context['image_reference_messages'] = (
                     seeds.get('image_reference_messages') or []
                 )
-                kind, plan = plan_request(
-                    effective_message, context, resolved_conversation_id, user_id,
-                    settings=settings,
-                    approval_mode=approval_mode,
-                    authorized_document_ids=authorized,
-                    replan_hint=replan_hint or None,
-                    revision=current_revision,
-                    allow_elicitation=allow_elicitation,
-                    turn_id=turn_id, seeds=seeds, document_labels=labels,
-                    request_context=capability_request_context,
-                    planner_model=planner_model,
-                    contract_version=contract_version, existing_results=existing_results,
-                    export_catalog=context['export_catalog'], composition_profiles=composition_profiles(),
-                )
+                def request_plan():
+                    return plan_request(
+                        effective_message, context, resolved_conversation_id, user_id,
+                        settings=settings,
+                        approval_mode=approval_mode,
+                        authorized_document_ids=authorized,
+                        replan_hint=replan_hint or None,
+                        revision=current_revision,
+                        allow_elicitation=allow_elicitation,
+                        turn_id=turn_id, seeds=seeds, document_labels=labels,
+                        request_context=capability_request_context,
+                        planner_model=planner_model,
+                        contract_version=contract_version, existing_results=existing_results,
+                        export_catalog=context['export_catalog'],
+                        composition_profiles=composition_profiles(),
+                    )
+
+                try:
+                    kind, plan = request_plan()
+                except PlannerError as exc:
+                    if (
+                        exc.code != 'referenced_source_set_requires_restore'
+                        or not exact_requested_source_matches(resolution, ledger)
+                    ):
+                        raise
+                    resolution['relationship'] = 'follow_up'
+                    resolution['source_requirement'] = 'historical_originals'
+                    resolution['requires_retrieval'] = True
+                    resolution['clarification'] = ''
+                    continued_seeds = continue_requested_sources(
+                        seeds, resolution, ledger, user_id=user_id,
+                        conversation_id=resolved_conversation_id, settings=settings,
+                        turn_id=turn_id,
+                    )
+                    if continued_seeds.get('document_ids') == seeds.get('document_ids'):
+                        raise
+                    previous_revisions = deepcopy(
+                        seeds.get('planning_source_revisions') or {}
+                    )
+                    seeds = continued_seeds
+                    restored_candidates, _probed = resolve_candidate_documents(
+                        effective_message, user_id, seeds=seeds,
+                        conversation_id=resolved_conversation_id, settings=settings,
+                    )
+                    restored_candidates = enrich_planner_candidates(
+                        restored_candidates, user_id,
+                        conversation_id=resolved_conversation_id, seeds=seeds,
+                        source_scopes=source_scopes,
+                        selected_source_context_reader=services.selected_source_context_reader,
+                    )
+                    selected_sources = [
+                        item['planning_source'] for item in restored_candidates
+                        if item.get('planning_source')
+                    ]
+                    if any(
+                        previous_revisions.get(item['document_id'])
+                        and previous_revisions[item['document_id']] != item['revision']
+                        for item in selected_sources
+                    ):
+                        raise PlannerError(
+                            'The original source selection changed after that turn. '
+                            'Review and select the current complete set before continuing.',
+                            code='source_continuation_revision_changed',
+                            reason='source_continuation_revision_changed',
+                        )
+                    seeds['planning_source_revisions'] = {
+                        **previous_revisions,
+                        **{
+                            item['document_id']: item['revision']
+                            for item in selected_sources
+                        },
+                    }
+                    turn_context['seeds'] = deepcopy(seeds)
+                    candidates = restored_candidates
+                    authorized = _authorized_document_ids(candidates, seeds)
+                    labels = _document_labels(candidates)
+                    context = build_planner_context(
+                        effective_message, candidates=candidates, seeds=seeds, ledger=ledger,
+                        signals=signals, agents=agent_catalog, original_message=message,
+                        request_resolution=resolution, actions=action_catalog,
+                        answered_questions=answered_record,
+                        memory_context=memory_context,
+                        selected_sources=selected_sources,
+                    )
+                    context['export_catalog'] = _admitted_export_catalog(
+                        user_id, resolved_conversation_id, settings=settings,
+                        services=services,
+                    )
+                    context['document_transform_references'] = deepcopy(
+                        seeds.get('document_transform_references') or []
+                    )
+                    if answered_record:
+                        context['answered_now'] = answered_record
+                    turn_context['request_resolution'] = deepcopy(resolution)
+                    turn_context['resolved_message'] = effective_message
+                    kind, plan = request_plan()
 
                 planning_usage = _sum_token_usage(planning_usage, plan.get('token_usage'))
                 turn_context['planning_token_usage'] = planning_usage
@@ -3574,7 +3784,14 @@ def register_route_backend_orchestration(bp):
             except (CatalogResolutionError, CapabilityResolutionError) as exc:
                 log_event(
                     '[ORCHESTRATION] Capability context could not be loaded.',
-                    level=logging.WARNING, extra={'reason': 'capability_context_failed', 'error_type': type(exc).__name__},
+                    level=logging.WARNING, extra={
+                        **workflow_log_context(
+                            conversation_id=resolved_conversation_id,
+                            turn_id=turn_id,
+                        ),
+                        'reason': 'capability_context_failed', 'validation_code': getattr(exc, 'code', None),
+                        'error_type': type(exc).__name__,
+                    },
                 )
                 yield build_error_event(exc.message, resolved_conversation_id)
             except SharedOrchestrationError as exc:
@@ -3831,7 +4048,19 @@ def register_route_backend_orchestration(bp):
                 if data.get('edits'):
                     raise CheckpointError('recovery_changed')
                 _validate_retry_context(record, user_id, settings)
-        except CheckpointError:
+        except CheckpointError as exc:
+            log_event(
+                '[ORCHESTRATION_RUNS] Execution resume refused changed recovery state.',
+                level=logging.WARNING, extra={
+                    **workflow_log_context(
+                        run_id=run_id, conversation_id=conversation_id,
+                        turn_id=record.get('turn_id'),
+                    ),
+                    'stage': exc.stage or 'execution_resume',
+                    'validation_code': exc.code, 'validation_rule': exc.validation_rule,
+                    'producer_capability_id': exc.producer_capability_id,
+                },
+            )
             return jsonify({'error': 'Saved progress or access changed. Create a new plan.', 'code': 'recovery_unavailable'}), 409
         except ConversationContextError:
             return jsonify({

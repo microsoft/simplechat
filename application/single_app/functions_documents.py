@@ -12379,11 +12379,18 @@ def get_speech_synthesis_config(settings, endpoint: str, location: str):
             raise ValueError("Speech service location is required for text-to-speech with managed identity.")
         if not resource_id:
             raise ValueError("Speech service resource ID is required for text-to-speech with managed identity.")
+        if AZURE_ENVIRONMENT in ("usgovernment", "custom") and not endpoint:
+            raise ValueError("Speech service endpoint is required for text-to-speech in this cloud.")
 
         credential = DefaultAzureCredential()
         token = credential.get_token(cognitive_services_scope)
         authorization_token = f"aad#{resource_id}#{token.token}"
-        speech_config = speechsdk.SpeechConfig(auth_token=authorization_token, region=location)
+        if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+            # The SDK's region constructor does not select sovereign-cloud endpoints.
+            speech_config = speechsdk.SpeechConfig(endpoint=endpoint)
+            speech_config.authorization_token = authorization_token
+        else:
+            speech_config = speechsdk.SpeechConfig(auth_token=authorization_token, region=location)
     else:
         key = (settings.get("speech_service_key") or "").strip()
         if not endpoint:
@@ -12393,7 +12400,7 @@ def get_speech_synthesis_config(settings, endpoint: str, location: str):
 
         speech_config = speechsdk.SpeechConfig(endpoint=endpoint, subscription=key)
 
-    print(f"[DEBUG] Speech synthesis config obtained successfully", flush=True)
+    log_event("[TTS] Speech synthesis config obtained successfully.", debug_only=True)
     return speech_config
 
 def process_audio_document(

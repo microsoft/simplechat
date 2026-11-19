@@ -78,6 +78,7 @@ application/v2_ui/src/
   lib/
     documentExplorer.ts          Query state, selection algebra, formatting, facets
     documentSavedViews.ts        Saved view shape, validation, serialisation
+    documentLegacyUpgrade.ts     The legacy-document flag, upgrade route per scope, receipt check
   components/documents/
     DocumentExplorer.tsx         The shell; owns query, selection and loading
     ExplorerRail.tsx             Places, saved views, tags, classification; drop target
@@ -86,6 +87,7 @@ application/v2_ui/src/
     DocumentTiles.tsx            Tiles view
     DocumentDetailsPane.tsx      Details pane, three selection states
     DocumentDialogs.tsx          Tag, metadata, delete and share dialogs
+    LegacyUpgradeBanner.tsx      The "update older documents" notice
     documentPresentation.tsx     File icons, tag chips, status badges
   pages/workspace/
     DocumentsSection.tsx         Thin host
@@ -296,6 +298,17 @@ guessing and then checking.
 - Enhanced is disabled with a reason when `enable_enhanced_extraction` is off, because the
   reprocess route rejects a request for `layout` outright in that case.
 
+### Updating older documents
+
+Documents stored before progress tracking have no `percentage_complete`, and the document list
+says so with `needs_legacy_update_check`. When it is `true` the explorer shows an **Update older
+documents** notice above the list, in every scope, with **Update now** and **Maybe later**. For a
+group or public workspace it is offered only to the managers of an active workspace. **Update now**
+holds the explorer still, runs the scope's upgrade route, reports the result, and reads the list
+again; **Maybe later** hides the notice for this visit. See
+[V2 Legacy Document Upgrade](V2_LEGACY_DOCUMENT_UPGRADE.md) for the routes, the receipts and what
+the upgrade writes.
+
 ### Deleting
 
 Bulk delete reports per document. When the server refuses one — because it was uploaded
@@ -308,6 +321,7 @@ the reason, and offers to go ahead anyway.
 |---|---|
 | `functional_tests/test_v2_documents_explorer.py` | Route guards, shared delete guard, settings whitelist, section registration on both sides, V1 non-regression, endpoint coverage, composition, selection model, view modes, search binding, batched progress, the re-extract control, the collapsible rail, no CDN assets |
 | `functional_tests/test_v2_documents_explorer_logic.ts` | 67 behavioural checks over the query builder, selection algebra, filter chips, status derivation, formatting, pagination, facets, saved views, batching and extraction-mode summarisation |
+| `functional_tests/test_v2_legacy_document_upgrade.py`, `ui_tests/test_v2_legacy_document_upgrade.py` | The legacy-document notice and upgrade in all three scopes ([V2 Legacy Document Upgrade](V2_LEGACY_DOCUMENT_UPGRADE.md)) |
 
 The Python test additionally *executes* the new server helpers — `sort_documents`,
 `filter_documents_by_place`, `build_personal_document_facets` — by extracting them from source

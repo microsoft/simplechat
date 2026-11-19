@@ -23,7 +23,7 @@ from application.single_app.functions_message_masking import apply_message_mask_
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
-ORIGIN = "http://simplechat.test"
+ORIGIN = "https://simplechat.test"
 pytestmark = pytest.mark.ui
 
 
@@ -297,7 +297,7 @@ def test_math_stream_lifecycle(math_page, ending):
         "message_id": "math-completed",
     }
     if ending == "stopped":
-        final.update(cancelled=True, message_persisted=False)
+        final.update(cancelled=True, cancel_reason="user_requested", message_persisted=False)
     elif ending == "error":
         final = {"error": "Fixture stream interruption", "partial_content": content}
     events = [{"content": content[:15]}, {"content": content[15:]}, final]

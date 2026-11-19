@@ -2,8 +2,9 @@
 # test_collaboration_group_agent_stream_fix.py
 """
 Functional test for group collaboration agent stream completion.
-Version: 0.261.055
+Version: 0.261.429
 Implemented in: 0.261.045; updated in 0.261.055
+Permission-aware agent credential recovery implemented in: 0.261.429
 
 This test ensures group collaborative agent responses complete through the
 shared stream bridge even when mirrored agent citation payloads contain nested
@@ -16,7 +17,8 @@ import os
 import sys
 
 from azure.cosmos._cosmos_responses import CosmosDict
-from flask import Flask, Response
+from flask import Flask, Response, jsonify, session
+import pytest
 from test_support.offline_bootstrap import offline_app_imports
 
 
@@ -348,6 +350,62 @@ def test_group_collaboration_agent_stream_sanitizes_final_payload():
         assert isinstance(final_payload['agent_citations'][0]['function_arguments']['columns'], list)
         assert sorted(final_payload['agent_citations'][0]['function_arguments']['columns']) == ['case_id', 'opened_at']
         assert fake_event_registry.events, 'Expected collaboration events to be published during streaming.'
+    finally:
+        restore()
+
+
+@pytest.mark.parametrize("transport", ["sse", "json"])
+@pytest.mark.parametrize("can_edit", [True, False])
+def test_collaboration_preserves_actor_only_agent_credential_recovery(transport, can_edit, monkeypatch):
+    """Keep the requester's recovery controls out of shared messages/events."""
+    app, registry, restore = build_group_agent_stream_test_app()
+    recovery = {"scope": "group", "can_edit": can_edit}
+    if can_edit:
+        recovery["edit_url"] = "/v2/groups/group-001/agents/agent-001?section=model"
+    payload = {
+        "error": (
+            "Agent credentials need updating. Update this agent's connection settings."
+            if can_edit else
+            "Agent credentials need updating. Please contact a group owner to update this agent."
+        ),
+        "error_code": "model_configuration_invalid",
+        "agent_credential_recovery": recovery,
+    }
+    calls = []
+
+    def blocked_chat():
+        calls.append(session.get("user", {}).get("oid"))
+        if transport == "json":
+            return jsonify(payload), 400
+        return Response([f"data: {json.dumps({**payload, 'done': True})}\n\n"], mimetype="text/event-stream")
+
+    monkeypatch.setitem(app.view_functions, "chat_stream_api", blocked_chat)
+    try:
+        with app.test_client() as client:
+            with client.session_transaction() as state:
+                state["user"] = {"oid": "owner-user-001", "roles": ["User"]}
+            response = client.post(
+                "/api/collaboration/conversations/shared-agent-conversation-001/stream",
+                json={"content": "Review the shared policy."}, buffered=True,
+            )
+        assert response.status_code == 200
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.get_data(as_text=True).splitlines()
+            if line.startswith("data: ")
+        ]
+        failure = next(event for event in events if event.get("error"))
+        assert failure["agent_credential_recovery"] == recovery
+        assert failure["error_code"] == "model_configuration_invalid"
+        assert failure["conversation_kind"] == "collaborative"
+        assert failure["conversation_id"] == "shared-agent-conversation-001"
+        assert failure["user_message_id"] == "shared-user-message-001"
+        assert calls == ["owner-user-001"]
+        assert "agent_credential_recovery" not in json.dumps(registry.events)
+        assert "edit_url" not in json.dumps(registry.events)
+        container = sys.modules["route_backend_collaboration"].cosmos_collaboration_messages_container
+        assert "agent_credential_recovery" not in json.dumps(container.items)
+        assert "source-group-agent-conversation-001" not in json.dumps(events)
     finally:
         restore()
 

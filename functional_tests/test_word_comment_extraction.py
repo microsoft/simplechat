@@ -2,8 +2,9 @@
 # test_word_comment_extraction.py
 """
 Functional test for Word document review comment extraction (.docx, .docm, .doc, .dotx).
-Version: 0.261.390
+Version: 0.261.444
 Implemented in: 0.261.390
+Deterministic disposition provenance added in: 0.261.444
 
 This test ensures that review comments (including author, initials, date, resolved status,
 threaded replies, and anchored document text) are extracted from both OOXML Word archives
@@ -13,6 +14,7 @@ merge into the document chunk containing their anchored text.
 
 import ast
 import importlib.util
+import json
 import logging
 import os
 import re
@@ -22,6 +24,8 @@ import tempfile
 import types
 import zipfile
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +40,7 @@ from functions_office_media import (  # noqa: E402
     format_word_comments_section,
     strip_appended_word_comments,
 )
+from functions_orchestration_excel import project_word_comment_provenance  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
@@ -345,12 +350,83 @@ def test_docx_comment_extraction_with_anchors_and_replies():
     formatted = format_word_comment_block(first, index=1, total=2)
     assert '### Document comment 1 of 2 by Alice Reviewer (AR) [2025-02-10T14:00:00Z] on "30 calendar days"' in formatted
     assert "- Reply by Bob Author (BA) [2025-02-10T15:30:00Z]: Agreed, updating to 60 days in next draft." in formatted
-
     second_formatted = format_word_comment_block(second, index=2, total=2)
     assert "(Resolved)" in second_formatted
 
     print("OOXML .docx comment extraction test passed!")
     return True
+
+
+def test_word_comment_provenance_is_projected_without_replacing_dispositions():
+    prepared = {
+        "version": "orchestration-gathered-content-v1",
+        "capability_id": "document_search",
+        "content_scope": "native_document_annotations",
+        "coverage": {"native_inspection": [{
+            "document_id": "document-1", "format": "docx", "section": "comments",
+            "execution_mode": "native_inspection", "inventory_complete": True, "partial": False,
+            "total_records": 1, "returned_records": 1,
+        }]},
+        "search_results": [{
+            "document_id": "document-1",
+            "chunk_text": json.dumps({"word_annotation": {
+                "id": "0", "author": "Alice Reviewer",
+                "date": "2026-11-01T10:00:00Z", "text": "Root text", "replies": [{
+                    "id": "1", "author": "Bob Author", "date": "2026-11-01T10:15:00Z",
+                    "text": "Reply text", "done": False, "resolution_available": True,
+                }],
+            }}),
+        }],
+    }
+    records = [{
+        "comment_thread_id": "0", "disposition": "Supported", "comment_author": "",
+        "comment_date": None, "reply_ids": "", "comment_replies": "",
+    }]
+    projected = project_word_comment_provenance(records, prepared, {"document-1"})
+    assert projected[0]["disposition"] == "Supported"
+    assert projected[0]["comment_author"] == "Alice Reviewer"
+    assert projected[0]["comment_date"] == "2026-11-01T10:00:00Z"
+    assert json.loads(projected[0]["reply_ids"]) == ["1"]
+    assert json.loads(projected[0]["comment_replies"]) == [{
+        "id": "1", "author": "Bob Author", "date": "2026-11-01T10:15:00Z",
+        "text": "Reply text", "done": False, "resolution_available": True,
+    }]
+    records[0]["comment_author"] = "Invented"
+    with pytest.raises(ValueError, match="invented comment metadata"):
+        project_word_comment_provenance(records, prepared, {"document-1"})
+
+
+@pytest.mark.parametrize("invalid_count", [None, True, -1])
+def test_word_comment_provenance_requires_exact_nonnegative_root_counts(invalid_count):
+    prepared = {
+        "version": "orchestration-gathered-content-v1",
+        "capability_id": "document_search",
+        "content_scope": "native_document_annotations",
+        "coverage": {"native_inspection": [{
+            "document_id": "document-1", "format": "docx", "section": "comments",
+            "execution_mode": "native_inspection", "inventory_complete": True,
+            "partial": False, "total_records": invalid_count, "returned_records": 0,
+        }]},
+        "search_results": [],
+    }
+    with pytest.raises(ValueError, match="invalid root count"):
+        project_word_comment_provenance([], prepared, {"document-1"})
+
+
+def test_word_comment_provenance_rejects_missing_root_count():
+    prepared = {
+        "version": "orchestration-gathered-content-v1",
+        "capability_id": "document_search",
+        "content_scope": "native_document_annotations",
+        "coverage": {"native_inspection": [{
+            "document_id": "document-1", "format": "docx", "section": "comments",
+            "execution_mode": "native_inspection", "inventory_complete": True,
+            "partial": False, "returned_records": 0,
+        }]},
+        "search_results": [],
+    }
+    with pytest.raises(ValueError, match="invalid root count"):
+        project_word_comment_provenance([], prepared, {"document-1"})
 
 
 def test_docx_comments_merge_into_target_chunks():

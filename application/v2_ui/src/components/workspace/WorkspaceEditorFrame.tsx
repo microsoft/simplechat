@@ -82,7 +82,7 @@ function AiEditedBadge() {
 export function WorkspaceEditorFrame({
     title, description, icon: TitleIcon, iconNode, backTo, backLabel = 'Back', sections, dirty, saving, readOnly = false, error,
     onSave, onDiscard, saveLabel = 'Save changes', actions, saveDisabled = false, initialSection,
-    sidePanel, sidePanelOpen = false, aiChangedSections, locked = false, lockBanner, jumpTo,
+    sidePanel, sidePanelOpen = false, aiChangedSections, locked = false, lockBanner, jumpTo, notice,
 }: {
     title: string;
     description?: string;
@@ -118,6 +118,7 @@ export function WorkspaceEditorFrame({
     lockBanner?: ReactNode;
     /** Show a section; a new sequence shows it again. */
     jumpTo?: { section: string; sequence: number } | null;
+    notice?: ReactNode;
 }) {
     const navigate = useNavigate();
     const form = useRef<HTMLFormElement>(null);
@@ -357,6 +358,7 @@ export function WorkspaceEditorFrame({
                     </div>
                     <div ref={scrollRoot} className="min-h-0 min-w-0 flex-1 overflow-y-auto pt-3 pr-1 pb-6 lg:pl-5">
                         <div className="mx-auto w-full max-w-[112rem] space-y-4">
+                            {notice}
                             {locked && lockBanner ? lockBanner : null}
                             {error ? (
                                 <GlassPanel elevation="flat" className="flex items-start gap-2 border border-danger/30 p-3 text-sm text-danger">

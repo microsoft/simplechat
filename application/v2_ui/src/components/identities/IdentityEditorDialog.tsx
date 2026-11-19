@@ -1,7 +1,7 @@
 // IdentityEditorDialog.tsx
 // Writing a workspace identity: a modal for a saved credential.
 //
-// This mirrors the classic identity editor's fields and rules so a group identity authored here is
+// This mirrors the classic identity editor's fields and rules so an identity authored here is
 // interchangeable with one authored in classic: the "Used For" capabilities decide which auth
 // methods are offered and what provider and source types the write carries, and each auth method
 // shows only the credential inputs it needs. Secrets are never sent back to the browser, so the
@@ -36,6 +36,7 @@ export function IdentityEditorDialog({
     onCancel,
     onRefresh,
     capabilities = GROUP_IDENTITY_CAPABILITIES,
+    authTypeOptions,
     scopeDescription = 'this group',
     saveDisabled = false,
 }: {
@@ -56,6 +57,12 @@ export function IdentityEditorDialog({
      * the file-sync capability because it has no actions surface, keeping the picker honest.
      */
     capabilities?: readonly (typeof GROUP_IDENTITY_CAPABILITIES)[number][];
+    /**
+     * The authentication methods this editor offers, when that is narrower than what the chosen
+     * capabilities allow. The administrator's global editor leaves out anonymous, as the classic
+     * pane does. Left out, every method the capabilities allow is offered.
+     */
+    authTypeOptions?: readonly string[];
     scopeDescription?: string;
     saveDisabled?: boolean;
 }) {
@@ -64,7 +71,10 @@ export function IdentityEditorDialog({
     const [original] = useState(() => JSON.stringify(draft));
     const dirty = JSON.stringify(draft) !== original;
 
-    const authTypes = useMemo(() => allowedAuthTypes(draft.capabilities), [draft.capabilities]);
+    const authTypes = useMemo(
+        () => allowedAuthTypes(draft.capabilities, authTypeOptions),
+        [draft.capabilities, authTypeOptions],
+    );
     const canSave = draft.name.trim().length > 0 && !saveDisabled;
 
     useEffect(() => {

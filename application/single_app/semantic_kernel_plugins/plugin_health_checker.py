@@ -96,6 +96,7 @@ from functions_mcp_operations import (
     validate_mcp_endpoint_for_transport,
 )
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
+from functions_bitbucket_operations import BitbucketError, normalize_bitbucket_manifest
 from functions_agent_delegation import AGENT_ACTION_VALIDATION_ERROR, AGENT_PLUGIN_TYPE, validate_agent_action_manifest
 from json_schema_validation import validate_plugin_auth_type_allowed
 from semantic_kernel_plugins.rocksdb_plugin import (
@@ -471,6 +472,12 @@ class PluginHealthChecker:
                 errors.append("Cosmos plugin only supports auth.type values 'identity' and 'key'")
             if auth_type == 'key' and not auth.get('key'):
                 errors.append("Cosmos plugin requires auth.key when auth.type='key'")
+
+        elif plugin_type == "bitbucket":
+            try:
+                normalize_bitbucket_manifest(manifest, allow_empty=True)
+            except BitbucketError as error:
+                errors.append(error.public_message)
 
         elif plugin_type == ROCKSDB_PLUGIN_TYPE:
             errors.extend(PluginHealthChecker._validate_rocksdb_manifest(manifest))

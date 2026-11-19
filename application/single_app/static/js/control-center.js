@@ -233,6 +233,11 @@ class ControlCenter {
     }
     
     bindEvents() {
+        document.addEventListener('runtime-usage-filter', (event) => {
+            this.activityUsageFilters = event.detail;
+            this.activityLogsPage = 1;
+            this.loadActivityLogs();
+        });
         // Tab switching
         document.getElementById('users-tab')?.addEventListener('click', () => {
             setTimeout(() => this.loadUsers(), 100);
@@ -2698,6 +2703,7 @@ class ControlCenter {
                 activity_type_filter: this.activityTypeFilter
             });
 
+            for (const [key, value] of Object.entries(this.activityUsageFilters || {})) params.set(key, value);
             const response = await fetch(`/api/admin/control-center/activity-logs?${params}`);
             let data = null;
             try {
@@ -3168,6 +3174,7 @@ class ControlCenter {
                 activity_type_filter: this.activityTypeFilter
             });
 
+            for (const [key, value] of Object.entries(this.activityUsageFilters || {})) params.set(key, value);
             const response = await fetch(`/api/admin/control-center/activity-logs/export?${params}`);
             
             if (!response.ok) {

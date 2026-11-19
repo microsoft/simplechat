@@ -1,7 +1,7 @@
 // chatRetryAttempts.ts
 // Attempt identity and logical placement, independent of the streaming transport.
 
-import type { ChatMessage, Json } from './types';
+import type { AgentCredentialRecovery, ChatMessage, Json } from './types';
 import { currentAttempt, messageThreadId } from './threads';
 
 export interface RetryPresentation {
@@ -16,6 +16,7 @@ export interface RetryPresentation {
     kind: 'chat' | 'orchestration';
     error?: string;
     authUrl?: string | null;
+    agentCredentialRecovery?: AgentCredentialRecovery | null;
 }
 
 export interface ResponseAttempt {

@@ -32,6 +32,11 @@ from functions_legacy_action_management import (
     legacy_action_management_view,
     legacy_action_snapshots,
 )
+from functions_color_schemes import (
+    ColorSchemeError,
+    normalize_color_mode,
+    normalize_custom_color_mode,
+)
 from functions_message_visual_styles import (
     VisualStyleError,
     sanitize_visual_style,
@@ -79,11 +84,20 @@ def _get_graph_user_info_by_id(user_id):
     if not normalized_user_id:
         return None
 
+    try:
+        user_endpoint = get_graph_endpoint(f"/users/{quote(normalized_user_id, safe='')}")
+    except ValueError as error:
+        log_event(
+            "[USERS] Graph user info lookup rejected an invalid path",
+            extra={"error_type": type(error).__name__},
+            level=logging.WARNING,
+        )
+        return None
+
     token = get_valid_access_token()
     if not token:
         return None
 
-    user_endpoint = get_graph_endpoint(f"/users/{quote(normalized_user_id, safe='')}")
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -92,7 +106,9 @@ def _get_graph_user_info_by_id(user_id):
         "$select": "id,displayName,mail,userPrincipalName"
     }
 
-    response = requests.get(user_endpoint, headers=headers, params=params)
+    response = requests.get(user_endpoint, headers=headers, params=params, allow_redirects=False)
+    if 300 <= response.status_code < 400:
+        raise requests.exceptions.HTTPError("Microsoft Graph metadata redirects are not allowed", response=response)
     response.raise_for_status()
     user = response.json() or {}
     graph_user_id = user.get("id") or normalized_user_id
@@ -536,6 +552,7 @@ def register_route_backend_users(bp):
                 # Basic validation could go here (e.g., check allowed keys, value types)
                 # Example: Allowed keys
                 allowed_keys = {
+                    'preferredUiMode',
                     'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 
                     'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 
                     'navLayout', 'profileImage', 'enable_agents', 'streamingEnabled', 'reasoningEffortSettings',
@@ -581,6 +598,9 @@ def register_route_backend_users(bp):
                     # Default colours for diagrams and charts rendered in the V2 chat. A block
                     # someone recolours individually stores its own style on the message.
                     'v2MermaidStyle', 'v2ChartStyle',
+                    # V2 color mode: light, dark, system or custom, and the user's own
+                    # custom colors. Validated below against the administrator's rules.
+                    'v2ColorMode', 'v2CustomColorMode',
                     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',
@@ -618,6 +638,14 @@ def register_route_backend_users(bp):
 
 
                 settings_to_update = dict(settings_to_update)
+                if "preferredUiMode" in settings_to_update:
+                    # Loaded at request time to keep the route's bootstrap dependencies unchanged.
+                    from functions_ui_mode import validate_ui_setting
+
+                    try:
+                        validate_ui_setting("preferredUiMode", settings_to_update["preferredUiMode"])
+                    except ValueError:
+                        return jsonify({"error": "Choose a valid interface option."}), 400
 
                 if "orchestrationApprovalMode" in settings_to_update:
                     approval_mode = settings_to_update["orchestrationApprovalMode"]
@@ -669,6 +697,30 @@ def register_route_backend_users(bp):
                         )
                     except VisualStyleError as style_error:
                         return jsonify({"error": f"Invalid {style_key}: {style_error}"}), 400
+
+                # Custom colors end up in a stylesheet in the browser, so they are reduced to
+                # the fixed set of #RRGGBB tokens, and refused outright when an administrator
+                # has turned custom color modes off.
+                if "v2ColorMode" in settings_to_update or "v2CustomColorMode" in settings_to_update:
+                    app_settings = get_settings() or {}
+                    custom_allowed = app_settings.get("allow_user_custom_color_modes", True) is not False
+                    try:
+                        if "v2ColorMode" in settings_to_update:
+                            color_mode = normalize_color_mode(settings_to_update["v2ColorMode"])
+                            if color_mode == "custom" and not custom_allowed:
+                                raise ColorSchemeError("Custom color modes are turned off.")
+                            settings_to_update["v2ColorMode"] = color_mode
+                        if "v2CustomColorMode" in settings_to_update:
+                            if settings_to_update["v2CustomColorMode"] is not None and not custom_allowed:
+                                raise ColorSchemeError("Custom color modes are turned off.")
+                            settings_to_update["v2CustomColorMode"] = normalize_custom_color_mode(
+                                settings_to_update["v2CustomColorMode"],
+                                require_readable=app_settings.get(
+                                    "require_readable_custom_colors", True
+                                ) is not False,
+                            )
+                    except ColorSchemeError as color_error:
+                        return jsonify({"error": f"Invalid color mode: {color_error}"}), 400
 
                 for boolean_key in (
                     "chatCompletionAudioEnabled",

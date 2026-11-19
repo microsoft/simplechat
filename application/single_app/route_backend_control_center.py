@@ -23,9 +23,11 @@ from functions_control_center_activity import (
     activity_csv_stream,
     activity_page,
     activity_summary,
+    activity_query_context,
     parse_activity_filters,
     query_activity_rows,
 )
+from functions_control_center_usage import UsageQueryLimitError, usage_csv, usage_report
 from functions_control_center_dashboard import (
     CONTROL_CENTER_ACTION_TYPE,
     DASHBOARD_INVALID_RANGE_ERROR,
@@ -476,8 +478,14 @@ def validate_activity_logs_pagination(request_args):
     return page, per_page
 
 
-def build_activity_logs_query_context(activity_type_filter='all', search_term=''):
+def build_activity_logs_query_context(activity_type_filter='all', search_term='', usage_args=None):
     """Build the shared Cosmos WHERE clause and parameters for activity log queries."""
+    if usage_args is not None and usage_args.get("usage_view") == "true":
+        filters = parse_activity_filters(usage_args)
+        filters["search"] = ""
+        filters["activity_types"] = ["agent_run", "action_run", "workflow_run"]
+        where, parameters = activity_query_context(filters)
+        return " WHERE " + where, parameters
     query_conditions = []
     parameters = []
 
@@ -3199,6 +3207,47 @@ def register_route_backend_control_center(bp):
         payload['filter_labels'] = activity_filter_labels(filters, names)
         payload['search_people'] = {'matched': len(search_ids), 'truncated': search_truncated}
         return jsonify(payload)
+
+    @bp.route('/api/admin/control-center/activity-logs/usage', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_classic_control_center_usage():
+        return api_v2_control_center_usage()
+
+    @bp.route('/api/v2/control-center/activity-logs/usage', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_usage():
+        try:
+            filters = parse_activity_filters(request.args)
+            # Usage search never searches conversation titles or raw errors.
+            if filters["search"] or filters["model"] or filters["token_type"] or filters["status"]:
+                return jsonify({'error': 'Use the usage entity, host, operation, and outcome filters.'}), 400
+            where, parameters = activity_query_context(filters)
+            result = usage_report(
+                cosmos_activity_logs_container, where, parameters,
+                refresh=request.args.get('refresh') == 'true',
+            )
+        except ValueError:
+            return jsonify({'error': 'Invalid usage filters. Use a UTC range of up to 366 days.'}), 400
+        except UsageQueryLimitError:
+            return jsonify({'error': 'Usage could not be completely calculated. Narrow the date range or filters.',
+                            'complete': False}), 422
+        except Exception as error:
+            log_event('[CONTROL_CENTER] Usage query failed.',
+                      extra={'error_type': type(error).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Unable to load usage. Retry or narrow the date range.', 'complete': False}), 500
+        if request.args.get('format') == 'csv':
+            return Response(
+                usage_csv(result), mimetype='text/csv',
+                headers={'Content-Disposition': 'attachment; filename="runtime_usage.csv"',
+                         'Cache-Control': 'no-store'},
+            )
+        response = jsonify(result)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
 
     @bp.route('/api/v2/control-center/activity-logs/summary', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -7239,7 +7288,7 @@ def register_route_backend_control_center(bp):
             activity_type_filter = request.args.get('activity_type_filter', 'all').strip()
 
             request_started = time.perf_counter()
-            where_clause, parameters = build_activity_logs_query_context(activity_type_filter, search_term)
+            where_clause, parameters = build_activity_logs_query_context(activity_type_filter, search_term, request.args)
 
             log_event(
                 '[CONTROL_CENTER][ActivityLogs] Loading activity logs page.',
@@ -7359,7 +7408,7 @@ def register_route_backend_control_center(bp):
             search_term = request.args.get('search', '').strip().lower()
             activity_type_filter = request.args.get('activity_type_filter', 'all').strip()
             export_started = time.perf_counter()
-            where_clause, parameters = build_activity_logs_query_context(activity_type_filter, search_term)
+            where_clause, parameters = build_activity_logs_query_context(activity_type_filter, search_term, request.args)
 
             log_event(
                 '[CONTROL_CENTER][ActivityLogs] Starting activity log export.',

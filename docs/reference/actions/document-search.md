@@ -4,7 +4,7 @@ title: "Document Search"
 description: "Reference for the Document Search SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.426"
+version: "0.261.444"
 ---
 
 <!-- action-slug: document-search -->
@@ -49,6 +49,23 @@ The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** o
 
 The action includes a `get_document_accessibility_report` function for agents that review documents for accessibility or house style. It returns supported native accessibility/structure data, the style inventory, and detected issues. Retained authorized active PDF/PPTX sources can be inspected locally on request; stored legacy reports do not certify unavailable native fields.
 
+Fixed/Implemented in version: **0.261.437**
+(`application/single_app/config.py`).
+
+Document-bound Orchestrate actions now declare a typed reading purpose:
+`document_read_mode="content"`, `"native"`, or `"mixed"`. Native inspection is
+offered and admitted only for compatible source formats and purposes; task
+wording is not the capability boundary. Older plans without this field retain
+format-compatible access.
+
+CSV content remains readable, but a CSV has no supported native accessibility
+inventory. Row-exact calculations across files use the separate typed
+calculation path, not a native-property report or indexed preview. Multi-file
+requests retain each source's identity and current access checks, including when
+content reading and native inspection are both requested.
+
+See [Calculate across selected files]({{ '/guides/calculate-across-files/' | relative_url }}).
+
 From **0.261.399**, workspace Excel files also expose native workbook properties, cell notes/threaded comments, object alternative text/decorative flags, formatting/layout and header/footer expressions. Modern `.xlsx`/`.xlsm` inspection has explicit saved-state coverage limits; legacy `.xls` is best effort. Use the report for the bounded workbook-wide inventory and document search for sheet/cell-addressed `Excel native inspection` evidence. Enhanced-citation workbooks still index a schema preview plus native evidence, not the complete worksheet data.
 
 - Choose which stored parts to return with `sections` (`accessibility`, `style`, `issues`); all three are returned by default. Opt-in Word `comments` inspection is separate.
@@ -57,6 +74,23 @@ From **0.261.399**, workspace Excel files also expose native workbook properties
 - The issues list is heuristic. It is not a formal WCAG, Section 508, or PDF/UA conformance check. To apply your own rules, write them into the agent's instructions and have it compare them with the returned values.
 
 See [Document accessibility, structure, and comment extraction](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md) for what is extracted for each file type.
+
+### Format-compatible native requests
+
+Fixed/Implemented in version: **0.261.439**
+(`application/single_app/config.py`).
+
+`sections` and `native_section` are different arguments. The report's
+`sections="comments"` option supports modern Word review comments and Excel
+notes/threaded comments; it is not the PDF/PPTX comment reader. Use
+`accessibility`, `style`, or `issues` for their supported native report, and
+content reading for presentation reviewer context.
+
+Bound document actions receive each source's supported report sections. One
+known incompatible comment-section request can be corrected before any source
+read, within the existing function-call limit. Repeated incompatible requests,
+failed source reads, stale cursors and access refusals do not gain automatic
+replay. A rejected request does not establish that the source is missing.
 
 ### Source-backed PDF/PPTX inspection
 
@@ -70,6 +104,33 @@ it does not add a PDF/PPTX native-comment API. Follow
 Page size is 1-200 records with a separate response-byte limit; long records have
 explicit fragments. Cursors are tied to the source bytes, document revision and
 section. A complete returned page is not necessarily a whole-file inventory.
+
+For PowerPoint object inspection, pass `native_slide_number` with
+`native_section="objects"` to page only that exact slide's native objects. Native
+object records retain XML ordinal and direct text/completeness. Focused cursors
+use their own schema revision and cannot be reused for another slide, a different
+section or an unfiltered inventory. `page_number` remains the separate option
+for stored page/slide chunk text.
+
+Omit `native_slide_number` for the normal unfiltered request. A supplied value
+must be a positive integer; explicit zero, negative, Boolean or otherwise
+invalid values are refused by the native owner rather than treated as omission.
+
+From **0.261.439**, PDF native `content`/`all` inspection includes source-bound
+page annotations, even when the PDF has no semantic tag tree. It preserves
+decoded native annotation contents, author/subject/date fields, reply-object
+references and available State/StateModel values with explicit field states.
+Supported `/OBJR` annotation references also bind their actual contents to the
+logical element. An absent resolution field is not an inferred done state.
+Unresolved objects, malformed fields and inspection limits remain explicit.
+
+Native pagination schema **1.1** includes these annotation records. Cursors from
+the older schema are not silently reused. Continue using the cursor returned by
+the current inspection with the same source and section.
+
+`inventory_complete` describes extraction; `has_more` and the verified returned
+page chain describe delivery. An earlier partial chain can be followed by a
+complete chain for the same source without the source statements conflicting.
 
 `native_properties` and object `native_fields` distinguish `absent`,
 `present_empty`, `present_value` and `inaccessible`. PDF logical elements retain
@@ -87,6 +148,14 @@ alongside useful findings, rather than treated as execution failure. Unsupported
 claims still require correction; exact source values are not rewritten by the
 model. This does not replace mixed research/computed answers or establish
 standards compliance.
+
+From **0.261.439**, native-answer preparation/checking uses
+`native-audit-answer-v5`. Literal native values containing `|` are escaped when
+serialized into customer-answer table cells, including inline code, while the
+stored native value stays unchanged. Prose, fenced examples and table delimiters
+are not globally rewritten. Older checked preparations are revalidated under the
+new contract during an explicitly admitted retry; this does not authorize
+repeating source acquisition or outgoing effects.
 
 Fixed/Implemented in version: **0.261.426**
 (`application/single_app/config.py`).

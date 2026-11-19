@@ -216,7 +216,7 @@ def test_admin_latest_features_card_and_shortcuts(help_ui):
     card.get_by_role("button", name="Details for Enterprise Data Management: Backup, Restore & Migration").click()
     expect(card.get_by_text("Rollout notes").first).to_be_visible()
     backup = card.get_by_role("link", name=re.compile(r"^Open Backup"))
-    expect(backup).to_have_attribute("href", "/admin/settings#backup")
+    expect(backup).to_have_attribute("href", "/admin/settings?ui=classic#backup")
 
     title = "Feedback & Safety Violation Archive / Delete Lifecycle"
     card.get_by_role("button", name=f"Details for {title}").click()

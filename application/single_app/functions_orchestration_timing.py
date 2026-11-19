@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 
-_DEFAULT_TOTAL_TIMEOUT_SECONDS = 600
+DEFAULT_STEP_TIMEOUT_SECONDS = 180
+DEFAULT_TOTAL_TIMEOUT_SECONDS = 900
 
 
 class OrchestrationExecutionStopped(RuntimeError):
@@ -51,7 +52,13 @@ def positive_setting_int(settings, key, default):
 
 def execution_timeout_seconds(settings):
     return positive_setting_int(
-        settings, "chat_orchestration_total_timeout_seconds", _DEFAULT_TOTAL_TIMEOUT_SECONDS,
+        settings, "chat_orchestration_total_timeout_seconds", DEFAULT_TOTAL_TIMEOUT_SECONDS,
+    )
+
+
+def step_timeout_seconds(settings):
+    return positive_setting_int(
+        settings, "chat_orchestration_step_timeout_seconds", DEFAULT_STEP_TIMEOUT_SECONDS,
     )
 
 

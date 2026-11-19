@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Loader2, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Loader2, PanelLeftClose, PanelLeftOpen, RefreshCw } from 'lucide-react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { UserAvatar } from '../components/layout/UserAvatar';
 import { SettingsIndex } from '../components/admin/SettingsIndex';
@@ -24,9 +24,13 @@ import {
     SettingsSectionRegistryContext,
     type SettingsSectionEntry,
 } from '../components/settings/SettingsCard';
+import { ProfilePhotoStatus } from '../components/settings/ProfilePhotoStatus';
 import { SETTINGS_TABS } from '../components/settings/tabs';
+import { useProfilePhotoRefresh } from '../lib/useProfilePhotoRefresh';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
+
+const REFRESH_PHOTO_TEST_ID = 'v2-settings-refresh-photo';
 
 /** Orders index entries the way their cards appear on the page. */
 function byDocumentPosition(a: SettingsSectionEntry, b: SettingsSectionEntry): number {
@@ -48,6 +52,17 @@ export function SettingsPage() {
     );
     const scrollRef = useRef<HTMLDivElement>(null);
     const [sections, setSections] = useState<Record<string, SettingsSectionEntry>>({});
+    const photo = useProfilePhotoRefresh();
+
+    // A header action is disabled while it works, and a disabled button gives up keyboard
+    // focus. Hand it back when the refresh ends, so the next keypress starts where it was.
+    const photoWasBusy = useRef(false);
+    useEffect(() => {
+        if (photoWasBusy.current && !photo.busy && document.activeElement === document.body) {
+            document.querySelector<HTMLElement>(`[data-testid="${REFRESH_PHOTO_TEST_ID}"]`)?.focus();
+        }
+        photoWasBusy.current = photo.busy;
+    }, [photo.busy]);
 
     // A tab whose capability is off is hidden rather than shown empty: its endpoints fail
     // in that state, so it could only ever display an error.
@@ -135,7 +150,17 @@ export function SettingsPage() {
                         </span>
                     ) : undefined
                 }
+                actions={[{
+                    id: 'refresh-photo',
+                    label: 'Refresh photo',
+                    icon: <RefreshCw size={14} />,
+                    variant: 'subtle',
+                    onClick: photo.refresh,
+                    loading: photo.busy,
+                    testId: REFRESH_PHOTO_TEST_ID,
+                }]}
             />
+            <ProfilePhotoStatus message={photo.message} />
 
             <div className="flex min-h-0 flex-1">
                 <aside

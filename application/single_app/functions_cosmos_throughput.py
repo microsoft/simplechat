@@ -3,10 +3,11 @@
 import logging
 import math
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import requests
 from azure.identity import DefaultAzureCredential
@@ -813,7 +814,10 @@ def get_cosmos_resource_config(settings=None):
 
 
 def _quote_part(value):
-    return quote(str(value or '').strip(), safe='')
+    part = str(value or '').strip()
+    if part in {'.', '..'}:
+        raise CosmosThroughputError('Cosmos resource names cannot be URL dot segments.')
+    return quote(part, safe='')
 
 
 def build_cosmos_resource_ids(settings=None):
@@ -924,6 +928,24 @@ def _build_arm_request_context(refresh_id='', resource_kind='unknown'):
 
 
 def _arm_request(method, resource_path, payload=None, refresh_id='', request_context=None):
+    if not isinstance(resource_path, str) or not re.fullmatch(
+        r'/subscriptions/[^/]+/resourceGroups/[^/]+'
+        r'/providers/Microsoft\.DocumentDB/databaseAccounts/[^/]+/sqlDatabases/[^/]+'
+        r'(?:/throughputSettings/default(?:/migrateToAutoscale)?'
+        r'|/containers(?:/[^/]+/throughputSettings/default(?:/migrateToAutoscale)?)?)',
+        resource_path,
+    ):
+        raise CosmosThroughputError('Invalid Cosmos ARM resource path.')
+    for part in resource_path.split('/')[1:]:
+        decoded_part = unquote(part)
+        if (
+            not re.fullmatch(r'(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+', part)
+            or decoded_part in {'.', '..'}
+            or any(character in decoded_part for character in '/\\?#')
+            or any(ord(character) < 32 or ord(character) == 127 for character in decoded_part)
+        ):
+            raise CosmosThroughputError('Invalid Cosmos ARM resource path component.')
+
     request_start = time.perf_counter()
     resource_kind = _get_arm_resource_kind(resource_path)
 
@@ -936,11 +958,7 @@ def _arm_request(method, resource_path, payload=None, refresh_id='', request_con
     request_context = request_context or _build_arm_request_context(refresh_id=refresh_id, resource_kind=resource_kind)
     credential_elapsed_ms = request_context.get('credential_elapsed_ms', 0)
 
-    separator = '&' if '?' in resource_path else '?'
-    request_url = (
-        f"{request_context['resource_manager_endpoint']}{resource_path}"
-        f"{separator}api-version={COSMOS_THROUGHPUT_ARM_API_VERSION}"
-    )
+    request_url = f"{request_context['resource_manager_endpoint']}{resource_path}"
 
     _log_refresh_event(
         '[CosmosThroughput] ARM HTTP request sending.',
@@ -956,6 +974,7 @@ def _arm_request(method, resource_path, payload=None, refresh_id='', request_con
                 'Content-Type': 'application/json',
             },
             json=payload,
+            params={'api-version': COSMOS_THROUGHPUT_ARM_API_VERSION},
             timeout=30,
         )
     except Exception as exc:

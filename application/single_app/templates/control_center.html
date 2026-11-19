@@ -4,6 +4,7 @@
 {% endblock %}
 
 {% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/control-center-usage.css') }}" />
     <style>
         .control-center-stats .stat-card {
             border: none;
@@ -1381,6 +1382,8 @@
                                 </div>
                             </div>
                             
+                            <div id="runtimeUsagePanel" class="mb-3"></div>
+
                             <!-- Activity Logs Table -->
                             <div class="card">
                                 <div class="card-body">
@@ -3004,6 +3007,7 @@ window.hasControlCenterAdmin = JSON.parse('{{ has_control_center_admin|tojson }}
 </script>
 <script src="{{ url_for('static', filename='js/validation-utils.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/control-center.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/control-center-usage.js') }}"></script>
 <script src="{{ url_for('static', filename='js/control-center-sidebar-nav.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/workspace-manager.js') }}"></script>
 

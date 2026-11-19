@@ -113,7 +113,7 @@ def test_quiet_activity_has_light_steps_and_honest_checking(editor_ui, width, da
         {"plan": plan, "report": report()},
     )
     activity = page.get_by_test_id("quiet-activity")
-    expect(activity.get_by_role("status")).to_have_text("Reasoning: Write the comparison")
+    expect(activity.get_by_role("status")).to_have_text("Preparing answer: Write the comparison")
     expect(activity.get_by_text("private_criterion")).to_have_count(0)
     expect(activity.get_by_text("private_checker_diagnostic")).to_have_count(0)
     expect(activity.get_by_role("button", name="Stop execution")).to_have_count(0)
@@ -132,7 +132,7 @@ def test_quiet_activity_has_light_steps_and_honest_checking(editor_ui, width, da
                     { status: 'running', task_completeness: report })""",
             {"plan": plan, "report": report(status, corrections=corrections)},
         )
-        expect(activity.get_by_role("status")).to_have_text("Reasoning: Write the comparison")
+        expect(activity.get_by_role("status")).to_have_text("Preparing answer: Write the comparison")
         expect(activity.get_by_text(text, exact=True)).to_be_visible()
         expect(activity.get_by_text("Answer prepared — Completed")).to_be_visible()
     geometry = activity.evaluate(
@@ -426,7 +426,7 @@ def test_optional_checker_error_is_plan_only_and_never_a_reviewed_claim(editor_u
         {"plan": plan, "report": skipped},
     )
     activity = page.get_by_test_id("quiet-activity")
-    expect(activity.get_by_role("status")).to_have_text("Reasoning: Write the comparison")
+    expect(activity.get_by_role("status")).to_have_text("Preparing answer: Write the comparison")
     activity.locator("summary").click()
     expect(activity.get_by_text("Required checks complete", exact=True)).to_be_visible()
     expect(activity.locator('[data-check-stage="semantic"]')).to_have_count(0)

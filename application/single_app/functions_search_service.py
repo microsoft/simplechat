@@ -50,7 +50,7 @@ from functions_model_endpoint_identity_header import build_model_endpoint_identi
 from functions_office_media import extract_docx_comments
 from functions_native_document_inspection import has_retained_native_source, inspect_native_document
 from functions_native_audit import build_native_audit
-from native_document_evidence import NativeInspectionRequestError
+from native_document_evidence import NativeInspectionRequestError, validate_native_report_sections
 from model_endpoint_clients import build_openai_client_timeout_options
 from public_source_access import get_public_source_workspace_ids
 from public_source_policy import uses_all_public_sources
@@ -1233,6 +1233,7 @@ def get_document_accessibility_payload(
     native_section="comments",
     native_cursor=None,
     native_page_size=100,
+    native_slide_number=None,
     sheet_name=None,
     cell_range=None,
     _native_max_bytes=14000,
@@ -1274,11 +1275,10 @@ def get_document_accessibility_payload(
     file_name = str(current_document.get("file_name") or "")
     extension = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
     requested_sections = _normalize_accessibility_sections(sections)
+    validate_native_report_sections(extension.lstrip("."), requested_sections)
     native_inspection = None
     native_source_records = None
     if extension in (".pdf", ".pptx") and has_retained_native_source(current_document):
-        if "comments" in requested_sections:
-            raise LookupError("The native comment inventory is unavailable for this document format.")
         if cell_range or sheet_name:
             raise ValueError("PDF and PowerPoint inspection does not accept worksheet filters.")
         current_document, source_bytes = screening_access.read_available_document_bytes(
@@ -1290,6 +1290,7 @@ def get_document_accessibility_payload(
         native_inspection = inspect_native_document(
             current_document, source_bytes, extension, section=native_section,
             cursor=native_cursor, page_size=native_page_size, max_bytes=_native_max_bytes,
+            native_slide_number=native_slide_number,
             _audit_records=native_source_records,
         )
         stored_metadata = native_inspection["metadata"]

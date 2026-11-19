@@ -92,6 +92,9 @@ def register_route_backend_models(bp):
     """
     Register backend routes for fetching Azure OpenAI models.
     """
+    # Deferred to registration: the update API imports the settings storage owner.
+    from route_backend_model_catalog_updates import register_catalog_update_routes
+    register_catalog_update_routes(bp)
 
     def catalog_response(settings, *, admin=False):
         profiles = get_effective_model_profiles(settings)
@@ -522,17 +525,18 @@ def register_route_backend_models(bp):
             log_models_debug("API key auth requested for Foundry project discovery (not supported).")
             raise ValueError("API key auth is not supported for Foundry project model discovery.")
 
-        token = build_foundry_token(auth_settings)
-        headers = {
-            "Authorization": f"Bearer {token}"
-        }
-
         base = resolve_foundry_project_base(endpoint, project_name)
         params = {
             "api-version": resolve_foundry_project_api_version(api_version),
             "deploymentType": "ModelDeployment"
         }
         url = f"{base}/deployments"
+
+        token = build_foundry_token(auth_settings)
+        headers = {
+            "Authorization": f"Bearer {token}"
+        }
+
         log_models_debug(f"Foundry project deployments URL={url}")
 
         response = requests.get(url, headers=headers, params=params, timeout=30)

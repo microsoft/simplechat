@@ -1,10 +1,11 @@
 # test_orchestration_plan_schema.py
 """
 Functional test for the chat orchestration plan contract and validator.
-Version: 0.261.416
+Version: 0.261.443
 Implemented in: 0.261.085
 Single orchestration contract updated in: 0.261.139
 Optional semantic review implemented in: 0.261.416
+Content-free argument locations and step-budget diagnostics added in: 0.261.443
 
 Planner output is untrusted input. A plan arrives as JSON written by a language model,
 and naming a capability that does not exist, using one an administrator disabled,
@@ -158,6 +159,47 @@ def test_dependency_cycles_and_step_budgets_are_refused():
         with pytest.raises(schema.PlanValidationError) as failure:
             _normalize(too_long, available_capability_ids=['compose'], settings={**SETTINGS, 'chat_orchestration_max_steps': 3})
         assert failure.value.code == 'result_step_limit'
+        # The step-limit error keeps its established, diagnostic-free shape.
+        assert failure.value.diagnostics == {}
+
+
+def test_a_hand_off_step_overflow_reports_the_raw_step_count_and_effective_limit():
+    """The logged one-dictionary-step anomaly cannot be explained without both numbers."""
+    with stubbed_app_imports():
+        import functions_orchestration_schema as schema
+
+        plan = {'planner_contract_version': 2, 'steps': [_compose(f's{i}') for i in range(4)] + ['not a step']}
+        with pytest.raises(schema.PlanValidationError) as failure:
+            _normalize(
+                plan, available_capability_ids=['compose', 'workflow_handoff'],
+                settings={**SETTINGS, 'chat_orchestration_max_steps': 3},
+            )
+        assert (failure.value.code, failure.value.rule) == ('plan_budget_exceeded', 'plan_step_budget')
+        assert failure.value.diagnostics == {'plan_step_count': 5, 'plan_step_limit': 3}
+
+
+def test_argument_rejections_locate_the_failure_using_only_schema_owned_names():
+    """A planner must be told where its arguments failed, without the log learning what it wrote."""
+    with stubbed_app_imports():
+        import functions_orchestration_schema as schema
+
+        private = 'private_marker_argument'
+        cases = [
+            ({'query': 'q', private: True}, 'additionalproperties', {'extra_property_count': 1}),
+            ({}, 'required', {'missing_properties': ['query']}),
+            ({'query': 5}, 'type', {'expected_type': 'string'}),
+        ]
+        for arguments, keyword, expected in cases:
+            step = {'step_id': 'find', 'capability_id': 'document_search', 'arguments': arguments}
+            with pytest.raises(schema.PlanValidationError) as failure:
+                _normalize({'planner_contract_version': 2, 'steps': [step]})
+            problem = failure.value.diagnostics['argument_problems'][0]
+            assert problem['argument_keyword'] == keyword
+            assert failure.value.diagnostics['argument_keyword'] == keyword
+            assert expected.items() <= problem.items()
+            if keyword == 'additionalproperties':
+                assert 'query' in problem['allowed_properties']
+            assert private not in repr(failure.value.diagnostics)
 
 
 def test_edits_narrow_dependency_plans_and_preserve_final_response():

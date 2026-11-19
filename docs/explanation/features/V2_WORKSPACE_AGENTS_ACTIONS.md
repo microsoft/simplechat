@@ -17,6 +17,30 @@ management and delegation execution rules were unchanged. The standalone
 agents across scopes and links to the native personal editor when creation is
 available, without changing authoring permissions.
 
+### Agent credential security update
+
+Agent credential ownership and mandatory re-entry were updated in
+**0.261.428**, recorded in `application/single_app/config.py`. Existing embedded
+GPT/APIM keys and Foundry service-principal secrets must be re-entered before
+their custom connection can run. The editor identifies affected fields and
+offers recovery only to authorized editors. An unchanged mask is not re-entry.
+Approved saved model connections and MCP/action credentials are not
+blanket-reset. See the [credential recovery guide](../../guides/workspace-agents-and-actions.md#update-agent-credentials-after-a-security-update).
+
+Since **0.261.429**, failed chat requests offer **Update agent credentials** only
+when the server confirms current edit permission for the affected agent. It
+opens that agent's connection section in a separate tab. Other users receive
+group-owner or site-administrator guidance. Returning to chat and retrying is
+deliberate; the link never replays the failed operation.
+In **0.261.430**, this recovery action is a button with in-button guidance to
+select **Retry** after saving or start a new conversation. The permission and
+safe-navigation boundaries are unchanged.
+In **0.261.431**, the selected **Guided recovery** design separates updating
+the connection from returning to retry. Its neutral message, compact action,
+responsive numbered steps and aligned comfortable reading column replace the
+large text-heavy button. Non-editors receive the same two-step structure with
+**Request an update** instead of an editor action.
+
 ### Dependencies
 
 | Dependency | Purpose |

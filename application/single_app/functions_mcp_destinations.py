@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover - supports source-level functional tests
     session = None
 
 from functions_appinsights import log_event
+from functions_outbound_destinations import OutboundDestinationError, normalize_outbound_url
 from functions_action_manifest import (
     McpActionOrigin,
     McpConfigurationError,
@@ -709,6 +710,13 @@ def evaluate_mcp_destination_policy(
     normalized_scope, normalized_scope_id = resolve_mcp_destination_scope(
         manifest, scope_type, scope_id, origin=origin
     )
+    try:
+        normalize_outbound_url(descriptor["normalized_endpoint"])
+    except OutboundDestinationError as exc:
+        return {
+            "allowed": False, "reason": exc.public_message, "descriptor": descriptor,
+            "matched_pattern": "", "scope_type": normalized_scope, "scope_id": normalized_scope_id,
+        }
     policy = policy_config if policy_config is not None else get_mcp_destination_policy_config(user_id=user_id)
     environment_decision = _evaluate_destination_descriptor_policy(
         descriptor, normalized_scope, normalized_scope_id, _get_environment_destination_policy_config()

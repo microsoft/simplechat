@@ -180,6 +180,60 @@
             </div>
           </div>
 
+          <div id="bitbucket-config-section" class="d-none">
+            <p class="alert alert-info">Read repository source and compare branches. No repository changes or posted reviews. Users choose permitted repositories and branches in chat.</p>
+            <div class="mb-3">
+              <label for="bitbucket-edition" class="form-label">Bitbucket edition</label>
+              <select id="bitbucket-edition" class="form-select"><option value="data_center">Self-hosted Data Center</option><option value="cloud">Bitbucket Cloud</option></select>
+            </div>
+            <div class="mb-3">
+              <label for="bitbucket-endpoint" class="form-label">Bitbucket HTTPS base URL</label>
+              <input id="bitbucket-endpoint" type="url" class="form-control" />
+              <div class="form-text">Include the server context path if configured. SimpleChat needs private DNS/network access and a trusted TLS certificate.</div>
+            </div>
+            <div class="mb-3">
+              <label for="bitbucket-method" class="form-label">Bitbucket authentication</label>
+              <select id="bitbucket-method" class="form-select">
+                <option value="oauth">Each user's OAuth connection (SSO / smart card)</option>
+                <option value="bearer_token">HTTP access / bearer token</option>
+                <option id="bitbucket-email-option" value="username_password">Cloud: Atlassian email and scoped API token</option>
+              </select>
+            </div>
+            <div id="bitbucket-source-group" class="mb-3 d-none">
+              <label for="bitbucket-source" class="form-label">Token credential source</label>
+              <select id="bitbucket-source" class="form-select">
+                <option value="shared">Shared action credential</option>
+                <option value="identity">Saved workspace identity (shared by action users)</option>
+                <option value="personal">Each user's private identity, requested in chat</option>
+              </select>
+            </div>
+            <div id="bitbucket-identity-group" class="mb-3 d-none">
+              <label for="bitbucket-identity" class="form-label">Saved token identity</label>
+              <select id="bitbucket-identity" class="form-select"></select>
+            </div>
+            <div id="bitbucket-username-group" class="mb-3">
+              <label id="bitbucket-username-label" for="bitbucket-username" class="form-label">OAuth client ID</label>
+              <input id="bitbucket-username" class="form-control" autocomplete="off" />
+            </div>
+            <div id="bitbucket-credential-group" class="mb-3">
+              <label id="bitbucket-credential-label" for="bitbucket-credential" class="form-label">OAuth client secret</label>
+              <input id="bitbucket-credential" type="password" class="form-control" autocomplete="new-password" />
+            </div>
+            <p><a id="bitbucket-connect" class="d-none" target="_blank" rel="noopener noreferrer">Connect / reconnect my Bitbucket account</a></p>
+            <p class="form-text">Save connection settings first, then connect and reopen the editor to discover repositories. OAuth connections are private to each user. SimpleChat and Microsoft 365 session tokens are never reused.</p>
+            <fieldset>
+              <legend class="fs-6">Permitted repositories</legend>
+              <label for="bitbucket-project" class="form-label">Data Center project key or Cloud workspace</label>
+              <input id="bitbucket-project" class="form-control mb-2" />
+              <button id="bitbucket-discover" type="button" class="btn btn-outline-primary mb-2">Find repositories</button>
+              <button id="bitbucket-more" type="button" class="btn btn-outline-secondary mb-2 d-none">Load more repositories</button>
+              <p id="bitbucket-status" role="status" class="text-muted"></p>
+              <div id="bitbucket-options"></div>
+              <div id="bitbucket-repositories"></div>
+              <p class="form-text">Empty selections cannot read code. Fixed branches apply to both sides of comparisons. Discover using OAuth or a saved/shared token before switching to per-user tokens.</p>
+            </fieldset>
+          </div>
+
           <!-- Generic endpoint field for other plugin types -->
           <div id="generic-config-section">
             <div class="mb-3">

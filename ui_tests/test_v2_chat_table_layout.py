@@ -1,14 +1,17 @@
 # test_v2_chat_table_layout.py
 """
 Real-component regressions for responsive V2 assistant tables.
-Version: 0.261.425
+Version: 0.261.439
 Implemented in: 0.261.425
+Native-title serialization regression added in: 0.261.439
 
 Production MessageList, Markdown, stores and CSS run through the existing harness.
 Only HTTP is stubbed. Shared fixtures support local and Azure Playwright.
 """
 
 from pathlib import Path
+import json
+import sys
 
 import pytest
 from playwright.sync_api import expect
@@ -23,6 +26,10 @@ from test_v2_chat_message_scroll import (
     start_stream,
 )
 
+# The browser case exercises the bootstrap-free production Python answer serializer.
+APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
+sys.path.insert(0, str(APP_ROOT))
+from functions_native_audit import build_native_audit, decode_native_audit_answer, native_audit_contract  # noqa: E402
 
 pytest_plugins = ("test_v2_chat_message_scroll",)
 pytestmark = pytest.mark.ui
@@ -118,6 +125,43 @@ def assert_contained(page, selector="#message-table", *, scrolls=False):
     assert measured["paneScroll"] <= 1 and measured["pageScroll"] <= 1, measured
     assert measured["fontSize"] == "14px", measured
     return measured
+
+
+@pytest.mark.parametrize("width", [393, 1440])
+def test_native_title_with_pipe_remains_in_one_finding_cell(scroll_ui, width):
+    page, api = scroll_ui
+    title = "NASA-16 | Orbit-1 shift handover"
+    report = {
+        "document": {"id": "native-title", "file_name": "handover.pptx", "version": 1},
+        "accessibility_metadata": {
+            "format": "pptx", "schema_version": "2.0", "source_sha256": "c" * 64,
+            "native_properties": {"title": {"state": "present_value", "value": title}},
+        },
+    }
+    report["native_audit"] = build_native_audit(report)
+    contract = native_audit_contract({"inspection": {"value": {
+        "capability_id": "action_invoke",
+        "citations": [{"function_name": "get_document_accessibility_report", "function_result": report}],
+    }}})
+    response = {
+        "native_claims": {"scope": "all_returned", "fact_set_sha256": contract["fact_set_sha256"]},
+        "answer": (
+            f"| Property | Finding |\n| --- | --- |\n| Native title | `{title}` |\n"
+            f"# Next: `{title}`"
+        ),
+    }
+    _decoded, rendered = decode_native_audit_answer(json.dumps(response), contract, require_answer=True)
+    prepare(page, api, width)
+    page.evaluate(
+        "(content) => window.OrchHarness.stores.chat.useChatStore.setState(state => "
+        "({messages: state.messages.map(item => item.id === 'table' ? {...item, content} : item)}))",
+        rendered,
+    )
+    finding = page.locator("#message-table table").first.locator("tbody tr").first
+    expect(finding.locator("td")).to_have_count(2)
+    expect(finding.locator("td").nth(1).locator("code")).to_have_text(title)
+    expect(finding.locator("td").nth(0)).to_have_text("Native title")
+    expect(page.locator("#message-table h1 code")).to_have_text(title)
 
 
 @pytest.mark.parametrize("width,theme,preference,scrolls", [

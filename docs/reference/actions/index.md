@@ -50,6 +50,7 @@ If an action type does not appear, check Agents settings, workspace action permi
 
 | Action | What it does | Typical use | Depth |
 | --- | --- | --- | --- |
+| [Bitbucket](./bitbucket/) | Reads allowlisted Data Center/Cloud source and merge-base branch changes using private OAuth connections or token identities. | Conversational read-only code review without posting comments or changing repositories. | full guide |
 | [Azure Maps OpenLayers](./azure-maps-openlayers/) | Creates inline OpenLayers map payloads and proxies Azure Maps raster tiles through SimpleChat. | Use it when an agent needs to turn known locations, areas, or paths into a map inside chat. Do not use it for general GIS editing or broad geocoding. | overview |
 | [Yamcs](./yamcs/) | Retrieves read-only Yamcs telemetry, mission database, archive, event, packet, alarm, and link information. | Use it for mission-control visibility. Do not use it for commanding; the plugin source intentionally does not support commands or writes. | overview |
 | [Microsoft Decision-1](./microsoft-decision/) | Returns bounded binary, choice, and score decisions with probabilities. | Agent-directed classification, routing, and scoring with confidence-based human review. | overview |

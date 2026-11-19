@@ -11,6 +11,7 @@
 // quote email or web content, so callers render it as plain text and nothing else.
 
 import { api } from './apiClient';
+import type { NotificationStatus } from './notificationsPage';
 
 export interface NotificationLinkContext {
     workspace_type?: string;
@@ -59,6 +60,19 @@ export interface NotificationPage {
     notifications: AppNotification[];
     page: number;
     hasMore: boolean;
+    /** Every notification the filters leave, on all pages. */
+    total: number;
+    perPage: number;
+}
+
+/** What to narrow a list to. The server applies it before it pages the list. */
+export interface NotificationListQuery {
+    /** Defaults to every notification. */
+    status?: NotificationStatus;
+    /** Text a title or message must contain, ignoring case. The server reads its first 100 characters. */
+    query?: string;
+    /** 10, 20 or 50; the server replaces any other size with 20. Defaults to `NOTIFICATION_PAGE_SIZE`. */
+    perPage?: number;
 }
 
 /** One of the three page sizes the list route accepts (10, 20, 50). */
@@ -134,24 +148,49 @@ export async function fetchNotificationCount(signal?: AbortSignal): Promise<numb
     return readNotificationCount(await api.get<unknown>('/api/notifications/count', signal));
 }
 
-/** One page of notifications, read and unread, newest first. Dismissed ones are left out. */
-export async function fetchNotificationPage(page: number, signal?: AbortSignal): Promise<NotificationPage> {
+/**
+ * One page of notifications, newest first. Dismissed ones are left out.
+ *
+ * With no `query` it is every notification, read and unread, twenty to a page, which is what
+ * the bell's panel asks for. The Notifications page narrows it with `status` and `query`; the
+ * server filters before it pages, so `total` is the size of what matched.
+ */
+export async function fetchNotificationPage(
+    page: number,
+    signal?: AbortSignal,
+    query: NotificationListQuery = {},
+): Promise<NotificationPage> {
+    const perPage = query.perPage ?? NOTIFICATION_PAGE_SIZE;
     const params = new URLSearchParams({
         page: String(page),
-        per_page: String(NOTIFICATION_PAGE_SIZE),
+        per_page: String(perPage),
         include_read: 'true',
         include_dismissed: 'false',
     });
+    if (query.status && query.status !== 'all') {
+        params.set('status', query.status);
+    }
+    const search = query.query?.trim();
+    if (search) {
+        params.set('q', search);
+    }
     const payload = await api.get<unknown>(`/api/notifications?${params}`, signal);
     if (!isRecord(payload) || !Array.isArray(payload.notifications)) {
         throw new Error('Your notifications could not be read. Try again.');
     }
+    const notifications = payload.notifications
+        .map(normalizeNotification)
+        .filter((item): item is AppNotification => item !== null);
     return {
-        notifications: payload.notifications
-            .map(normalizeNotification)
-            .filter((item): item is AppNotification => item !== null),
+        notifications,
         page: typeof payload.page === 'number' ? payload.page : page,
         hasMore: payload.has_more === true,
+        total: typeof payload.total === 'number' && Number.isFinite(payload.total)
+            ? Math.max(0, Math.floor(payload.total))
+            : notifications.length,
+        perPage: typeof payload.per_page === 'number' && Number.isFinite(payload.per_page) && payload.per_page > 0
+            ? Math.floor(payload.per_page)
+            : perPage,
     };
 }
 
@@ -165,6 +204,14 @@ export const markAllNotificationsRead = () => api.post<unknown>('/api/notificati
 
 export const acknowledgeNotification = (notificationId: string) =>
     api.post<unknown>(`/api/notifications/${encodeURIComponent(notificationId)}/acknowledge`);
+
+/**
+ * Save how many notifications to a page, the way classic's Notifications page does. It is its
+ * own route rather than a user setting: `/api/user/settings` does not accept the key
+ * `notifications_per_page`.
+ */
+export const saveNotificationsPerPage = (perPage: number) =>
+    api.post<unknown>('/api/notifications/settings', { notifications_per_page: perPage });
 
 /** How the badge reads a count: the number itself, or `9+` at and above the server's cap. */
 export function formatNotificationCount(count: number): string {

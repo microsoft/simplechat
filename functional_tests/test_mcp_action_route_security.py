@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for MCP discovery and connection-test authorization ordering.
-Version: 0.261.354
+Version: 0.261.435
 Implemented in: 0.261.029
 
 Executes real route/helper bodies with Flask requests and mocked I/O boundaries.
@@ -13,13 +13,16 @@ This is behavioral request coverage, not an import-lifecycle test.
 
 import ast
 import asyncio
+import importlib
 import logging
+import re
 from pathlib import Path
 import sys
 import types
 import time
 import unittest
 import uuid
+from copy import deepcopy
 from unittest.mock import AsyncMock, Mock, patch
 
 from flask import Flask, jsonify, request, session
@@ -36,7 +39,11 @@ from functions_legacy_action_management import (
 )
 import functions_mcp_operations as operations
 import json_schema_validation as validation
-from functions_workspace_authoring import WorkspaceAuthoringValidation
+from functions_workspace_authoring import (
+    WorkspaceAuthoringValidation, apply_group_action_write, editor_error_response,
+    legacy_editor_write_body, validate_action_connection_update,
+)
+from functions_databricks_operations import DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE
 from test_mcp_legacy_stdio_management import GROUP, OWNER, action_services, remote
 
 
@@ -52,6 +59,9 @@ ROUTE_FUNCTIONS = {
     "_resolve_secret_value_for_action_test",
     "_hydrate_mcp_custom_headers_for_test",
     "_prepare_action_test_manifest",
+    "_authorize_action_test_scope",
+    "_resolve_group_for_test",
+    "_prepare_group_action_payload",
     "_run_action_connection_test",
     "test_mcp_action_connection",
     "discover_mcp_tools",
@@ -82,9 +92,21 @@ class McpActionRouteSecurityTests(unittest.TestCase):
         presets = types.ModuleType("functions_mcp_presets")
         presets.normalize_mcp_preset_id = lambda value: value or "generic"
         presets.mcp_server_preset_exists = lambda value: value == "generic"
-        self.modules = patch.dict(sys.modules, {"functions_mcp_presets": presets})
+        keyvault = types.ModuleType("functions_keyvault")
+        keyvault.redact_plugin_secret_values = deepcopy
+        keyvault.validate_secret_name_dynamic = lambda value: value.startswith("kv-")
+        appinsights = types.ModuleType("functions_appinsights")
+        appinsights.log_event = Mock()
+        self.modules = patch.dict(sys.modules, {
+            "functions_mcp_presets": presets, "functions_keyvault": keyvault,
+            "functions_appinsights": appinsights,
+        })
         self.modules.start()
         self.addCleanup(self.modules.stop)
+        logger = types.ModuleType("functions_appinsights")
+        logger.log_event = Mock()
+        sys.modules["functions_appinsights"] = logger
+        fingerprints = importlib.import_module("functions_mcp_tool_pinning")
 
         self.policy = Mock()
         self.hydrate = Mock(side_effect=lambda manifest, *_args, **_kwargs: dict(manifest))
@@ -100,6 +122,7 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             "logging": logging,
             "time": time,
             "uuid": uuid,
+            "deepcopy": deepcopy,
             "jsonify": jsonify,
             "request": request,
             "session": session,
@@ -107,6 +130,8 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             "debug_print": Mock(),
             "CHART_PLUGIN_TYPE": "chart",
             "MSGRAPH_PLUGIN_TYPE": "msgraph",
+            "DATABRICKS_PLUGIN_TYPE": DATABRICKS_PLUGIN_TYPE,
+            "DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE": DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE,
             "WORKSPACE_IDENTITY_SCOPE_PERSONAL": "personal",
             "WORKSPACE_IDENTITY_SCOPE_GROUP": "group",
             "WORKSPACE_IDENTITY_SCOPE_GLOBAL": "global",
@@ -114,10 +139,20 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             "LegacyActionConflictError": LegacyActionConflictError,
             "LegacyActionSourceUpdateError": LegacyActionSourceUpdateError,
             "WorkspaceAuthoringValidation": WorkspaceAuthoringValidation,
+            "validate_action_connection_update": validate_action_connection_update,
+            "apply_group_action_write": apply_group_action_write,
+            "legacy_editor_write_body": legacy_editor_write_body,
+            "editor_error_response": Mock(wraps=editor_error_response),
             "SecretReturnType": types.SimpleNamespace(NAME="name", VALUE="value"),
             "get_current_user_id": lambda: session["user"]["oid"],
             "require_active_group": lambda user_id: "group-a",
             "assert_group_role": Mock(),
+            "ensure_editor_access": Mock(),
+            "resolve_delegation_group_scope": lambda user_id, group_id=None: group_id or "group-a",
+            "find_group_by_id": lambda group_id: {"id": group_id},
+            "get_user_role_in_group": lambda group, user_id: "Owner",
+            "group_action_management_operations": lambda *args: {"create", "edit", "delete", "test"},
+            "get_group_workflow_management_roles": lambda settings: ("Owner", "Admin"),
             "get_personal_action": self.get_personal,
             "get_group_action": Mock(return_value=None),
             "delete_group_action": Mock(return_value=True),
@@ -142,6 +177,7 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             "McpPluginFactory": types.SimpleNamespace(probe_server_from_config=self.probe),
             "McpDestinationPolicyError": PermissionError,
             "_build_mcp_discovery_log_context": Mock(return_value={}),
+            "build_mcp_tool_fingerprints": fingerprints.build_mcp_tool_fingerprints,
         }
         load_route_functions(self.namespace)
         self.app = Flask(__name__)
@@ -153,7 +189,7 @@ class McpActionRouteSecurityTests(unittest.TestCase):
         self.app.add_url_rule("/discover", view_func=self.namespace["discover_mcp_tools"], methods=["POST"])
         self.app.add_url_rule("/group", view_func=self.namespace["create_group_action_route"], methods=["POST"])
         self.app.add_url_rule("/group/<action_id>", view_func=self.namespace["delete_group_action_route"], methods=["DELETE"])
-        self.app.add_url_rule("/user/<plugin_name>", view_func=self.namespace["delete_user_plugin"], methods=["DELETE"])
+        self.app.add_url_rule("/user/<action_id>", view_func=self.namespace["delete_user_plugin"], methods=["DELETE"])
         self.app.add_url_rule("/global", view_func=self.namespace["add_plugin"], methods=["POST"])
         self.app.add_url_rule("/global/<plugin_name>", view_func=self.namespace["edit_plugin"], methods=["POST"])
 
@@ -204,6 +240,41 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             self.assertEqual(response.status_code, 403)
         self.assert_no_execution_or_credentials()
 
+    def test_foreign_secret_references_are_rejected_before_key_vault_or_connection(self):
+        from test_keyvault_plugin_secret_scope_enforcement import load_functions
+
+        vault_read = Mock(side_effect=AssertionError("Foreign credentials must never be read."))
+        secret_functions, _ = load_functions(
+            str(APP_DIR / "functions_keyvault.py"),
+            {
+                "clean_name_for_keyvault", "_normalize_allowed_sources", "parse_secret_name_dynamic",
+                "validate_secret_name_dynamic", "secret_reference_matches_context",
+                "_log_secret_reference_context_mismatch", "resolve_secret_reference_for_context",
+            },
+            {
+                "re": re, "logging": logging, "log_event": Mock(),
+                "supported_scopes": ["user", "group", "global", "public"],
+                "supported_sources": ["action", "action-addset", "agent", "identity", "other"],
+                "retrieve_secret_from_key_vault_by_full_name": vault_read,
+            },
+        )
+        self.namespace["validate_secret_name_dynamic"] = secret_functions["validate_secret_name_dynamic"]
+        self.namespace["resolve_secret_reference_for_context"] = secret_functions["resolve_secret_reference_for_context"]
+        for reference in (
+            "another-user--action--user--sample",
+            "another-group--action--group--sample",
+            "global-action--action--global--sample",
+            "current-user--agent--user--sample",
+        ):
+            with self.subTest(reference=reference):
+                response = self.post("/test", json=self.payload(
+                    auth={"type": "key", "key": reference},
+                    additionalFields={"transport": "sse", "auth_method": "bearer"},
+                ))
+                self.assertEqual(response.status_code, 400)
+        vault_read.assert_not_called()
+        self.test_connection.assert_not_called()
+
     def test_group_and_admin_saves_reject_metadata_only_stdio(self):
         for route in ("/group", "/global", "/global/existing"):
             with self.subTest(route=route):
@@ -214,7 +285,11 @@ class McpActionRouteSecurityTests(unittest.TestCase):
                 )
                 response = self.post(route, json=payload)
                 self.assertEqual(response.status_code, 400)
-                self.assertEqual(response.get_json()["error_type"], "mcp_stdio_removed")
+                if route == "/group":
+                    rejected = self.namespace["editor_error_response"].call_args.args[0]
+                    self.assertIsInstance(rejected, manifests.McpStdioRemovedError)
+                else:
+                    self.assertEqual(response.get_json()["error_type"], "mcp_stdio_removed")
         self.assert_no_execution_or_credentials()
 
     def test_group_cleanup_exception_is_limited_to_retired_owned_actions(self):

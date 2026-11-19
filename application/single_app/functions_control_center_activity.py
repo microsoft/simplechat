@@ -32,6 +32,8 @@ ACTIVITY_SEARCH_FIELDS = (
     "document.file_name", "conversation.title", "usage.model",
     "group.group_name", "workspace_context.group_id",
     "workspace_context.public_workspace_id",
+    "runtime_usage.name", "runtime_usage.entity_id", "runtime_usage.endpoint_host",
+    "runtime_usage.auth_type", "runtime_usage.operation",
 )
 # Cosmos SQL keywords that cannot be used as dotted property names; the query grammar only
 # accepts ALL, FIRST and LAST there. A dotted reserved word (c.group.group_id) is a syntax
@@ -72,6 +74,43 @@ PUBLIC_REFERENCE_FIELDS = (
     "public_workspace.workspace_id", "workspace_id",
 )
 
+USAGE_FILTERS = {
+    "usage_kind": "kind", "usage_entity_id": "entity_id", "usage_scope_type": "scope_type",
+    "usage_scope_id": "scope_id", "usage_host": "endpoint_host", "usage_auth": "auth_type",
+    "usage_operation": "operation", "usage_outcome": "outcome",
+}
+
+
+def usage_filter_clauses(filters):
+    clauses, parameters = [], []
+    legacy = {
+        "kind": "REPLACE(c.activity_type, '_run', '')",
+        "entity_id": "IIF(c.activity_type = 'agent_run', c.agent.id, c.entity.id)",
+        "scope_type": "c.workspace_type",
+        "scope_id": (
+            "IIF(c.workspace_type = 'global', 'global', "
+            "IIF(c.workspace_type = 'group', c.workspace_context.group_id, "
+            "IIF(c.workspace_type IN ('public', 'public_workspace'), "
+            "c.workspace_context.public_workspace_id, c.user_id)))"
+        ),
+    }
+    for key, field in USAGE_FILTERS.items():
+        value = filters.get(key, "")
+        if not value:
+            continue
+        path = f"c.runtime_usage.{field}"
+        if field in legacy:
+            path = f"IIF(IS_DEFINED({path}), {path}, {legacy[field]})"
+        elif field == "outcome":
+            raw = "IIF(IS_STRING(c.run.status), c.run.status, 'unknown')"
+            fallback = f"IIF({raw} = 'completed', 'succeeded', IIF({raw} = 'canceled', 'cancelled', {raw}))"
+            path = f"IIF(IS_DEFINED({path}), {path}, {fallback})"
+        else:
+            path = f"IIF(IS_DEFINED({path}), {path}, 'unknown')"
+        clauses.append(f"{path} = @{key}")
+        parameters.append({"name": f"@{key}", "value": value})
+    return clauses, parameters
+
 
 def parse_activity_filters(args, now=None):
     """Inclusive UTC dates, at most 366 days; normalize the dashboard link contract."""
@@ -89,7 +128,7 @@ def parse_activity_filters(args, now=None):
         raise ValueError("Invalid activity types")
     result = {"start_date": start.isoformat(), "end_date": end.isoformat(), "activity_types": types}
     for key in ("user_id", "workspace_type", "workspace_id", "group_id", "public_workspace_id",
-                "search", "token_type", "model", "status"):
+                "search", "token_type", "model", "status", *USAGE_FILTERS):
         value = (args.get(key) or "").strip()
         if len(value) > (200 if key == "search" else 256):
             raise ValueError("Filter too long")
@@ -100,6 +139,10 @@ def parse_activity_filters(args, now=None):
         raise ValueError("Invalid workspace type")
     if result["workspace_id"] and not result["workspace_type"]:
         raise ValueError("Workspace ID needs a workspace type")
+    if result["usage_kind"] not in ("", "agent", "action", "workflow"):
+        raise ValueError("Invalid usage kind")
+    if result["usage_outcome"] not in ("", "succeeded", "failed", "cancelled", "timeout", "partial", "unknown"):
+        raise ValueError("Invalid usage outcome")
     return result
 
 
@@ -155,6 +198,9 @@ def activity_query_context(filters, search_user_ids=()):
             search += " OR " + _either(ACTIVITY_ACTOR_FIELDS, "ARRAY_CONTAINS(@search_people, {path})")
             parameters.append({"name": "@search_people", "value": list(search_user_ids)})
         add(f"({search})", "@search", filters["search"])
+    usage_clauses, usage_parameters = usage_filter_clauses(filters)
+    clauses.extend(usage_clauses)
+    parameters.extend(usage_parameters)
     return " AND ".join(clauses), parameters
 
 

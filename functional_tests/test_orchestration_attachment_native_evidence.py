@@ -1,14 +1,17 @@
 # test_orchestration_attachment_native_evidence.py
 """Real planning, inventory paging, retained evidence and composition regressions.
 
-Version: 0.261.424
+Version: 0.261.444
 Implemented in: 0.261.416
 Word-native comment routing and evidence delivery: 0.261.422
 Complete empty native inventory evidence status: 0.261.424
+Word disposition provenance export round-trip: 0.261.444
 Only external storage/model I/O is replaced; no provider calls are made.
 """
 
 import importlib
+import csv
+import io
 import json
 import base64
 import hashlib
@@ -32,6 +35,9 @@ from test_excel_inventory_persistence import inventory_store, review_workbook
 from test_support.orchestration_harness_execution import compose_step, input_binding
 from test_support.orchestration_results import source
 from functions_workflow_result_store import WorkflowResultIntegrityError
+from functions_generated_file_exports import GeneratedFileExportRequest, build_generated_file_export
+from functions_orchestration_export_sources import open_orchestration_export_source
+from native_document_evidence import NativeInspectionRequestError
 
 
 __all__ = ["modules", "real_http_harness", "runtime", "inventory_store", "review_workbook"]
@@ -510,6 +516,58 @@ def test_complete_empty_native_inventory_remains_supporting_evidence(
     assert len(calls) == 1, "Reading saved coverage must not inspect the original file again."
 
 
+@pytest.mark.parametrize("has_comments", [False, True])
+def test_word_disposition_provenance_round_trips_through_existing_csv_export(
+    runtime, monkeypatch, has_comments,
+):
+    content = word_comment_package(comments=has_comments)
+    step, calls, document = configure_word_inventory(runtime, monkeypatch, content)
+    columns = [
+        {"name": "comment_thread_id", "value_type": "string", "nullable": False},
+        {"name": "comment_author", "value_type": "string", "nullable": True},
+        {"name": "comment_date", "value_type": "string", "nullable": True},
+        {"name": "reply_ids", "value_type": "string", "nullable": True},
+        {"name": "comment_replies", "value_type": "string", "nullable": True},
+        {"name": "disposition", "value_type": "string", "nullable": False},
+    ]
+    model_rows = [] if not has_comments else [{
+        "comment_thread_id": "0", "comment_author": "", "comment_date": None,
+        "reply_ids": "", "comment_replies": "", "disposition": "Supported",
+    }]
+    answer = compose(
+        "dispositions",
+        inputs={"comments": source_input("comments", "prepared")},
+        outputs=[{"name": "rows", "kind": "records-v1", "columns": columns}],
+    )
+    answer["arguments"]["annotation_provenance_input"] = "comments"
+    case = runtime.make(
+        [step, answer], [json.dumps({"rows": model_rows})],
+    )
+    case.fixture.sources["document-1"] = {**source(), "file_name": document["file_name"]}
+    result = execute(runtime, case)
+    assert result["status"] == "completed", result["steps"]
+    task = case.context.task_results["dispositions"]
+    reader = case.fixture.restart().open_result(task.output("rows"))
+    source_bound = open_orchestration_export_source(case.fixture.restart(), task.output("rows"))
+    with build_generated_file_export(
+        source=source_bound,
+        export_request=GeneratedFileExportRequest("csv", "exact_tabular_records_v1"),
+        max_output_bytes=1024 * 1024,
+    ) as output:
+        csv_rows = list(csv.reader(io.StringIO(output.file_content.read().decode("utf-8"))))
+    assert csv_rows[0] == [column["name"] for column in columns]
+    assert len(csv_rows) == (2 if has_comments else 1)
+    if has_comments:
+        rendered = dict(zip(csv_rows[0], csv_rows[1]))
+        assert rendered["comment_author"] == "Reviewer"
+        assert rendered["comment_date"] == "2026-01-01T10:00:00Z"
+        assert json.loads(rendered["reply_ids"]) == ["1"]
+        assert json.loads(rendered["comment_replies"])[0]["author"] == "Author"
+        assert rendered["disposition"] == "Supported"
+    assert reader.metadata()["source_count"] == 1
+    assert len(calls) == 1
+
+
 def test_word_evidence_does_not_bypass_repeated_unsupported_answer_findings(runtime, monkeypatch):
     step, _, _ = configure_word_inventory(runtime, monkeypatch, word_comment_package())
     candidate = "The author accepted the higher cap of 19500."
@@ -546,8 +604,9 @@ def test_word_anchor_completeness_requires_an_unclipped_closed_range(runtime, mo
 def test_comment_only_metadata_request_rejects_an_unsupported_format(runtime, monkeypatch):
     _, calls, _ = configure_word_inventory(runtime, monkeypatch, word_comment_package(), extension="pdf")
     service = importlib.import_module("functions_search_service")
-    with pytest.raises(LookupError, match="native comment inventory is unavailable"):
+    with pytest.raises(NativeInspectionRequestError) as failure:
         service.get_document_accessibility_payload("document-1", "owner", sections="comments")
+    assert failure.value.code == "native_comments_format_unsupported"
     assert calls == []
 
 

@@ -182,6 +182,7 @@ import {
     type ConversationSource,
 } from '../lib/conversationReferences';
 import type {
+    AgentCredentialRecovery,
     AgentOption,
     AnalysisResultContext,
     ChatMessage,
@@ -390,6 +391,7 @@ interface ChatState {
     thoughts: ThoughtEntry[];
     streamError: string | null;
     streamAuthUrl: string | null;
+    streamAgentCredentialRecovery: AgentCredentialRecovery | null;
     retryPresentation: RetryPresentation | null;
     /**
      * Where a stream recovery has got to, or null when nothing is being recovered.
@@ -1693,9 +1695,15 @@ function buildStreamHandlers(
                 streamingReasoningAdjustments: [],
                 reconnectPhase: null,
                 ...(presentation?.admitted ? {
-                    retryPresentation: { ...presentation, error: failure, authUrl: foundryAuthUrl(event) },
-                    streamError: null, streamAuthUrl: null,
-                } : { streamError: failure, streamAuthUrl: foundryAuthUrl(event) }),
+                    retryPresentation: {
+                        ...presentation, error: failure, authUrl: foundryAuthUrl(event),
+                        agentCredentialRecovery: event?.agent_credential_recovery ?? null,
+                    },
+                    streamError: null, streamAuthUrl: null, streamAgentCredentialRecovery: null,
+                } : {
+                    streamError: failure, streamAuthUrl: foundryAuthUrl(event),
+                    streamAgentCredentialRecovery: event?.agent_credential_recovery ?? null,
+                }),
             }));
             const selectedResult = getState().workflowResultContext;
             if (refusal?.clears && selectedResult &&
@@ -1709,7 +1717,7 @@ function buildStreamHandlers(
             }
             // Nothing is arriving yet: the status check and the reattach request are still
             // in flight, and the response on screen really has stopped moving.
-            set({ reconnectPhase: 'connecting', streamError: null, streamAuthUrl: null });
+            set({ reconnectPhase: 'connecting', streamError: null, streamAuthUrl: null, streamAgentCredentialRecovery: null });
         },
         onReconnect: () => {
             if (!isCurrent()) {
@@ -1727,7 +1735,7 @@ function buildStreamHandlers(
                 streamingReasoningAdjustments: [],
                 reconnectPhase: 'reconnected',
                 streamError: null,
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
             });
         },
     };
@@ -1898,7 +1906,7 @@ export async function resumeActionRecoveryChat(body: ChatStreamRequest): Promise
         streaming: true,
         orchestrationSurface: null,
         streamingContent: '', streamError: null, thoughts: [],
-        streamAuthUrl: null, streamingReasoningAdjustments: [],
+        streamAuthUrl: null, streamAgentCredentialRecovery: null, streamingReasoningAdjustments: [],
     });
     const { action_recovery: previousDecision, ...pending } = body;
     await runChatStream({ ...pending, action_recovery_nonce: crypto.randomUUID() },
@@ -1927,7 +1935,7 @@ export async function continueInteractionChat(
         orchestrationSurface: null,
         streamingContent: '',
         streamingReasoningAdjustments: [],
-        streamError: null, streamAuthUrl: null, thoughts: [],
+        streamError: null, streamAuthUrl: null, streamAgentCredentialRecovery: null, thoughts: [],
     });
     let failure: Error | null = null;
     await runChatStream(null, conversationId, {
@@ -1993,7 +2001,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
         thoughts: [],
         streamingReasoningAdjustments: [],
         streamError: null,
-        streamAuthUrl: null,
+        streamAuthUrl: null, streamAgentCredentialRecovery: null,
         reconnectPhase: 'connecting',
     });
 
@@ -2559,7 +2567,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     thoughts: [],
     streamingReasoningAdjustments: [],
     streamError: null,
-    streamAuthUrl: null,
+    streamAuthUrl: null, streamAgentCredentialRecovery: null,
     reconnectPhase: null,
     orchestrationSurface: null,
     retryPresentation: null,
@@ -2688,7 +2696,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             thoughts: [],
             streamingReasoningAdjustments: [],
             streamError: null,
-            streamAuthUrl: null,
+            streamAuthUrl: null, streamAgentCredentialRecovery: null,
             reconnectPhase: null,
             retryPresentation: null,
             // Metadata belongs to the previous conversation; drop it so the drawer never
@@ -2914,7 +2922,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             thoughts: [],
             streamingReasoningAdjustments: [],
             streamError: null,
-            streamAuthUrl: null,
+            streamAuthUrl: null, streamAgentCredentialRecovery: null,
             reconnectPhase: null,
             metadata: null,
             metadataLoading: false,
@@ -3388,7 +3396,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Ask in chat is still reading the run: sent now, the question would go out as an
         // ordinary turn a moment before the chip appeared.
         if (!conversationId && get().workflowResultLaunch) {
-            set({ streamError: WORKFLOW_RESULT_LAUNCH_PENDING_MESSAGE, streamAuthUrl: null });
+            set({ streamError: WORKFLOW_RESULT_LAUNCH_PENDING_MESSAGE, streamAuthUrl: null, streamAgentCredentialRecovery: null });
             return;
         }
         const selectedWorkflowResult = get().workflowResultContext;
@@ -3447,7 +3455,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 }
             } catch (error) {
                 set({
-                    streamAuthUrl: null,
+                    streamAuthUrl: null, streamAgentCredentialRecovery: null,
                     streamError:
                         error instanceof Error
                             ? error.message
@@ -3575,7 +3583,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 thoughts: [],
                 streamingReasoningAdjustments: [],
                 streamError: null,
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
                 reconnectPhase: null,
             }));
         }
@@ -3610,7 +3618,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     ),
                     streamError:
                         error instanceof Error ? error.message : 'Could not post that message.',
-                    streamAuthUrl: null,
+                    streamAuthUrl: null, streamAgentCredentialRecovery: null,
                 }));
             }
             return;
@@ -3822,7 +3830,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 thoughts: [],
                 streamingReasoningAdjustments: [],
                 streamError: null,
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
                 reconnectPhase: null,
             }));
         }
@@ -3849,6 +3857,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set({
                 streaming: false,
                 streamError: error instanceof Error ? error.message : 'Could not create the image.',
+                streamAgentCredentialRecovery: null,
             });
         });
         return null;
@@ -3901,7 +3910,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     streamingReasoningAdjustments: [],
                     thoughts: [],
                     retryPresentation: presentation?.admitted
-                        ? { ...presentation, error: undefined }
+                        ? { ...presentation, error: undefined, agentCredentialRecovery: null }
                         : null,
                 };
             });
@@ -3949,7 +3958,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 }, 250);
             }).catch(() => {
                 if (get().activeConversationId === stoppedConversationId) {
-                    set({ streamError: 'Stopping could not be confirmed. Refresh the conversation to check saved work.' });
+                    set({ streamError: 'Stopping could not be confirmed. Refresh the conversation to check saved work.',
+                        streamAgentCredentialRecovery: null });
                 }
             });
         }
@@ -4028,7 +4038,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 thoughts: [],
                 streamingReasoningAdjustments: [],
                 streamError: null,
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
                 reconnectPhase: null,
             }));
         }
@@ -4123,9 +4133,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 reconnectPhase: null,
                 messages: updateRetryState(state.messages, state.retryPresentation, 'failed', outcome.error),
                 retryPresentation: state.retryPresentation
-                    ? { ...state.retryPresentation, error: outcome.error } : null,
+                    ? { ...state.retryPresentation, error: outcome.error, agentCredentialRecovery: null } : null,
                 streamError: state.retryPresentation ? null : outcome.error,
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
             }));
             return;
         }
@@ -4229,7 +4239,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 streamingContent: '',
                 reconnectPhase: null,
                 streamError: null,
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
                 ...(event.blocked ? { thoughts: [] } : {}),
             };
         });
@@ -4498,7 +4508,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 messages: previous,
                 streamError:
                     error instanceof Error ? error.message : 'Could not delete the message.',
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
             });
         }
     },
@@ -4511,7 +4521,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // about a workflow result would come back as an ordinary answer. Refused before the
         // server is asked to create a new attempt.
         if (turnAsksAboutWorkflowResult(get().messages, messageId)) {
-            set({ streamError: WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE, streamAuthUrl: null });
+            set({ streamError: WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE, streamAuthUrl: null, streamAgentCredentialRecovery: null });
             return;
         }
         const message = get().messages.find((candidate) => candidate.id === messageId);
@@ -4529,13 +4539,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 };
             if (!result.ok && get().activeConversationId === recoveryConversationId
                 && get().messages.some((candidate) => candidate.id === messageId)) {
-                set({ streamError: result.error, streamAuthUrl: null });
+                set({ streamError: result.error, streamAuthUrl: null, streamAgentCredentialRecovery: null });
             }
             return;
         }
         const question = message && retryQuestion(get().messages, message);
         if (!question || !recoveryConversationId || question.conversation_id !== recoveryConversationId) {
-            set({ streamError: 'The original question is unavailable. Reload the conversation before retrying.', streamAuthUrl: null });
+            set({ streamError: 'The original question is unavailable. Reload the conversation before retrying.',
+                streamAuthUrl: null, streamAgentCredentialRecovery: null });
             return;
         }
         const kind = messageOrchestrationTurn(message) || messageOrchestrationTurn(question)
@@ -4551,7 +4562,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             thoughts: [],
             streamingReasoningAdjustments: [],
             streamError: null,
-            streamAuthUrl: null,
+            streamAuthUrl: null, streamAgentCredentialRecovery: null,
             reconnectPhase: null,
             retryPresentation: presentation,
         });
@@ -4601,7 +4612,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 messages: presentation.admitted ? updateRetryState(state.messages, presentation, 'unknown', failure) : state.messages,
                 retryPresentation: { ...presentation, hiddenMessageIds: [], error: failure },
                 streamError: null,
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
             }));
         }
     },
@@ -4613,7 +4624,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         // For the same reason as retry: the edit endpoint rebuilds the request without the run.
         if (turnAsksAboutWorkflowResult(get().messages, messageId)) {
-            set({ streamError: WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE, streamAuthUrl: null });
+            set({ streamError: WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE, streamAuthUrl: null, streamAgentCredentialRecovery: null });
             return;
         }
         const question = get().messages.find((message) => message.id === messageId && message.role === 'user');
@@ -4630,7 +4641,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             thoughts: [],
             streamingReasoningAdjustments: [],
             streamError: null,
-            streamAuthUrl: null,
+            streamAuthUrl: null, streamAgentCredentialRecovery: null,
             reconnectPhase: null,
             retryPresentation: presentation,
         });
@@ -4654,7 +4665,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 messages: presentation.admitted ? updateRetryState(state.messages, presentation, 'unknown', failure) : state.messages,
                 retryPresentation: { ...presentation, hiddenMessageIds: [], error: failure },
                 streamError: null,
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
             }));
         }
     },
@@ -4666,7 +4677,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         try {
             const result = await switchAttemptApi(messageId, direction);
             if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) return;
-            set({ retryPresentation: null, streamError: null, streamAuthUrl: null });
+            set({ retryPresentation: null, streamError: null, streamAuthUrl: null, streamAgentCredentialRecovery: null });
 
             // The only place the server reports the full attempt set, so it is remembered
             // against the thread rather than discarded.
@@ -4689,7 +4700,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set({
                 streamError:
                     error instanceof Error ? error.message : 'Could not switch attempt.',
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
             });
         }
     },
@@ -5146,7 +5157,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set({
                 streamError:
                     error instanceof Error ? error.message : 'Could not fork the conversation.',
-                streamAuthUrl: null,
+                streamAuthUrl: null, streamAgentCredentialRecovery: null,
             });
         }
     },

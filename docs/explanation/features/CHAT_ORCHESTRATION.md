@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.423** (tracked in `application/single_app/config.py`)
+**Version: 0.261.445** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -33,6 +33,7 @@
 **Initial-turn persistence and browser-independent Auto planning implemented in version: 0.261.415**
 **Confirmed progress, exact native workbook citations, and saved-analysis cleanup fixed in version: 0.261.417**
 **Conservative source wiring, two shared planning corrections, native Word comments, and evidence-label checking fixed in version: 0.261.422**
+**Effective plan limits, model protocol repair, and complete-generation boundaries fixed in version: 0.261.445**
 
 ## Overview
 
@@ -109,6 +110,14 @@ availability, the server can fill an absent document binding on an existing,
 enabled independent reader without another model call. It does not invent steps,
 replace explicit IDs or dynamic inputs, narrow multiple selections, or restore
 disabled work. Plan editing keeps its explicit source choices.
+
+The planner receives the effective step, run-time, and document-action limits
+for every request, not only requests that may use workflow hand-off. Hand-off
+is described as a remedy only when it is actually available. Malformed JSON
+envelopes, missing or invalid step arrays, and an oversized but otherwise valid
+draft use the same two-correction allowance as other eligible model-authored
+draft errors. The compiler still enforces the limits and never clips steps or
+drops required work.
 The server keeps source access,
 source-kind checks, every required selection, and the selected planner model.
 An explicit later plan edit can still narrow the selection, with a review warning.

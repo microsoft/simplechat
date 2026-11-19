@@ -2,17 +2,17 @@
 // Scope-aware credential authoring. Each adapter supplies its authorization gates and transport.
 
 import { useCallback, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import {
     ConfirmAction,
     Pill,
-    ResourceRow,
     RowAction,
     SectionIntro,
     SectionList,
     SectionSearch,
 } from '../../components/workspace/primitives';
-import { GlassButton } from '../../components/ui/primitives';
+import { GlassButton, GlassPanel } from '../../components/ui/primitives';
 import { errorMessage, useSectionResource } from '../../components/workspace/useSectionResource';
 import { IdentityEditorDialog } from '../../components/identities/IdentityEditorDialog';
 import {
@@ -43,6 +43,40 @@ interface DeleteBlock {
     references: IdentityReference[];
 }
 
+/**
+ * One identity in the list.
+ *
+ * `ResourceRow` keeps its pills and actions on the name's line, which at phone width leaves the
+ * name no room at all behind an authentication method and two capabilities. This row is the same
+ * panel with the pills and actions allowed to wrap beneath the name, so the name always has at
+ * least ten rem and nothing changes while everything fits beside it.
+ */
+function IdentityRow({
+    icon,
+    title,
+    subtitle,
+    meta,
+    actions,
+}: {
+    icon: ReactNode;
+    title: ReactNode;
+    subtitle?: ReactNode;
+    meta: ReactNode;
+    actions: ReactNode;
+}) {
+    return (
+        <GlassPanel elevation="flat" className="flex flex-wrap items-center gap-x-3 gap-y-2 p-3">
+            <span className="shrink-0 text-text-3">{icon}</span>
+            <div className="min-w-0 flex-[1_1_10rem]">
+                <div className="truncate text-sm text-text-1">{title}</div>
+                {subtitle ? <div className="mt-0.5 truncate text-xs text-text-3">{subtitle}</div> : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">{meta}</div>
+            <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>
+        </GlassPanel>
+    );
+}
+
 export function IdentityWorkbenchSection({
     adapter,
     syncEnabled,
@@ -50,6 +84,8 @@ export function IdentityWorkbenchSection({
     scopeNoun = 'group',
     connectorSurfaces = 'file sources and actions',
     identityCapabilities = GROUP_IDENTITY_CAPABILITIES,
+    presentation = 'workspace',
+    leadText,
 }: {
     adapter: IdentityWorkbenchAdapter;
     syncEnabled: boolean;
@@ -64,6 +100,12 @@ export function IdentityWorkbenchSection({
     // the group editor stays byte-identical; a public workspace passes only 'file_sync' because it
     // has no actions surface, so the picker never offers a capability the workspace cannot feed.
     identityCapabilities?: readonly (typeof GROUP_IDENTITY_CAPABILITIES)[number][];
+    // How the section sits on its page. A workspace page gives it its own heading and says what the
+    // workspace's identities feed. The administrator's Global Identities card already has a title,
+    // so 'admin' leaves out that heading and the workspace wording and shows `leadText` -- the
+    // card's own description -- beside the New identity control instead.
+    presentation?: 'workspace' | 'admin';
+    leadText?: string;
 }) {
     const load = useCallback((signal: AbortSignal) => adapter.list(signal), [adapter]);
     const { items, loading, error, loadFailed, refresh, setItems, setError } =
@@ -243,15 +285,25 @@ export function IdentityWorkbenchSection({
         }
     };
 
+    const admin = presentation === 'admin';
+
     return (
         <div className="space-y-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
-                <SectionIntro
-                    title="Identities"
-                    description={personal
-                        ? 'Sign-in details you save once and reuse. These are credentials for the systems you connect to, not your own account. Secrets are held server-side and never sent back to the browser.'
-                        : `Sign-in details this ${scopeNoun} saves once and reuses. These are credentials for the systems the ${scopeNoun} connects to, not a member's own account. Secrets are held server-side and never sent back to the browser.`}
-                />
+                {admin ? (
+                    leadText ? (
+                        <p className="min-w-0 flex-[1_1_18rem] text-xs leading-relaxed text-text-3">{leadText}</p>
+                    ) : (
+                        <span aria-hidden="true" className="flex-1" />
+                    )
+                ) : (
+                    <SectionIntro
+                        title="Identities"
+                        description={personal
+                            ? 'Sign-in details you save once and reuse. These are credentials for the systems you connect to, not your own account. Secrets are held server-side and never sent back to the browser.'
+                            : `Sign-in details this ${scopeNoun} saves once and reuses. These are credentials for the systems the ${scopeNoun} connects to, not a member's own account. Secrets are held server-side and never sent back to the browser.`}
+                    />
+                )}
                 {canCreate ? (
                     <GlassButton variant="primary" size="sm" disabled={saving} onClick={() => openEditor(null)}>
                         <Plus size={14} />
@@ -260,12 +312,14 @@ export function IdentityWorkbenchSection({
                 ) : null}
             </div>
 
-            <p className="text-xs text-text-3">
-                {usedByText}
-                {canCreate
-                    ? ` Create one here to reuse it across the ${scopeNoun}’s ${connectorSurfaces}.`
-                    : ' A workspace manager can add one.'}
-            </p>
+            {admin ? null : (
+                <p className="text-xs text-text-3">
+                    {usedByText}
+                    {canCreate
+                        ? ` Create one here to reuse it across the ${scopeNoun}’s ${connectorSurfaces}.`
+                        : ' A workspace manager can add one.'}
+                </p>
+            )}
 
             {deleteBlock ? (
                 <div className="alert alert-warning space-y-1 rounded-xl bg-warn-soft p-3 text-sm text-warn" role="alert">
@@ -310,7 +364,7 @@ export function IdentityWorkbenchSection({
                     const canEdit = adapter.allows('edit', identity);
                     const canDelete = adapter.allows('delete', identity);
                     return (
-                        <ResourceRow
+                        <IdentityRow
                             icon={<KeyRound size={17} />}
                             title={String(identity.name ?? 'Untitled identity')}
                             subtitle={identityPrincipalText(identity) || String(identity.description ?? '')}
@@ -359,6 +413,7 @@ export function IdentityWorkbenchSection({
                     onRefresh={saveConflict ? () => void onConflictRefresh() : undefined}
                     onCancel={closeEditor}
                     capabilities={identityCapabilities}
+                    authTypeOptions={adapter.authTypes}
                     scopeDescription={personal ? 'your workspace' : `this ${scopeNoun}`}
                     saveDisabled={deleted}
                 />

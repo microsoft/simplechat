@@ -1,6 +1,6 @@
 // ElicitationCard.tsx
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Check, ChevronRight, HelpCircle, X } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import { ComposerEditor } from './ComposerEditor';
@@ -22,6 +22,7 @@ import {
     type ElicitationDraft,
 } from '../../lib/elicitationAnswers';
 import { messageToPlainText } from '../../lib/messageText';
+import { AGREEMENT_PENDING_MESSAGE } from '../../lib/userAgreement';
 import type { ComposerDraft } from '../../lib/composerDraft';
 import type { Elicitation, ElicitationAction, ElicitationContext, ElicitationResponse } from '../../lib/orchestration';
 import type { PromptResolutionContext } from '../../lib/promptVariables';
@@ -91,6 +92,23 @@ export function ElicitationForm({
     const pageRef = useRef<HTMLDivElement>(null);
     const statusRef = useRef<HTMLDivElement>(null);
     const wasSubmitting = useRef(false);
+    // The fields whose editor has a file waiting on the user agreement. Such a file has no chip yet, so nothing
+    // else on the page says it is coming, and Next, Review answers and Use these answers would leave it behind.
+    // Kept by field name so a field that reports twice is held once. Declared here, ahead of the early
+    // returns, with the other hooks.
+    const [agreementHolds, setAgreementHolds] = useState<ReadonlySet<string>>(() => new Set());
+    const holdAgreement = useCallback((name: string, held: boolean) => setAgreementHolds((current) => {
+        if (current.has(name) === held) {
+            return current;
+        }
+        const next = new Set(current);
+        if (held) {
+            next.add(name);
+        } else {
+            next.delete(name);
+        }
+        return next;
+    }), []);
 
     const promptContext: PromptResolutionContext = useMemo(() => {
         const ownMessages = activeConversationId === conversationId ? messages : [];
@@ -122,6 +140,12 @@ export function ElicitationForm({
         wasSubmitting.current = draft.submitting;
     }, [draft.submitting]);
 
+    // Each field lowers its own hold when it goes away. A question or revision that replaces this one starts
+    // with nothing held all the same, so a name can never outlive the field that raised it.
+    useEffect(() => {
+        setAgreementHolds((current) => current.size === 0 ? current : new Set());
+    }, [elicitation?.elicitation_id, elicitation?.revision]);
+
     if (!elicitation || !draft || !answer) {
         return null;
     }
@@ -139,9 +163,10 @@ export function ElicitationForm({
         );
     }
     const isReview = pageIndex === pages.length;
-    const canFinish = Object.keys(answer.errors).length === 0 && !answer.pendingUploads;
+    const agreementHeld = agreementHolds.size > 0;
+    const canFinish = Object.keys(answer.errors).length === 0 && !answer.pendingUploads && !agreementHeld;
     const currentErrors = (pages[pageIndex] ?? []).filter((name) => answer.errors[name]);
-    const canAdvance = isReview ? canFinish : currentErrors.length === 0;
+    const canAdvance = isReview ? canFinish : currentErrors.length === 0 && !agreementHeld;
     const updateDraft = onDraftChange;
     const changePage = (index: number) =>
         updateDraft((current) => ({ ...current, pageIndex: index }));
@@ -263,6 +288,7 @@ export function ElicitationForm({
                                 error: null,
                             }))}
                             onSubmit={advance}
+                            onAgreementHold={holdAgreement}
                         />
                     ))}
                 </div>
@@ -309,9 +335,11 @@ export function ElicitationForm({
                 </div>
                 {(isReview ? !canFinish : !canAdvance) ? (
                     <div className="mt-2 text-right text-xs text-text-3" aria-live="polite">
-                        <p>{answer.pendingUploads
-                            ? 'Wait for the attached files to finish processing.'
-                            : 'Complete this answer before continuing.'}</p>
+                        <p>{agreementHeld
+                            ? AGREEMENT_PENDING_MESSAGE
+                            : answer.pendingUploads
+                                ? 'Wait for the attached files to finish processing.'
+                                : 'Complete this answer before continuing.'}</p>
                         {Object.keys(answer.errors).filter((name) => !pages[pageIndex]?.includes(name)).map((name) => (
                             <button key={name} type="button" className="ml-3 text-accent underline"
                                 onClick={() => changePage(pages.findIndex((page) => page.includes(name)))}>
@@ -328,7 +356,7 @@ export function ElicitationForm({
 
 function QuestionField({
     name, id, elicitation, draft, conversationId, promptContext, error,
-    onValue, onCustom, onCustomText, onEditor, onSubmit,
+    onValue, onCustom, onCustomText, onEditor, onSubmit, onAgreementHold,
 }: {
     name: string;
     id: string;
@@ -342,6 +370,8 @@ function QuestionField({
     onCustomText: (text: string) => void;
     onEditor: React.Dispatch<React.SetStateAction<ComposerDraft>>;
     onSubmit: () => void;
+    /** Whether this field's editor has a file waiting on the user agreement. Stable, so a report is not repeated. */
+    onAgreementHold: (name: string, held: boolean) => void;
 }) {
     const field = elicitation.requested_schema.properties[name];
     const kind = elicitationFieldKind(elicitation, name);
@@ -356,6 +386,11 @@ function QuestionField({
     const [contextOpen, setContextOpen] = useState(Boolean(
         draft.editors[name]?.text || draft.editors[name]?.contextItems?.length || draft.editors[name]?.uploads?.length,
     ));
+    // One function per field for as long as it is mounted: the editor reports again whenever this changes.
+    const reportAgreementHold = useCallback(
+        (held: boolean) => onAgreementHold(name, held),
+        [onAgreementHold, name],
+    );
     const options = files
         ? (elicitation.ui_hints.fields?.[name]?.candidates ?? []).filter(isFileReference)
             .map((candidate) => ({
@@ -473,6 +508,7 @@ function QuestionField({
                         .filter(isFileReference).map((reference) => reference.label || reference.id),
                 }}
                 onSubmit={onSubmit}
+                onAgreementPendingChange={reportAgreementHold}
             /> : null}
             {error ? <p id={`${id}-error`} role="status" className="text-xs text-danger">{error}</p> : null}
         </fieldset>

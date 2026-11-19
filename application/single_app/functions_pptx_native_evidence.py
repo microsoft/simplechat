@@ -35,9 +35,10 @@ def inspect_pptx_slide_objects(root, slide_number, part):
     background = _solid_color(_first(root, "bg"))
     supported = {"sp", "pic", "graphicFrame", "cxnSp", "grpSp", "contentPart"}
     truncated = False
+    ordinal = 0
 
     def visit(container, parent_id=None):
-        nonlocal truncated
+        nonlocal ordinal, truncated
         for element in container:
             kind = _local(element)
             if kind not in supported:
@@ -45,12 +46,14 @@ def inspect_pptx_slide_objects(root, slide_number, part):
             if len(records) >= MAX_SLIDE_NATIVE_OBJECTS:
                 truncated = True
                 return
+            ordinal += 1
             nonvisual = next((child for child in element if _local(child).startswith("nv")), None)
             properties = _first(nonvisual, "cNvPr")
             if properties is None:
                 records.append({
                     "kind": "unsupported_object", "source_part": part, "slide_number": slide_number,
                     "inspection_status": "inaccessible", "reason": "missing_object_identity",
+                    "xml_ordinal": ordinal,
                 })
                 continue
             decorative = _first(properties, "decorative")
@@ -66,6 +69,7 @@ def inspect_pptx_slide_objects(root, slide_number, part):
             record = {
                 "id": f"pptx:s{slide_number}:object:{object_id}",
                 "object_id": object_id, "name": properties.get("name", ""),
+                "xml_ordinal": ordinal,
                 "kind": "picture" if kind == "pic" else "group" if kind == "grpSp"
                 else "chart" if kind == "graphicFrame" and _first(element, "chart") is not None
                 else "table" if kind == "graphicFrame" and _first(element, "tbl") is not None
@@ -110,7 +114,7 @@ def inspect_pptx_slide_objects(root, slide_number, part):
 
 def pptx_core_native_fields(root):
     fields = {}
-    for name in ("title", "creator", "keywords", "subject"):
+    for name in ("title", "creator", "keywords", "subject", "language"):
         element = _first(root, name)
         fields["author" if name == "creator" else name] = {
             **native_field({name: element.text or ""} if element is not None else {}, name),

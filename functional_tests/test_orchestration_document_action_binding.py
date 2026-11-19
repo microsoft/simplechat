@@ -1,8 +1,9 @@
 # test_orchestration_document_action_binding.py
 """
 Functional regressions for enforced native document action source bindings.
-Version: 0.261.423
+Version: 0.261.439
 Implemented in: 0.261.419
+Pre-read incompatible-section correction added in: 0.261.439
 
 The real action runner, Semantic Kernel filters, Document Search plugin and
 citation projection run with model and source-service I/O doubled. Existing
@@ -166,7 +167,10 @@ async def execute(state):
     return await state.runtime.invoke_action(
         state.action["action_ref"], "Inspect only the selected source.", state.context,
         settings=state.settings, user_id="actor", cancel_requested=lambda: False,
-        document_sources=[{"document_id": SOURCE, "scope": state.scope, "scope_id": state.scope_id}],
+        document_sources=[{
+            "document_id": SOURCE, "scope": state.scope, "scope_id": state.scope_id,
+            "file_name": f"selected.{state.metadata['format']}",
+        }],
         document_source_check=state.check_sources,
         m365_origin={"step_id": "inspect", "run_id": getattr(state.context, "run_id", None)},
     )
@@ -212,6 +216,38 @@ def test_native_word_comments_are_not_replaced_with_body_text(native_action):
     assert evidence["native_evidence"]["comments"] == state.metadata["comments"]
     assert evidence["native_evidence"]["inspection_limits"] == state.metadata["inspection_limits"]
     assert evidence["citation"] and SOURCE in evidence["citation"]
+
+
+@pytest.mark.parametrize("source_format", ["pdf", "pptx"])
+def test_incompatible_comment_section_is_corrected_once_before_any_native_read(native_action, source_format):
+    state = native_action
+    state.metadata["format"] = source_format
+    state.replies = [
+        tool_call("get_document_accessibility_report", {"document_id": SOURCE, "sections": "comments"}),
+        tool_call("get_document_accessibility_report", {
+            "document_id": SOURCE, "sections": "accessibility,style,issues", "native_section": "all",
+        }),
+    ]
+    result = state.loop.run_until_complete(execute(state))
+    assert result["calls"] == 2
+    assert len(state.native_reads) == 1
+    assert state.native_reads[0][1]["sections"] == "accessibility,style,issues"
+    assert "native_comments_format_unsupported" in state.requests[1]
+    assert '"source_read_performed": false' in state.requests[1]
+    assert state.source_checks == 3
+
+
+def test_repeated_incompatible_native_request_stops_without_reading_or_relaxing_the_limit(native_action):
+    state = native_action
+    state.replies = [
+        tool_call("get_document_accessibility_report", {"document_id": SOURCE, "sections": "comments"}),
+        tool_call("get_document_accessibility_report", {"document_id": SOURCE, "sections": "comments"}),
+    ]
+    with pytest.raises(state.runtime.ActionExecutionError) as failure:
+        state.loop.run_until_complete(execute(state))
+    assert failure.value.orchestration_failure_code == "document_action_read_unsupported"
+    assert state.native_reads == []
+    assert len(state.requests) == 2
 
 
 def test_search_without_a_model_filter_is_restricted_before_source_io(native_action):

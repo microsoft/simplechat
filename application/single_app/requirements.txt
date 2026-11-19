@@ -7,6 +7,7 @@ gunicorn==25.0.3
 Werkzeug==3.1.9
 requests==2.33.1
 jsonschema==4.25.1
+cryptography==46.0.7
 regex==2026.5.9
 openai==1.109.1
 tiktoken==0.12.0
@@ -36,7 +37,6 @@ azure-mgmt-cognitiveservices==13.6.0
 azure-identity==1.24.0
 azure-ai-contentsafety==1.0.0
 azure-storage-blob==12.24.1
-cryptography==46.0.7
 azure-storage-file-share==12.25.0
 azure-storage-queue==12.12.0
 azure-keyvault-secrets==4.10.0
@@ -54,6 +54,12 @@ pillow==13.0.0
 ffmpeg-binaries-compat==1.0.1
 ffmpeg-python==0.2.0
 semantic-kernel==1.39.4
+# Action destination guards use these clients' transport extension contracts.
+mcp==1.30.0
+httpx==0.28.1
+httpcore==1.0.9
+urllib3==2.7.0
+websockets==15.0.1
 # Required by Semantic Kernel's Handlebars template parser.
 PyMeta3==0.5.1
 snowflake-connector-python[pandas]==4.7.3
@@ -75,5 +81,5 @@ anyio==4.14.2
 html2text==2025.4.15
 matplotlib==3.10.7
 azure-cognitiveservices-speech==1.48.2
-playwright==1.58.0
+playwright==1.65.1
 tzdata==2026.3

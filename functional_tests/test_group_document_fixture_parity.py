@@ -1,12 +1,13 @@
 # test_group_document_fixture_parity.py
 """
 Per-route shape parity between the M2 group document UI fixtures and the real routes.
-Version: 0.261.268
+Version: 0.261.448
 Implemented in: 0.261.161
 A tag vocabulary conflict is pinned from the etag pre-check and from a lost patch: 0.261.167
 A bulk tagging batch or metadata save that meets it is refused whole, with no document written: 0.261.168
 A released screened document's metadata change applies directly and returns the ordinary receipt: 0.261.230
 Metadata and re-tag receipts report the background search sync; only the access index fails a save: 0.261.268
+The list's legacy flag and the legacy document upgrade receipt are pinned to the server's: 0.261.448
 
 The V2 group Documents explorer mocks the network with three closed HTTP fixtures, which predate
 the per-route parity rule:
@@ -72,7 +73,8 @@ from ui_tests.fixtures.group_document_management import (  # noqa: E402
     DOCUMENT_CHANGED_ERROR, GROUP_ARCHIVE_NAME, GroupDocumentManagementFixture, TAG_REVISION_CHANGED_ERROR,
     attachment, batch_error, bulk_tag_result, conversation_delete_guard, delete_result, metadata_result,
     operation_path, propagation_incomplete, queue_result, synced_delete_guard, tag_created, tag_result,
-    tag_vocabulary_conflict, tag_vocabulary_refusal, upload_refusal, upload_result,
+    tag_vocabulary_conflict, tag_vocabulary_refusal, upgrade_failure, upgrade_legacy_result, upload_refusal,
+    upload_result,
 )
 from ui_tests.fixtures.group_document_collaboration import (  # noqa: E402
     COLLABORATION_DENIED, COLLABORATION_GONE, COLLABORATION_STATUS_REFUSED, FAILED_HANDOFF_ERRORS,
@@ -85,6 +87,7 @@ from test_group_document_read_apis import document, environment, get  # noqa: E4
 from test_group_document_management import StoreFailure, lose_the_vocabulary_patch, management  # noqa: E402,F401  (management is a pytest fixture)
 from test_group_document_collaboration import sharing  # noqa: E402,F401  (sharing is a pytest fixture)
 from test_group_document_publication import publication, publication_modules  # noqa: E402,F401  (pytest fixtures)
+from test_group_legacy_document_upgrade_route import upgrade  # noqa: E402,F401  (upgrade is a pytest fixture)
 from test_support.agent_delegation import APP_ROOT, execute_functions  # noqa: E402
 
 
@@ -114,7 +117,7 @@ ROW_UI_KEYS = {
 CONTENT_UI_KEYS = {"title", "tags", "document_classification", "file_size"}
 # A row shared into the group names its source.
 SHARE_UI_KEYS = {"shared_group_active_id", "owner_group_name"}
-LIST_UI_KEYS = {"documents", "total_count", "page", "page_size"}
+LIST_UI_KEYS = {"documents", "total_count", "page", "page_size", "needs_legacy_update_check"}
 FACET_UI_KEYS = {"total", "untagged", "processing", "errors", "recent", "shared_with_me", "by_tag", "by_classification"}
 TAG_UI_KEYS = {"name", "count", "color"}
 VERSIONS_UI_KEYS = {"document_id", "group_id", "versions"}
@@ -308,6 +311,29 @@ def test_read_list_shape_parity(reads):
         "processing-report", "failed-report", "team-01",
     ):
         assert_row_parity(f"list row {document_id}", served[document_id], stored[document_id])
+
+
+def test_read_list_legacy_flag_parity(reads):
+    """The list says whether an owned current document predates progress tracking, as the server does:
+    only a document this group owns and that has no `percentage_complete` counts, never a share
+    from another group."""
+    env = reads
+
+    def both():
+        real = get(env, page_size=100).get_json()["needs_legacy_update_check"]
+        _status, payload = fixture_read(env.fixture, "/api/group_documents", page_size="100")
+        return real, payload["needs_legacy_update_check"]
+
+    def strip_progress(identifier):
+        del env.source.records[identifier]["percentage_complete"]
+        row = next(row for row in env.fixture.documents[GROUP_A] if row["id"] == identifier)
+        del row["percentage_complete"]
+
+    assert both() == (False, False)
+    strip_progress("shared-report")
+    assert both() == (False, False), "A share from another group is never this group's to upgrade."
+    strip_progress("same-document")
+    assert both() == (True, True)
 
 
 @pytest.mark.parametrize("document_id", [
@@ -654,6 +680,24 @@ def test_queue_receipt_parity(management, resource, mode, partial):
         new_management_fixture(), "POST", resource, response=expected, status=207 if partial else 202, body=body,
     )
     assert_receipt_parity(f"{resource} partial={partial}", served, real)
+
+
+@pytest.mark.parametrize("scenario", ["upgraded", "partial", "limited"])
+def test_upgrade_legacy_receipt_parity(upgrade, scenario):  # noqa: F811 - the imported harness fixture
+    """The legacy upgrade says what it upgraded, names each document it could not update, and says
+    when it stopped at its per-request limit with older documents still to do."""
+    env = upgrade
+    upgraded, errors, remaining, status = 2, [], False, 200
+    if scenario == "partial":
+        env.failing.add("legacy-1")
+        upgraded, errors, status = 1, [upgrade_failure("legacy-1", "legacy-1.pdf")], 207
+    elif scenario == "limited":
+        env.scoped_monkeypatch.setattr(env.upgrade_module, "MAX_LEGACY_UPGRADE_DOCUMENTS", 1)
+        upgraded, remaining = 1, True
+    real = env.client.post(f"{MANAGEMENT_ROOT}/upgrade_legacy")
+    expected = upgrade_legacy_result(upgraded, errors=errors, remaining=remaining)
+    served = fixture_receipt(new_management_fixture(), "POST", "upgrade_legacy", response=expected, status=status)
+    assert_receipt_parity(f"upgrade legacy {scenario}", served, real)
 
 
 @pytest.mark.parametrize("partial", [False, True])

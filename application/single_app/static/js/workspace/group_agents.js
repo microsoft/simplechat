@@ -127,7 +127,7 @@ function renderAgentsTable(list) {
         <button type="button" class="btn btn-sm btn-primary me-1 chat-group-agent-btn" data-agent-name="${escapeHtml(agent.name || '')}" title="Chat with this agent">
           <i class="bi bi-chat-dots me-1"></i>Chat
         </button>`;
-    if (canManage) {
+    if (canManage && agent.read_only !== true) {
       actionsHtml += `
         <button type="button" class="btn btn-sm btn-outline-secondary me-1 edit-group-agent-btn" data-agent-id="${escapeHtml(agent.id || agent.name || '')}">
           <i class="bi bi-pencil"></i>
@@ -157,15 +157,16 @@ function renderAgentsGrid(list) {
 
   const canManage = canManageAgents() && groupAllowsModifications();
   list.forEach(agent => {
+    const canManageAgent = canManage && agent.read_only !== true;
     const col = createAgentCard(agent, {
       onChat: a => chatWithGroupAgent(a.name || a),
       onView: a => openGroupAgentViewModal(a),
-      onEdit: canManage ? a => {
+      onEdit: canManageAgent ? a => {
         const found = agents.find(x => x.id === (a.id || a.name || a) || x.name === (a.name || a));
         openAgentModal(found || null);
       } : null,
-      onDelete: canManage ? a => deleteGroupAgent(a.id || a.name || a) : null,
-      canManage
+      onDelete: canManageAgent ? a => deleteGroupAgent(a.id || a.name || a) : null,
+      canManage: canManageAgent
     });
     agentsGridView.appendChild(col);
   });
@@ -192,7 +193,7 @@ function openGroupAgentViewModal(agent) {
   const callbacks = {
     onChat: (a) => chatWithGroupAgent(a.name)
   };
-  if (canManage) {
+  if (canManage && agent.read_only !== true) {
     callbacks.onEdit = (a) => {
       const found = agents.find(x => x.id === a.id || x.name === a.name);
       openAgentModal(found || a);
@@ -277,11 +278,13 @@ function overrideAgentStepper(stepper) {
     const isEdit = this.isEditMode && this.originalAgent && (this.originalAgent.id || this.originalAgent.name);
 
     if (!isEdit || !payload.id) {
-      payload.id = payload.id || crypto.randomUUID();
+      payload.id = crypto.randomUUID();
     }
 
     const agentId = encodeURIComponent(payload.id || "");
-    const url = isEdit ? `/api/group/agents/${agentId}` : "/api/group/agents";
+    const groupId = this.originalAgent?.group_id || currentContext.activeGroupId;
+    const baseUrl = isEdit ? `/api/group/agents/${agentId}` : "/api/group/agents";
+    const url = `${baseUrl}?group_id=${encodeURIComponent(groupId)}`;
     const method = isEdit ? "PATCH" : "POST";
 
     const response = await fetch(url, {
@@ -326,6 +329,19 @@ async function openAgentModal(agent = null) {
   }
 
   try {
+    if (agent) {
+      const groupId = agent.group_id || currentContext.activeGroupId;
+      const response = await fetch(`/api/group/agents/${encodeURIComponent(agent.id || agent.name)}?group_id=${encodeURIComponent(groupId)}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to load group agent.');
+      }
+      if (payload.read_only === true) {
+        showToast('This agent is read-only. Refresh its permissions before editing.', 'warning');
+        return;
+      }
+      agent = payload;
+    }
     const stepper = getAgentStepper();
     await stepper.showModal(agent);
     agentsCommon.setupApimToggle(

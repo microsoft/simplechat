@@ -165,6 +165,27 @@ Let's start with personal document uploads:
 3. **Monitor progress**: Watch the upload progress indicators
 4. **Wait for processing**: Documents need to be processed before use
 
+### If a user agreement is required
+
+Fixed/Implemented in version: **0.261.448** (`application/single_app/config.py`).
+
+When your administrator requires a user agreement for the workspace you are uploading to (personal,
+group or public), the React V2 interface shows it before any file is sent. It appears whether you use
+the **Upload** command, the file picker or drag files onto the document list.
+
+1. Read the agreement. Choose **Accept** to record your acceptance and start the upload, or **Cancel**
+   to stop. **Cancel**, **Escape**, the close button and a click outside the dialog upload nothing and
+   leave the document list as it was.
+2. When the administrator allows acceptance once per day, you are asked once per workspace per day (the
+   day is counted in UTC). A group or public workspace is counted separately from your own workspace and
+   from each other.
+3. If SimpleChat cannot check whether an agreement applies, or cannot record your acceptance, it holds
+   the upload and tells you. Choose **Try again** or **Accept** again, or cancel.
+
+Files that SimpleChat refuses before sending, such as an unsupported type or a file over the size limit,
+do not show the agreement because they are never uploaded. See
+[V2 user agreement gate](../explanation/features/V2_USER_AGREEMENT_GATE.md) for how the gate works.
+
 ### Processing Status Indicators
 
 You'll see different status indicators during processing:
@@ -263,6 +284,21 @@ Example classifications:
 - **Download**: Get original file back
 - **Delete**: Remove from workspace (careful - this affects chat!)
 - **Re-process**: Retry failed processing
+
+### Update Older Documents
+Documents uploaded before SimpleChat tracked processing progress still list and
+open, but their metadata display and search stay incomplete until they are
+updated. When you have any, the V2 workspace shows an **Update older documents**
+notice above the list:
+- **Update now**: Updates them and says how it went. The list is held still
+  while it runs and is read again when it ends.
+- **Maybe later**: Hides the notice until you open Documents again.
+
+The update clears the title, authors, keywords and abstract of each document it
+updates, as the classic workspace's update does, so extract or edit those
+afterwards. In a group or public workspace the same notice is offered only to
+the people who manage its documents. Nothing is updated until you choose
+**Update now**.
 
 ### Version Management
 When uploading a document with the same name:

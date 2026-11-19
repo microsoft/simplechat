@@ -25,10 +25,11 @@ error, not evidence that the task can be answered without gathering information.
 Every plan uses the Gather / Reason / Render contract. There is one planner prompt,
 ``PLANNER_SYSTEM_PROMPT``, and one validator.
 
-Version: 0.261.413
+Version: 0.261.437
 Gathered results must be read, and an action's chart reaches the answer, in: 0.261.293
 Empty-history clarification continuation fixed in: 0.261.367
 Selected-document planning recovery and debug diagnostics added in: 0.261.413
+Referenced failed-turn source identity context added in: 0.261.437
 """
 
 import hashlib
@@ -45,7 +46,9 @@ from config import cognitive_services_scope
 from functions_action_manifest import is_document_search_action
 from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_document_analysis_results import narrative_analysis_options
-from functions_orchestration_context import conversation_reference_messages, resolve_elicitation_candidates
+from functions_orchestration_context import (
+    conversation_reference_messages, exact_requested_source_matches, resolve_elicitation_candidates,
+)
 from functions_orchestration_deliverables import build_deliverable_availability
 from functions_orchestration_events import build_model_reasoning_metadata
 from functions_orchestration_result_contracts import InputBinding
@@ -70,7 +73,6 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_schema import (
     PLAN_BUDGET_EXCEEDED_CODE,
-    PLAN_HARD_MAX_STEPS,
     WORKFLOW_BLUEPRINT_INVALID_CODE,
     WORKFLOW_HANDOFF_INVALID_CODE,
     WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE,
@@ -78,11 +80,13 @@ from functions_orchestration_schema import (
     WORKFLOW_RUN_INVALID_CODE,
     PlanValidationError,
     available_information_plan,
+    effective_plan_step_limit,
     effective_plan_document_ids,
     normalize_elicitation,
     normalize_plan,
     plan_document_ids,
     validate_plan_document_source_kinds,
+    validate_plan_native_source_schemas,
     validate_plan_requirements,
     plan_contract_version,
 )
@@ -131,7 +135,7 @@ DRAFT_CONTRACT_REPAIR_CODES = frozenset({
 REPAIRABLE_PLAN_CODES = frozenset({
     'deliverables_invalid', 'source_kind_invalid', 'source_binding_required',
     'analysis_options_invalid', 'selected_requirements_missing',
-    'conversation_retrieval_conflict', *WORKFLOW_REPAIR_CODES,
+    'conversation_retrieval_conflict', 'result_step_limit', *WORKFLOW_REPAIR_CODES,
     *WORKFLOW_RUN_REPAIR_CODES, *WORKFLOW_RESULTS_REPAIR_CODES,
     *DRAFT_CONTRACT_REPAIR_CODES,
 })
@@ -252,9 +256,13 @@ class PlannerError(RuntimeError):
 class PlannerResponseError(PlannerError):
     """A completion was refused, absent, or incomplete rather than malformed JSON."""
 
-    def __init__(self, reason):
+    def __init__(self, reason, *, finish_reason=None):
         super().__init__('The model did not return a complete response.')
         self.reason = reason
+        self.finish_reason = (
+            finish_reason if finish_reason in ('stop', 'length', 'tool_calls', 'function_call', 'content_filter')
+            else 'other' if finish_reason is not None else None
+        )
 
 
 class ConversationResolutionError(PlannerError):
@@ -682,10 +690,15 @@ rows remains part of that knowledge step.
 
 An action whose catalog says document_binding_supported can read selected workspace
 documents directly, including their available native metadata. Bind its exact source IDs
-in arguments.document_ids and bind its prepared output to compose. Do not add a redundant
+in arguments.document_ids and bind its prepared output to compose. Copy action_ref exactly
+from the admitted action catalog; display names and function names are not action references.
+Do not construct a reference or assume an unavailable action exists. Do not add a redundant
 Search or Analyze step just to declare source use. The server confines the action's
 document reads to that binding and current permissions. Other actions cannot declare
 document_ids, and mentioning an ID or filename in task text is not a source binding.
+For a document-bound action, declare document_read_mode as content, native, or mixed.
+This typed purpose selects compatible content/native inspection functions; task wording
+is not an authorization or capability test. Content mode must not request native properties.
 
 Document Search accessibility reports supply native structure, saved properties and explicit
 field states, not rendered page images or a comparison of all visible content against tags.
@@ -705,6 +718,32 @@ do not admit native tabular inputs. To combine the rows of several tabular sourc
 table or file, use tabular_merge with every one of those sources, never compose; it appends
 rows and cannot match rows on a key, so ask when the user may mean that. When their columns
 may differ, choose union, aliases or exclusion, or inspect them with tabular_inspect first.
+For keyed cross-file calculations, dated lookups or grouped totals, use tabular_analyze
+with native_operation="relate" and a complete tabular-relate-v1 relational_spec, not a
+Document Search action or model arithmetic in compose. Bind the exact datasets by alias
+and document_id in the same order as arguments.document_ids. Columns are alias.header;
+datasets[].columns, when supplied, must be the complete ordered native header, including
+unused fields such as exercise labels and evidence rules. It is a source-schema assertion,
+not a projection. Copy the exact inspected header or omit that optional assertion when
+unknown; use a project step and output expressions to select the needed fields. Never
+guess a header from sample rows or remove source columns merely because they are not used.
+join how/cardinality/on and effective-date boundaries are explicit. Use a named table or
+an explicit cell_range/header_row when a worksheet contains separate data regions. CSV
+data has neither native accessibility metadata nor worksheet properties. Derived fields
+and output projection use deterministic tabular-transform-v2 expressions. Declare records,
+lineage and coverage outputs. Every compose step consuming tabular results must declare
+tabular_requirement with mode overview, complete_records or calculation and the exact
+selected document IDs. complete_records binds retained rows; calculation binds records,
+lineage and coverage from one tabular_analyze relate producer. Search previews and
+tabular_inspect schema results never satisfy those complete modes. Compose explains those
+computed records; render_file can export records with an exact-tabular profile. Never
+present an append/union as a keyed reconciliation. Mixed native-layout and data work needs
+separately compatible steps.
+For a Word comment-disposition export, bind the complete prepared output from one
+document_search native_section=comments reader as annotation_provenance_input. Declare
+one records-v1 output with comment_thread_id, comment_author, comment_date, reply_ids
+and comment_replies. The server matches exact authorized root IDs and projects native
+author/date/reply metadata; never recreate or infer it in prose.
 For mixed narrative/tabular comparisons, prepare each
 source with compatible offered capabilities and compose their named results. Ask each
 preparation step only for its own sources' contribution, such as values, periods, units and
@@ -771,6 +810,10 @@ by itself require research. Read the earlier runs, but the ledger records activi
 evidence: reuse a previous answer for transformations or conversational references when its
 text is actually supplied, and gather again when a requested fact is missing or needs current
 evidence. Earlier assistant claims do not establish current facts or opening hours.
+candidate_documents is a bounded, non-exhaustive relevance list, not a workspace inventory:
+absence from suggestions does not establish that a file is missing or inaccessible.
+Earlier requested_sources preserve source identities even when a run failed; they are not
+successful documents_touched or evidence. Only currently reauthorized selections may be read.
 When source_policy is conversation_only, use the selected historical messages for the
 transformation; do not search workspaces or the web, or invent a document audit.
 conversation_results associates a selected assistant message with its retained answer alias.
@@ -856,7 +899,12 @@ produces, and never state a limitation only in "assumptions": every limitation o
 asked for is an unavailable deliverable. Step titles describe the work each step actually does;
 only a render_file step creates or saves a file.
 
-Files. A requested file is delivered only by render_file: prepare its complete content with
+Files. Declare a file deliverable only when the user asks to create, save, export, download or
+receive a file, or names a file format as what they want to receive. Showing, listing, comparing,
+quoting or explaining what a document, slide or deck contains is an answer in the chat, not a new
+file or deck: deliver it in the final_response answer with its source references, and offer a file
+only as an optional suggestion. Plan an edit or a new document from a reference only when the user
+asks for one. A requested file is delivered only by render_file: prepare its complete content with
 compose, then render it, following capability_availability.deliverables.recipes (records-v1 with
 explicit columns for CSV/XLSX; markdown-v1 for DOCX/PDF; the prepared slide deck for PPTX). The
 compose step is told that its output becomes the file, so it writes the finished content.
@@ -929,8 +977,7 @@ def build_planner_messages(
     The context is passed as JSON rather than prose because it is data the model has to
     read precisely -- document ids especially. A prose rendering invites paraphrase, and a
     paraphrased document id is a plan step that fails validation. ``plan_limits`` is the
-    rendered Plan limits section, passed only when the request may hand work off; without it the
-    system prompt is exactly what it always was.
+    rendered Plan limits section, including the effective bounds for this request.
     """
     payload = dict(planner_context or {})
     if edit_context is not None:
@@ -1085,9 +1132,9 @@ def _call_planner(
     if require_complete_response:
         finish_reason = getattr(choice, 'finish_reason', None)
         if finish_reason == 'content_filter' or getattr(choice.message, 'refusal', None):
-            raise PlannerResponseError('model_refusal')
+            raise PlannerResponseError('model_refusal', finish_reason=finish_reason)
         if finish_reason not in (None, 'stop'):
-            raise PlannerResponseError('incomplete_completion')
+            raise PlannerResponseError('incomplete_completion', finish_reason=finish_reason)
         if not choice.message.content:
             raise PlannerResponseError('empty_completion')
 
@@ -1102,14 +1149,20 @@ Do not answer the request, call tools, or add outside facts. Return one JSON obj
   "resolved_message": "<a concise standalone version of the latest request>",
   "message_ids": ["<IDs of supplied historical messages needed for this request>"],
   "requires_retrieval": true | false,
+  "source_requirement": "historical_originals" | "conversation_only" | "none",
   "clarification": "<one focused question only when the reference really is unresolved>"
 }
 
-Include all five fields. Use an empty string "" for clarification when no question is
+Include all six fields. Use an empty string "" for clarification when no question is
 needed; a nonempty clarification is required only for relationship "clarification".
 requires_retrieval must be a JSON boolean, and message_ids must be an array of exact
 supplied IDs. A follow_up needs at least one historical ID unless clarification answers
 supply the missing context.
+source_requirement records why the selected historical messages matter. Use
+"historical_originals" only when the requested work or question must read the exact original
+source set, "conversation_only" for an available-answer transformation or discussion, and
+"none" when no historical source is needed. A false retrieval flag never erases
+"historical_originals"; the server uses this structured field, not request keywords.
 
 Resolve pronouns, "which", "those", omitted subjects, and follow-ups against both the user's
 earlier requests and the assistant's actual answers. Preserve relevant constraints such as
@@ -1164,6 +1217,13 @@ answer, preserving their roles. Do not require retrieval merely because a previe
 shortened. A transformation of pasted or prior content uses conversation content first;
 if its target is missing or ambiguous, ask which text/message rather than searching
 workspaces. Earlier assistant assertions are not evidence of external facts.
+previous_source_requests records exact source identities requested by visible earlier
+turns, independently of whether reading them succeeded. For a clear same-source follow-up
+that needs fresh evidence, reference that prior turn's supplied message IDs rather than
+asking the user to attach its entire source set again. These identities are not file
+contents, successful reads, or current permissions: the server must reauthorize them.
+Never apply an earlier selection to a new topic, replace a new explicit selection, or
+infer that a source is unavailable merely because it was not suggested by a bounded search.
 If history is truncated, do not pretend to know what was omitted."""
 
 
@@ -1186,6 +1246,14 @@ def _normalize_request_resolution(parsed, valid_ids, *, has_answers=False):
         raise ConversationResolutionError(reason='duplicate_message_ids')
     if not isinstance(parsed.get('requires_retrieval'), bool):
         raise ConversationResolutionError(reason='invalid_retrieval_flag')
+    source_requirement = parsed.get('source_requirement')
+    if source_requirement is None:
+        source_requirement = (
+            'historical_originals' if parsed['requires_retrieval'] else
+            'conversation_only' if relationship == 'follow_up' else 'none'
+        )
+    if source_requirement not in ('historical_originals', 'conversation_only', 'none'):
+        raise ConversationResolutionError(reason='invalid_source_requirement')
 
     clarification = parsed.get('clarification', '')
     # JSON null also means "no question", but cannot satisfy a requested clarification.
@@ -1204,13 +1272,15 @@ def _normalize_request_resolution(parsed, valid_ids, *, has_answers=False):
         'resolved_message': resolved.strip(),
         'message_ids': message_ids,
         'requires_retrieval': parsed['requires_retrieval'],
+        'source_requirement': source_requirement,
         'clarification': clarification.strip(),
     }
 
 
 def resolve_conversation_request(
     user_message, snapshot, settings=None, answered_questions=None, planner_model=None,
-    *, seeds=None, memory_context=None, selected_sources=None, conversation_id=None, turn_id=None,
+    *, seeds=None, memory_context=None, selected_sources=None, previous_source_requests=None,
+    conversation_id=None, turn_id=None,
 ):
     """Resolve context before retrieval, using the captured model binding when supplied."""
     message = str(user_message or '').strip()
@@ -1245,6 +1315,18 @@ def resolve_conversation_request(
         },
         'selected_sources': resolver_source_context(selected_sources),
         'conversation_attachments': deepcopy((seeds or {}).get('conversation_attachments') or []),
+        'previous_source_requests': [
+            {
+                'run_id': entry.get('run_id'), 'status': entry.get('status'),
+                'message_ids': [identifier for identifier in entry.get('source_message_ids') or []
+                                if identifier in {item['id'] for item in history}],
+                'document_ids': (entry.get('requested_sources') or {}).get('document_ids') or [],
+                'source_count': (entry.get('requested_sources') or {}).get('source_count', 0),
+                'truncated': bool((entry.get('requested_sources') or {}).get('truncated')),
+            }
+            for entry in previous_source_requests or []
+            if set(entry.get('source_message_ids') or []).intersection(item['id'] for item in history)
+        ],
     }
     try:
         if planner_model is not None:
@@ -1299,6 +1381,16 @@ def resolve_conversation_request(
             )
             if resolution['relationship'] == 'clarification':
                 validate_source_clarification(parsed.get('clarification_context'), selected_sources)
+                matched = exact_requested_source_matches(
+                    resolution, {'runs': previous_source_requests or []},
+                )
+                if matched and (
+                    parsed.get('clarification_context') or {}
+                ).get('reason') in {'source_content', 'source_selection'}:
+                    resolution['source_requirement'] = 'historical_originals'
+                resolution['clarification_context'] = deepcopy(
+                    parsed.get('clarification_context'),
+                )
             break
         except (ConversationResolutionError, SourceClarificationError) as exc:
             log_event(
@@ -1328,8 +1420,20 @@ def resolve_conversation_request(
     if resolution['relationship'] == 'new_topic' and not answered_questions:
         resolution['resolved_message'] = message
     if needs_source_resolution and resolution['relationship'] != 'clarification':
-        # Source sufficiency is semantic; unrelated retrieval still cannot supply the source.
-        resolution['requires_retrieval'] = False
+        # "Review that again" can refer to a failed selected-file read, not a
+        # transformation of an available answer. Its exact sources are reauthorized next.
+        failed_source_continuation = (
+            resolution['relationship'] == 'follow_up' and resolution['requires_retrieval']
+            and any(
+                entry.get('status') == 'failed'
+                and (entry.get('requested_sources') or {}).get('source_count')
+                and set(resolution['message_ids']).intersection(entry.get('source_message_ids') or [])
+                for entry in previous_source_requests or []
+            )
+        )
+        if not failed_source_continuation:
+            # Unrelated retrieval still cannot supply a missing conversational source.
+            resolution['requires_retrieval'] = False
     if resolution['relationship'] == 'follow_up' and resolution['requires_retrieval'] is False:
         selected = set(resolution['message_ids'])
         # The user supplied the source and constraints; an assistant answer alone
@@ -1411,6 +1515,23 @@ def plan_repair_message(error, *, handoff_present=False):
             'Preserve every selected document, requested operation and deliverable, and bind the actual '
             'findings to the answer. Return the complete corrected plan as one JSON object.'
         )
+    if error.code == 'result_step_limit':
+        count = error.diagnostics.get('plan_step_count')
+        limit = error.diagnostics.get('plan_step_limit')
+        measured = (
+            f' The draft has {count} steps, but the effective limit is {limit}.'
+            if isinstance(count, int) and isinstance(limit, int) else ''
+        )
+        return (
+            f'The server rejected the plan because it exceeds the step budget.{measured} '
+            'Reduce the plan without dropping required selected work or deliverables. '
+            'Return the complete corrected plan as one JSON object.'
+            + (
+                ' When the work cannot fit, use one offered workflow_handoff step instead of '
+                'the steps that do not fit.'
+                if handoff_present else ' Hand-off is not available for this request.'
+            )
+        )
     if error.code == 'selected_requirements_missing':
         return (
             f'The plan omitted selected work ({error.rule}). Recheck required_capabilities and every '
@@ -1436,11 +1557,18 @@ def plan_repair_message(error, *, handoff_present=False):
             'Return the complete corrected plan as one JSON object.'
         )
     if error.code in DRAFT_CONTRACT_REPAIR_CODES:
+        tabular_guidance = (
+            'For tabular_analyze, correct only the listed location by the relational_spec column rules and '
+            'expression grammar in that capability\'s arguments schema. Do not weaken the calculation or '
+            'replace it with source previews. '
+            if error.diagnostics.get('capability_id') == 'tabular_analyze' else ''
+        )
         return (
             f'The server rejected the step contract ({error.code}, {error.rule}). '
             f'Content-free diagnostics: {json.dumps(error.diagnostics, sort_keys=True)}. '
             'Recheck every step against the supplied capability arguments, required named inputs, '
             'result_outputs, optional_result_outputs and argument-dependent result_output_variants. '
+            f'{tabular_guidance}'
             'Prefer omitted outputs for fixed producers so the server supplies their required outputs. '
             'Analyze defaults to source_observations, whose optional records projection is unavailable. '
             'If the requested work needs records, explicitly choose analysis-options-v2 with '
@@ -1532,29 +1660,29 @@ def _plan_duration_text(seconds):
 
 
 def _plan_limits_section(settings, capabilities, handoff):
-    """The "Plan limits" prompt section for a request that may hand work off.
+    """The effective Plan limits prompt section.
 
     It states what one chat plan may do, the same budgets the validator enforces, so the planner can
-    tell when a request needs a workflow_handoff step instead: the step budget, the total run time,
-    each offered document action's per-step document limit, the hand-off's own bounds, and which
-    agents can run hand-off tasks. Called only when hand-off is offered. Never raises; a limit that
-    cannot be read is left out.
+    stay within the step budget, total run time and each offered document action's per-step limit.
+    Hand-off bounds and agents are included only when hand-off is actually offered. Never raises; a
+    limit that cannot be read is left out.
     """
     settings = settings if isinstance(settings, dict) else {}
     handoff = handoff if isinstance(handoff, dict) else {}
-    try:
-        max_steps = min(PLAN_HARD_MAX_STEPS, max(1, int(settings.get('chat_orchestration_max_steps') or 8)))
-    except (TypeError, ValueError):
-        max_steps = 8
-    # The timing policy is pure; it is loaded only when hand-off is offered.
+    max_steps = effective_plan_step_limit(settings)
+    handoff_offered = isinstance(handoff, dict) and bool(handoff)
+    # The timing policy is pure and stays independent of application bootstrap.
     from functions_orchestration_timing import execution_timeout_seconds
 
     lines = [
-        'Plan limits. One chat plan must fit all of these; a request that needs more is what a '
-        'workflow_handoff step is for.',
+        'Plan limits. One chat plan must fit all of these.',
         f'- At most {_count_text(max_steps, "step")} in one plan.',
         f'- At most {_plan_duration_text(execution_timeout_seconds(settings))} for the whole plan to run.',
     ]
+    if not handoff_offered:
+        lines.append(
+            '- If the requested work cannot fit these limits, report the precise limit instead of adding steps.'
+        )
     for capability in capabilities or ():
         if not isinstance(capability, dict) or not capability.get('document_action_type'):
             continue
@@ -1564,6 +1692,8 @@ def _plan_limits_section(settings, capabilities, handoff):
             continue
         if limit > 0:
             lines.append(f'- At most {_count_text(limit, "document")} in one {capability.get("id")} step.')
+    if not handoff_offered:
+        return '\n'.join(lines)
     documents_max, max_loop_items = handoff.get('documents_max'), handoff.get('max_loop_items')
     if type(documents_max) is int and type(max_loop_items) is int:
         lines.append(
@@ -1617,6 +1747,26 @@ def _workflow_planning_for(request_context, available_ids=()):
         if handoff is not None:
             projection = {**(projection or {}), 'handoff': handoff}
     return (planning if projection is not None else {}), projection
+
+
+def _can_repair_document_action_reference(error, proposal, actions):
+    """A rejected document Gather reference can be corrected before any action executes."""
+    if error.code != 'capability_unavailable' or error.rule != 'action_unavailable':
+        return False
+    if not any(is_document_search_action(action) for action in actions):
+        return False
+    available = {action.get('action_ref') for action in actions}
+    rejected = [
+        step.get('arguments') or {} for step in proposal.get('steps') or []
+        if isinstance(step, dict) and step.get('enabled', True)
+        and step.get('capability_id') == 'action_invoke'
+        and isinstance(step.get('arguments'), dict)
+        and step['arguments'].get('action_ref') not in available
+    ]
+    return bool(rejected) and all(
+        arguments.get('document_ids') and arguments.get('execution_intent') in (None, 'gather')
+        for arguments in rejected
+    )
 
 
 def _with_analysis_semantics(raw, edit_context=None):
@@ -1830,6 +1980,7 @@ def plan_request(
                 'attempt': attempt,
                 'error_type': type(error).__name__ if error is not None else None,
                 'response_failure': error.reason if isinstance(error, PlannerResponseError) else None,
+                'response_finish_reason': error.finish_reason if isinstance(error, PlannerResponseError) else None,
                 'validation_code': getattr(error, 'code', None) if isinstance(error, PlanValidationError) else None,
                 'validation_rule': getattr(error, 'rule', None) if isinstance(error, PlanValidationError) else None,
                 **(error.diagnostics if isinstance(error, PlanValidationError) else {}),
@@ -1990,12 +2141,29 @@ def plan_request(
             level=logging.INFO, extra={
                 **correlation, 'reason': error.code, 'attempt': attempt, 'revision': revision,
                 'stage': stage, 'validation_code': error.code, 'validation_rule': error.rule,
+                **(error.diagnostics if isinstance(error, PlanValidationError) else {}),
             },
         )
         return [
             *messages,
             {'role': 'assistant', 'content': reply},
             {'role': 'user', 'content': plan_repair_message(error, handoff_present=handoff_present)},
+        ]
+
+    def _protocol_correction_messages(reason, guidance, stage, attempt, reply):
+        _diagnose(stage, current_proposal, attempt=attempt)
+        log_event(
+            '[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected plan.',
+            level=logging.INFO, extra={
+                **correlation, 'reason': reason, 'attempt': attempt, 'revision': revision,
+                'stage': stage, 'validation_code': 'plan_structure_invalid',
+                'validation_rule': reason,
+            },
+        )
+        return [
+            *messages,
+            {'role': 'assistant', 'content': reply},
+            {'role': 'user', 'content': guidance},
         ]
 
     def _normalize(raw, capability_ids, availability, selected_image, **options):
@@ -2068,7 +2236,10 @@ def plan_request(
         )
         validate_plan_document_source_kinds(
             normalized, document_source_kinds, document_source_formats=document_source_formats,
+            selected_document_ids=(seeds or {}).get('document_ids'),
+            required_capabilities=required_capability_ids(seeds),
         )
+        validate_plan_native_source_schemas(normalized, source_candidates)
         normalized['validation']['repairs'].extend(local_repairs)
         return normalized
 
@@ -2104,9 +2275,10 @@ def plan_request(
     messages = build_planner_messages(
         context, replan_hint=replan_hint, edit_context=edit_context,
         contract_version=contract_version,
-        **({'plan_limits': _plan_limits_section(
-            settings, capabilities, context['workflow_planning']['handoff'],
-        )} if handoff_offered else {}),
+        plan_limits=_plan_limits_section(
+            settings, capabilities,
+            context.get('workflow_planning', {}).get('handoff') if handoff_offered else None,
+        ),
     )
     if context.get('selected_sources'):
         messages[0] = {
@@ -2133,7 +2305,15 @@ def plan_request(
                     token_usage[field] = token_usage.get(field, 0) + value
 
         parsed = extract_planner_json(reply)
-        if not parsed:
+        if not isinstance(parsed, dict) or not parsed:
+            if attempt <= PLAN_REPAIR_ATTEMPTS:
+                messages = _protocol_correction_messages(
+                    'unparseable_plan', (
+                        'The previous response was not a complete planner JSON object. '
+                        'Return exactly one complete corrected JSON plan for the unchanged request.'
+                    ), 'plan_parsing', attempt, reply,
+                )
+                continue
             return _failure('unparseable_plan', stage='plan_parsing', attempt=attempt)
         current_proposal = parsed
         _diagnose('plan_proposal', parsed, attempt=attempt)
@@ -2146,6 +2326,14 @@ def plan_request(
 
         kind = str(parsed.get('kind') or ('plan' if isinstance(parsed.get('steps'), list) else '')).strip().lower()
         if kind not in ('plan', 'elicitation') and not (edit_context is not None and kind == 'message'):
+            if attempt <= PLAN_REPAIR_ATTEMPTS:
+                messages = _protocol_correction_messages(
+                    'invalid_planner_response_kind', (
+                        'The response kind is unsupported. Return one complete JSON plan, or an '
+                        'allowed elicitation, for the unchanged request and authorized selections.'
+                    ), 'plan_protocol', attempt, reply,
+                )
+                continue
             return _failure('invalid_planner_response_kind')
 
         if edit_context is not None:
@@ -2173,6 +2361,16 @@ def plan_request(
                 validate_source_clarification(
                     parsed.get('clarification_context'), context.get('selected_sources'),
                 )
+                resolution = context.get('request_resolution') or {}
+                referenced = exact_requested_source_matches(
+                    resolution, context.get('earlier_runs') or {},
+                )
+                if (
+                    referenced and not context.get('selected_sources')
+                    and (parsed.get('clarification_context') or {}).get('reason')
+                    in {'source_content', 'source_selection'}
+                ):
+                    raise SourceClarificationError('referenced_source_set_requires_restore')
                 if context.get('selected_sources'):
                     log_event(
                         '[ORCHESTRATION_PLANNER] Prepared a selected-source clarification.',
@@ -2191,6 +2389,10 @@ def plan_request(
                         'selected_source_count': len(context.get('selected_sources') or []),
                     },
                 )
+                if exc.reason == 'referenced_source_set_requires_restore':
+                    return _failure(
+                        exc.reason, exc, stage='plan_clarification', attempt=attempt,
+                    )
                 if attempt > PLAN_REPAIR_ATTEMPTS:
                     return _failure(exc.reason, exc, stage='plan_clarification', attempt=attempt)
                 messages = [*messages, {
@@ -2265,6 +2467,14 @@ def plan_request(
 
         raw_steps = parsed.get('steps')
         if not isinstance(raw_steps, list) or not raw_steps:
+            if attempt <= PLAN_REPAIR_ATTEMPTS:
+                messages = _protocol_correction_messages(
+                    'invalid_plan_work', (
+                        'The response must contain a nonempty steps array. Return the complete '
+                        'corrected JSON plan for the unchanged request and authorized selections.'
+                    ), 'plan_protocol', attempt, reply,
+                )
+                continue
             return _failure('invalid_plan_work')
 
         if edit_context is not None and authorized_document_ids is not None:
@@ -2294,6 +2504,7 @@ def plan_request(
             )
             repairable = (
                 exc.code in REPAIRABLE_PLAN_CODES
+                or _can_repair_document_action_reference(exc, current_proposal, actions)
                 or (handoff_offered and exc.code in HANDOFF_REPAIRABLE_PLAN_CODES)
             ) and not context_failed
             if repairable and attempt <= PLAN_REPAIR_ATTEMPTS:

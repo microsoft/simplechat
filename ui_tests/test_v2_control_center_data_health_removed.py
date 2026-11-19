@@ -134,6 +134,9 @@ class ControlCenterFixture:
             route.fulfill(json=dashboard_insights())
         elif path == "/api/admin/control-center/activity-trends" and request.method == "GET":
             route.fulfill(json={"success": True, "activity_data": {}})
+        elif path == "/api/admin/control-center/refresh-status" and request.method == "GET":
+            # The refresh strip every section shows a full Control Center administrator.
+            route.fulfill(json={"last_refresh": None, "auto_refresh_enabled": False})
         else:
             self.unexpected.append(f"{request.method} {path}")
             route.fulfill(status=404, json={"error": "Unexpected fixture request."})

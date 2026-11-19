@@ -104,9 +104,10 @@ Beyond a field's type, six optional descriptors shape how a section reads:
     the opposite direction: it names a prerequisite a field waits on. The page
     says where the section sits and offers a jump to it, or a link to the
     classic page when ``"classic_only": True`` says only that page draws what
-    the setting changes. The Document Access Index diagnostics switch points at
-    DAI Metrics; the Latest Features destination points at the User-Facing
-    Latest Features choices it publishes.
+    the setting changes (no declaration needs that today). The Document Access
+    Index diagnostics switch points at DAI Metrics, whose card draws the
+    diagnostics itself; the Latest Features destination points at the
+    User-Facing Latest Features choices it publishes.
 
 The Appearance, Agents & Actions, Chat, Data Lifecycle, Governance, Help, Knowledge,
 Operations, Scale, Workflow, Workspaces and Security groups are described in full.
@@ -149,6 +150,7 @@ from admin_settings_secret_utils import (
     resolve_admin_settings_secret_value,
 )
 from functions_ai_connections import supports_model_capability
+from functions_color_schemes import ColorSchemeError, normalize_color_scheme
 from functions_ai_notice import (
     AI_NOTICE_MAX_MESSAGE_LENGTH,
     normalize_ai_notice_frequency,
@@ -700,6 +702,29 @@ ADMIN_SETTINGS_FIELDS = {
     ],
     "appearance-section": [
         {
+            "key": "ui_mode_policy",
+            "type": "select",
+            "label": "Available interfaces",
+            "help": "Applies to everyone, including admins. When both are available, users can switch from their account menu.",
+            "default": "both",
+            "options": [
+                {"value": "both", "label": "Legacy and modern"},
+                {"value": "modern", "label": "Modern only"},
+                {"value": "classic", "label": "Legacy only"},
+            ],
+        },
+        {
+            "key": "ui_default_mode",
+            "type": "select",
+            "label": "Default interface",
+            "help": "Used when both interfaces are available and the user has not chosen one. A missing modern bundle temporarily falls back to legacy.",
+            "default": "modern",
+            "options": [
+                {"value": "modern", "label": "Modern"},
+                {"value": "classic", "label": "Legacy"},
+            ],
+        },
+        {
             "key": "enable_dark_mode_default",
             "type": "switch",
             "label": "Enable Dark Mode by Default",
@@ -712,6 +737,39 @@ ADMIN_SETTINGS_FIELDS = {
             "label": "Enable Left Nav by Default",
             "help": "Users can still toggle the sidebar individually.",
             "default": True,
+        },
+        {
+            # Saved through the settings PATCH and validated by
+            # _COMPONENT_VALUE_VALIDATORS. None means the SimpleChat default colors.
+            "key": "v2_color_scheme",
+            "type": "component",
+            "component": "color-scheme-editor",
+            "label": "Color scheme",
+            "help": "The colors everyone sees in light mode and dark mode in the modern interface. Changes show in the preview before you save.",
+            "default": None,
+        },
+        {
+            "key": "allow_user_custom_color_modes",
+            "type": "switch",
+            "label": "Let users create a custom color mode",
+            "help": "On by default. When off, users choose only Light, Dark, or Match system.",
+            "default": True,
+        },
+        {
+            "key": "allow_user_theme_cards",
+            "type": "switch",
+            "label": "Allow Theme Card sharing and import",
+            "help": "Users can download their color mode as a Theme Card image and import cards others share. Every card is checked before it is applied, and edited cards are rejected.",
+            "default": True,
+            "depends_on": {"key": "allow_user_custom_color_modes", "equals": True},
+        },
+        {
+            "key": "require_readable_custom_colors",
+            "type": "switch",
+            "label": "Require readable contrast (WCAG AA)",
+            "help": "A custom color mode can't be saved if its text falls below 4.5:1 against its background.",
+            "default": True,
+            "depends_on": {"key": "allow_user_custom_color_modes", "equals": True},
         },
     ],
     "classification-banner-section": [
@@ -3755,6 +3813,21 @@ ADMIN_SETTINGS_FIELDS = {
             "group": {"id": "source-types", "label": "Source types", "variant": "behavior"},
             "depends_on": {"key": "enable_file_sync", "equals": True},
         },
+        {
+            # Sources for a user, a group or a public workspace that someone else owns. It
+            # reads and writes through /api/admin/file-sync, never the settings draft, so each
+            # change saves on its own, and it follows the saved switches because the server
+            # refuses a kind of workspace that is off.
+            "type": "component",
+            "component": "file-sync-target-manager",
+            "label": "Manage sources for someone else",
+            "help": (
+                "Set up, change or remove the file sources of a user, a group or a public "
+                "workspace on their behalf. Search by name or paste an ID. Each kind of "
+                "workspace follows its switch above, as saved."
+            ),
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
     ],
     "permissions-section": [
         {
@@ -4516,10 +4589,10 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "chat_orchestration_max_replans",
             "type": "number",
-            "label": "Maximum Re-plans Per Run",
+            "label": "Maximum Retained Runtime Hints",
             "help": (
-                "How often a step may send the plan back to be reconsidered after "
-                "discovering something. Zero means a plan is followed as written."
+                "Limits recovery hints collected in run-summary metadata. Zero disables summary "
+                "hint collection. This does not revise or run a plan automatically."
             ),
             "default": 2,
             "min": 0,
@@ -4531,7 +4604,7 @@ ADMIN_SETTINGS_FIELDS = {
             "key": "enable_chat_orchestration_completeness_check",
             "type": "switch",
             "label": "Check Answer Completeness",
-            "help": "Independently assess requested content before delivery and correct omissions using available evidence. Adds model calls; this is model-assisted, not a deterministic guarantee.",
+            "help": "Use a separate model-assisted review to assess requested content before delivery and correct omissions using available evidence. Adds model calls; this is not a deterministic guarantee.",
             "default": True,
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },
@@ -8508,6 +8581,17 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
         },
     ],
+    "support-log-export-section": [
+        {
+            "type": "component",
+            "component": "support-log-export",
+            "label": "Support Log Export",
+            "help": (
+                "Collect retained diagnostics by user, conversation and time into a private, "
+                "redacted support ZIP. Whole personal-conversation snapshots need their owner's approval."
+            ),
+        },
+    ],
     "debug-logging-section": [
         {
             "key": "enable_debug_logging",
@@ -8595,9 +8679,6 @@ ADMIN_SETTINGS_FIELDS = {
             "related_section": {
                 "section_id": "document-access-index-section",
                 "label": "DAI Metrics",
-                # The diagnostics this reveals are drawn by the server-rendered pane
-                # only; V2's card for the section holds its switches, not them.
-                "classic_only": True,
             },
         },
     ],
@@ -10072,6 +10153,14 @@ def _validate_extraction_model_selection(value):
     }, None
 
 
+def _validate_color_scheme(value):
+    """Return ``(scheme, error)`` for the V2 light and dark color scheme."""
+    try:
+        return normalize_color_scheme(value), None
+    except ColorSchemeError as error:
+        return None, str(error)
+
+
 # Component-backed keys that are saved through the settings PATCH. A component
 # normally owns its own persistence, so the type-driven path refuses a write to one;
 # these are the exceptions. Each validator returns ``(value, error)``, which is what
@@ -10080,6 +10169,7 @@ def _validate_extraction_model_selection(value):
 _COMPONENT_VALUE_VALIDATORS = {
     "retention_policy_execution_hour": _validate_retention_execution_hour,
     "document_classification_categories": _normalize_document_classification_categories,
+    "v2_color_scheme": _validate_color_scheme,
     "metadata_extraction_model": _validate_extraction_model_name,
     "metadata_extraction_model_selection": _validate_extraction_model_selection,
     "multimodal_vision_model": _validate_extraction_model_name,
@@ -10625,6 +10715,14 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     }
 
     for key, value in updates.items():
+        if key in ("ui_mode_policy", "ui_default_mode"):
+            from functions_ui_mode import validate_ui_setting
+
+            try:
+                normalized[key] = validate_ui_setting(key, value)
+            except ValueError:
+                errors[key] = "Choose a valid interface option."
+            continue
         if key in acknowledgement_keys:
             continue
 

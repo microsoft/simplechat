@@ -1,8 +1,10 @@
 # test_native_document_fidelity.py
 """Native source fidelity regression tests.
 
-Version: 0.261.424
+Version: 0.261.443
 Implemented in: 0.261.424
+Source-bound PDF annotation and OBJR text fidelity added in: 0.261.439
+Typed PDF /Lang, catalog-derived bookmark states and PowerPoint language facts added in: 0.261.443
 Native field states, content bindings, object identities and audit claims must
 survive the native parser, inventory and answer boundaries without source edits.
 """
@@ -13,10 +15,13 @@ import sys
 import zipfile
 from pathlib import Path
 
+import fitz
 import pytest
 from xml.etree import ElementTree as ET
 from pypdf import PdfWriter
-from pypdf.generic import ArrayObject, BooleanObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+from pypdf.generic import (
+    ArrayObject, BooleanObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject, TextStringObject,
+)
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -25,6 +30,10 @@ sys.path.insert(0, str(APP_ROOT))
 from native_document_evidence import drawing_native_fields, native_field  # noqa: E402
 from functions_accessibility import extract_office_accessibility_metadata, extract_pdf_accessibility_metadata  # noqa: E402
 from functions_office_media import extract_docx_comments  # noqa: E402
+from functions_native_document_inspection import inspect_native_document  # noqa: E402
+from functions_native_audit import build_native_audit  # noqa: E402
+from functions_pdf_native_evidence import pdf_content_references  # noqa: E402
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 SOURCE_HASHES = {
@@ -115,6 +124,329 @@ def test_pdf_raw_marked_content_does_not_create_a_logical_tree(native_source):
     assert not metadata["is_tagged"] and not metadata["has_struct_tree"]
     figures = [record for record in pages[1]["native_content"]["records"] if record.get("tag") == "/Figure"]
     assert [record["mcid"] for record in figures] == [10, 11]
+
+
+def catalog_pdf(tmp_path, *, language=None, outline=(), empty_outline=False):
+    writer = PdfWriter()
+    for _ in range(3):
+        writer.add_blank_page(width=612, height=792)
+    if language is not None:
+        writer.root_object[NameObject("/Lang")] = TextStringObject(language)
+    if empty_outline:
+        # What a producer leaves behind when every bookmark was deleted but the outline root was kept.
+        writer.get_outline_root()
+    last_top = None
+    for title, page_number, nested in outline:
+        if nested:
+            writer.add_outline_item(title, page_number, parent=last_top)
+        else:
+            last_top = writer.add_outline_item(title, page_number)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    writer.close()
+    path = tmp_path / "catalog.pdf"
+    path.write_bytes(buffer.getvalue())
+    return path
+
+
+def audit_for_pdf(path):
+    data = path.read_bytes()
+    document = {"id": "catalog", "file_name": path.name, "version": 1}
+    records = []
+    inspected = inspect_native_document(
+        document, data, ".pdf", section="all", page_size=200, max_bytes=65536, _audit_records=records,
+    )
+    audit = build_native_audit({
+        "document": document, "accessibility_metadata": inspected["metadata"],
+        "native_inspection": {"page": inspected["page"]},
+    }, _source_records=records)
+    return inspected, {fact["field"]: fact for fact in audit["facts"] if fact["field"] in ("language", "bookmarks")}
+
+
+def test_native_catalog_facts_version():
+    assert_app_version_at_least("0.261.443")
+
+
+@pytest.mark.parametrize("language,outline,language_state,bookmark_state", [
+    ("en-US", [("Overview", 0, False), ("Details", 1, False), ("Scope", 1, True)], "present_value", "present_value"),
+    (None, [], "absent", "absent"),
+    ("", [], "present_empty", "absent"),
+])
+def test_pdf_language_and_bookmarks_reach_the_canonical_facts_with_exact_states(
+    tmp_path, language, outline, language_state, bookmark_state,
+):
+    path = catalog_pdf(tmp_path, language=language, outline=outline)
+    original = path.read_bytes()
+    inspected, facts = audit_for_pdf(path)
+    properties = inspected["metadata"]["native_properties"]
+    assert properties["language"]["state"] == facts["language"]["state"] == language_state
+    assert properties["language"]["source"] == "/Root/Lang"
+    assert facts["language"]["value"] == (language if language_state != "absent" else None)
+    assert properties["bookmarks"]["state"] == facts["bookmarks"]["state"] == bookmark_state
+    assert facts["bookmarks"]["location"].endswith("/Root/Outlines")
+    if bookmark_state == "present_value":
+        value = facts["bookmarks"]["value"]
+        assert value["count"] == 3 and value["entries_truncated"] is False
+        assert [(entry["level"], entry["title"], entry["page_number"]) for entry in value["entries"]] == [
+            (1, "Overview", 1), (1, "Details", 2), (2, "Scope", 2),
+        ]
+    else:
+        assert facts["bookmarks"]["value"] is None
+    assert path.read_bytes() == original
+
+
+def test_pdf_language_and_bookmarks_survive_when_the_audit_reads_only_a_partial_page(tmp_path):
+    path = catalog_pdf(tmp_path, language="fr-CA", outline=[("Intro", 0, False)])
+    data = path.read_bytes()
+    document = {"id": "catalog", "file_name": path.name, "version": 1}
+    records = []
+    inspected = inspect_native_document(
+        document, data, ".pdf", section="all", page_size=1, max_bytes=2048, _audit_records=records,
+    )
+    assert inspected["page"]["has_more"] is True
+    audit = build_native_audit({
+        "document": document, "accessibility_metadata": inspected["metadata"],
+        "native_inspection": {"page": inspected["page"]},
+    }, _source_records=records)
+    states = {fact["field"]: (fact["state"], fact["value"]) for fact in audit["facts"] if fact["field"] in ("language", "bookmarks")}
+    assert states["language"] == ("present_value", "fr-CA")
+    assert states["bookmarks"][0] == "present_value" and audit["facts_omitted"] is False
+
+
+def test_unreadable_pdf_outline_is_inaccessible_not_absent(tmp_path, monkeypatch):
+    path = catalog_pdf(tmp_path, language="en-US", outline=[("Intro", 0, False)])
+
+    def unreadable(_path):
+        raise RuntimeError("outline reader unavailable")
+
+    monkeypatch.setattr(fitz, "open", unreadable)
+    metadata, _ = extract_pdf_accessibility_metadata(str(path))
+    assert metadata["native_properties"]["bookmarks"] == {
+        "state": "inaccessible", "value": None, "reason": "outline_unavailable", "source": "/Root/Outlines",
+    }
+    assert metadata["native_properties"]["language"]["value"] == "en-US"
+
+
+def raw_pdf(tmp_path, catalog_entry="", objects=None):
+    """A minimal PDF written exactly as given, for catalog shapes a PDF writer never emits."""
+    body = {
+        1: f"<< /Type /Catalog /Pages 2 0 R {catalog_entry} >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+        **(objects or {}),
+    }
+    data, offsets = bytearray(b"%PDF-1.7\n"), {}
+    for number in sorted(body):
+        offsets[number] = len(data)
+        data += f"{number} 0 obj\n{body[number]}\nendobj\n".encode()
+    size, xref = max(body) + 1, len(data)
+    data += f"xref\n0 {size}\n0000000000 65535 f \n".encode()
+    for number in range(1, size):
+        data += (f"{offsets[number]:010d} 00000 n \n" if number in offsets else "0000000000 65535 f \n").encode()
+    data += f"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    path = tmp_path / "raw.pdf"
+    path.write_bytes(bytes(data))
+    return path
+
+
+OUTLINES = "/Outlines 4 0 R"
+EMPTY_OUTLINE = {"count": 0, "entries": [], "entries_truncated": False}
+# Each case: catalog entry, extra objects, expected state, and the expected value or inaccessible reason.
+OUTLINE_CATALOGS = {
+    "no_outlines_key": ("", {}, "absent", None),
+    "empty_outline_with_zero_count": (OUTLINES, {4: "<< /Type /Outlines /Count 0 >>"}, "present_empty", EMPTY_OUTLINE),
+    "empty_outline_dictionary": (OUTLINES, {4: "<< >>"}, "present_empty", EMPTY_OUTLINE),
+    "outline_with_one_item": (OUTLINES, {
+        4: "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>",
+        5: "<< /Title (Intro) /Parent 4 0 R /Dest [3 0 R /Fit] >>",
+    }, "present_value", {"count": 1, "entries": [{"level": 1, "title": "Intro", "page_number": 1}], "entries_truncated": False}),
+    "count_without_a_first_item": (
+        OUTLINES, {4: "<< /Type /Outlines /Count 3 >>"}, "inaccessible", "outline_container_inconsistent",
+    ),
+    "outline_is_a_number": ("/Outlines 5", {}, "inaccessible", "outline_container_unreadable"),
+    "outline_is_an_array": ("/Outlines [1 2]", {}, "inaccessible", "outline_container_unreadable"),
+    "outline_is_null": ("/Outlines null", {}, "inaccessible", "outline_container_unreadable"),
+    "outline_reference_is_dangling": ("/Outlines 99 0 R", {}, "inaccessible", "outline_container_unreadable"),
+    "first_item_is_dangling": (
+        OUTLINES, {4: "<< /Type /Outlines /First 99 0 R /Count 1 >>"}, "inaccessible", "outline_first_item_unreadable",
+    ),
+    "first_item_is_not_a_dictionary": (
+        OUTLINES, {4: "<< /Type /Outlines /First 7 /Count 1 >>"}, "inaccessible", "outline_first_item_unreadable",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(OUTLINE_CATALOGS))
+def test_pdf_bookmark_state_comes_from_the_catalog_outline_not_from_the_entry_count(tmp_path, name):
+    entry, objects, state, expected = OUTLINE_CATALOGS[name]
+    path = raw_pdf(tmp_path, entry, objects)
+    original = path.read_bytes()
+    inspected, facts = audit_for_pdf(path)
+    field = inspected["metadata"]["native_properties"]["bookmarks"]
+    assert field["state"] == facts["bookmarks"]["state"] == state
+    assert field["source"] == "/Root/Outlines" and facts["bookmarks"]["location"].endswith("/Root/Outlines")
+    if state == "inaccessible":
+        assert field["value"] is None and field["reason"] == facts["bookmarks"]["reason"] == expected
+    else:
+        assert field["value"] == facts["bookmarks"]["value"] == expected
+    assert path.read_bytes() == original
+
+
+def test_a_writer_that_keeps_an_emptied_outline_root_is_reported_as_present_but_empty(tmp_path):
+    path = catalog_pdf(tmp_path, language="en-US", empty_outline=True)
+    original = path.read_bytes()
+    inspected, facts = audit_for_pdf(path)
+    field = inspected["metadata"]["native_properties"]["bookmarks"]
+    assert field["state"] == facts["bookmarks"]["state"] == "present_empty"
+    assert field["value"] == facts["bookmarks"]["value"] == EMPTY_OUTLINE
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("name", ["no_outlines_key", "empty_outline_with_zero_count"])
+def test_an_outline_reader_failure_does_not_change_what_the_catalog_already_establishes(tmp_path, monkeypatch, name):
+    entry, objects, state, expected = OUTLINE_CATALOGS[name]
+    path = raw_pdf(tmp_path, entry, objects)
+
+    def unreadable(_path):
+        raise RuntimeError("outline reader unavailable")
+
+    monkeypatch.setattr(fitz, "open", unreadable)
+    field = extract_pdf_accessibility_metadata(str(path))[0]["native_properties"]["bookmarks"]
+    assert (field["state"], field["value"]) == (state, expected)
+
+
+@pytest.mark.parametrize("name,reason,toc", [
+    ("no_outlines_key", "outline_readers_disagree", [[1, "Phantom", 1]]),
+    ("outline_with_one_item", "outline_unreadable", []),
+])
+def test_outline_readers_that_disagree_never_publish_absence_or_a_guess(tmp_path, monkeypatch, name, reason, toc):
+    entry, objects, _, _ = OUTLINE_CATALOGS[name]
+    path = raw_pdf(tmp_path, entry, objects)
+    monkeypatch.setattr(fitz.Document, "get_toc", lambda self, *args, **kwargs: toc)
+    field = extract_pdf_accessibility_metadata(str(path))[0]["native_properties"]["bookmarks"]
+    assert field == {"state": "inaccessible", "value": None, "reason": reason, "source": "/Root/Outlines"}
+
+
+def test_pdf_fixture_language_is_native_and_bookmarks_are_absent(native_source):
+    path = native_source("SC-C03.pdf")
+    inspected, facts = audit_for_pdf(path)
+    assert facts["language"]["state"] == "present_value" and facts["language"]["value"] == "en-US"
+    assert facts["bookmarks"]["state"] == "absent"
+    assert not {"language", "bookmarks"} & set(inspected["metadata"]["native_catalog"])
+
+
+@pytest.mark.parametrize("core_language,state,value", [
+    ("<dc:language>fr-CA</dc:language>", "present_value", "fr-CA"),
+    ("<dc:language></dc:language>", "present_empty", ""),
+    ("", "absent", None),
+])
+def test_pptx_language_is_the_typed_core_property_not_a_display_alias(native_source, tmp_path, core_language, state, value):
+    source = native_source("SC-C09-R3.pptx")
+    with zipfile.ZipFile(source) as archive:
+        parts = {name: archive.read(name) for name in archive.namelist()}
+    core = parts["docProps/core.xml"].decode("utf-8")
+    assert "dc:language" not in core
+    parts["docProps/core.xml"] = core.replace("</cp:coreProperties>", core_language + "</cp:coreProperties>").encode("utf-8")
+    path = tmp_path / "language.pptx"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    data = path.read_bytes()
+    document = {"id": "deck", "file_name": path.name, "version": 1}
+    records = []
+    inspected = inspect_native_document(
+        document, data, ".pptx", section="all", page_size=200, max_bytes=65536, _audit_records=records,
+    )
+    audit = build_native_audit({
+        "document": document, "accessibility_metadata": inspected["metadata"],
+        "native_inspection": {"page": inspected["page"]},
+    }, _source_records=records)
+    fact = next(item for item in audit["facts"] if item["field"] == "language")
+    assert (fact["state"], fact["value"]) == (state, value)
+    assert fact["location"].endswith("docProps/core.xml:language")
+
+
+@pytest.mark.parametrize("tagged", [False, True])
+def test_pdf_annotations_keep_exact_contents_reply_and_absent_state_without_requiring_tags(tmp_path, tagged):
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    text = " Reconcile 240 water kits with CSV availability 210; requested 300. "
+    root = DictionaryObject({
+        NameObject("/Type"): NameObject("/Annot"), NameObject("/Subtype"): NameObject("/Text"),
+        NameObject("/Contents"): TextStringObject(text), NameObject("/T"): TextStringObject("Reviewer"),
+        NameObject("/F"): NumberObject(0),
+    })
+    root_ref = writer._add_object(root)
+    reply_ref = writer._add_object(DictionaryObject({
+        NameObject("/Type"): NameObject("/Annot"), NameObject("/Subtype"): NameObject("/Text"),
+        NameObject("/Contents"): TextStringObject(""), NameObject("/IRT"): root_ref,
+    }))
+    absent_ref = writer._add_object(DictionaryObject({
+        NameObject("/Type"): NameObject("/Annot"), NameObject("/Subtype"): NameObject("/Text"),
+    }))
+    page[NameObject("/Annots")] = ArrayObject([root_ref, reply_ref, absent_ref])
+    if tagged:
+        tree = DictionaryObject({NameObject("/Type"): NameObject("/StructTreeRoot")})
+        tree_ref = writer._add_object(tree)
+        element = writer._add_object(DictionaryObject({
+            NameObject("/Type"): NameObject("/StructElem"), NameObject("/S"): NameObject("/Annot"),
+            NameObject("/P"): tree_ref, NameObject("/Pg"): page.indirect_reference,
+            NameObject("/K"): DictionaryObject({
+                NameObject("/Type"): NameObject("/OBJR"), NameObject("/Obj"): root_ref,
+            }),
+        }))
+        tree[NameObject("/K")] = ArrayObject([element])
+        writer.root_object[NameObject("/StructTreeRoot")] = tree_ref
+        writer.root_object[NameObject("/MarkInfo")] = DictionaryObject({
+            NameObject("/Marked"): BooleanObject(True),
+        })
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    writer.close()
+    original = buffer.getvalue()
+    path = tmp_path / "review.pdf"
+    path.write_bytes(original)
+    metadata, pages = extract_pdf_accessibility_metadata(str(path))
+    annotations = pages[1]["native_annotations"]["records"]
+    assert pages[1]["native_annotations"]["status"] == "complete"
+    assert annotations[0]["native_fields"]["contents"] == {"state": "present_value", "value": text}
+    assert annotations[0]["native_fields"]["state"]["state"] == "absent"
+    assert annotations[0]["native_fields"]["state_model"]["state"] == "absent"
+    assert annotations[0]["native_fields"]["flags"]["value"] == 0
+    assert annotations[1]["native_fields"]["contents"]["state"] == "present_empty"
+    assert annotations[1]["native_fields"]["reply_to"]["value"] == f"xref:{root_ref.idnum}"
+    assert annotations[2]["native_fields"]["contents"]["state"] == "absent"
+    if tagged:
+        node = next(item for item in metadata["semantic_tag_tree"] if item["tag"] == "Annot")
+        assert node["bound_text"] == {"state": "present_value", "value": text}
+        assert node["binding_status"] == "bound"
+    records = []
+    document = {"id": "review", "file_name": "review.pdf", "version": 1}
+    inspected = inspect_native_document(
+        document, original, ".pdf", section="all", page_size=200, max_bytes=65536, _audit_records=records,
+    )
+    audit = build_native_audit({
+        "document": document, "accessibility_metadata": inspected["metadata"],
+        "native_inspection": {"page": inspected["page"]},
+    }, _source_records=records)
+    assert any(fact["field"] == "contents" and fact["value"] == text for fact in audit["facts"])
+    assert sum(record.get("kind") == "annotation" for record in records) == 3
+    assert path.read_bytes() == original
+
+
+def test_repeated_objr_bindings_share_a_text_budget_without_truncating_native_values():
+    annotation = DictionaryObject({NameObject("/Contents"): TextStringObject("verified")})
+    reference = DictionaryObject({
+        NameObject("/Type"): NameObject("/OBJR"), NameObject("/Obj"): annotation,
+    })
+    budget = {"remaining": 8}
+    first = pdf_content_references(reference, 1, {}, annotation_budget=budget)
+    second = pdf_content_references(reference, 1, {}, annotation_budget=budget)
+    assert first[0]["annotation_contents"] == {"state": "present_value", "value": "verified"}
+    assert second[0]["annotation_contents"] == {
+        "state": "inaccessible", "value": None, "reason": "annotation_reference_text_limit",
+    }
+    assert annotation["/Contents"] == "verified"
 
 
 @pytest.mark.parametrize("name", ["SC-C08.xlsx", "SC-C11.xlsx"])

@@ -1,7 +1,7 @@
 # test_action_route_cosmos_response_contract.py
 """Runtime evidence for unchanged Cosmos owners in the edited action route module.
 
-Version: 0.261.354
+Version: 0.261.435
 Implemented in: 0.261.354
 
 The inventory invalidates module-wide source-only evidence after any route-module
@@ -22,6 +22,7 @@ from flask import Flask, current_app, jsonify, request, session
 import pytest
 
 import json_schema_validation as validation
+from functions_workspace_authoring import validate_action_connection_update
 from test_support.agent_delegation import execute_functions
 from test_support.m365 import CosmosContainer
 
@@ -58,6 +59,8 @@ def routes(monkeypatch):
         "get_merged_plugin_settings": lambda kind, payload, directory: payload,
         "_validate_action_identity_for_scope": Mock(),
         "_enforce_mcp_destination_policy": Mock(),
+        "validate_action_connection_update": validate_action_connection_update,
+        "_authorize_action_test_scope": Mock(return_value=("personal", "actor")),
         "WORKSPACE_IDENTITY_SCOPE_GLOBAL": "global",
         "McpDestinationPolicyError": type("McpDestinationPolicyError", (ValueError,), {}),
         "save_personal_action": Mock(), "save_global_action": Mock(),
@@ -121,7 +124,7 @@ def test_cosmos_connection_drains_query_rows_without_treating_them_as_documents(
         "validate_azure_cosmos_endpoint": lambda endpoint: endpoint,
         "_load_existing_plugin_for_test": lambda *args, **kwargs: None,
         "_resolve_plugin_secret_context": lambda *args: ("actor", "personal"),
-        "_resolve_secret_value_for_action_test": lambda value, *args: value,
+        "_resolve_secret_value_for_action_test": lambda value, *args, **kwargs: value,
         "ACTION_AUTH_SECRET_SOURCES": {"action"}, "ui_trigger_word": "Stored_In_KeyVault",
     })
     payload = {

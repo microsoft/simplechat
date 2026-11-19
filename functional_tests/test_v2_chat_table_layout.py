@@ -1,8 +1,9 @@
 # test_v2_chat_table_layout.py
 """
 Functional contracts for responsive V2 assistant tables.
-Version: 0.261.425
+Version: 0.261.431
 Implemented in: 0.261.425
+Comfortable conversation width updated in: 0.261.431
 
 Pin shared rendering and scoped saved/streaming layout wiring. Real browser
 geometry, content preservation and keyboard scrolling are covered in ui_tests.
@@ -27,7 +28,7 @@ def test_saved_and_streaming_bubbles_share_table_layout_without_changing_user_wi
     assert "bubbleWidthClass(chatWidth)" in streaming
     widths = (SOURCE / "lib" / "chatWidth.ts").read_text("utf-8")
     assert "'max-w-[min(64rem,90%)]' : 'max-w-[min(46rem,85%)]'" in widths
-    assert "'max-w-none' : 'max-w-4xl'" in widths
+    assert "'max-w-none' : 'max-w-[45rem]'" in widths
 
 
 def test_table_expansion_is_scoped_to_rendered_tables_and_cells_can_wrap():

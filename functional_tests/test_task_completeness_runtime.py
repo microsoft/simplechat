@@ -1,10 +1,11 @@
 # test_task_completeness_runtime.py
 """Real-module verification, correction, result eligibility and durable storage.
 
-Version: 0.261.434
+Version: 0.261.460
 Implemented in: 0.261.382; 0.261.384; 0.261.416; 0.261.418
 Same-route capability-aware JSON verification added in: 0.261.430
 Responses transport timeout regression added in: 0.261.434
+Incomplete-correction retention coverage added in: 0.261.445
 """
 
 import importlib
@@ -172,6 +173,16 @@ def test_workflow_responses_review_preserves_route_timeout_and_closed_schema(
     assert workflow["context_budget"]["model_protocol"] == "responses"
 
 
+def model_response(content, finish_reason):
+    return SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+        choices=[SimpleNamespace(
+            finish_reason=finish_reason,
+            message=SimpleNamespace(content=content, refusal=None),
+        )],
+    )
+
+
 def test_default_on_composition_corrects_twice_with_persisted_final_assessment(harness):
     harness.settings.pop("enable_chat_orchestration_completeness_check")
     harness.create([compose_step()], replies=[
@@ -214,6 +225,35 @@ def test_exhaustion_blocks_rendering_and_reports_a_safe_failure(harness):
     assert rows[0]["task_completeness"]["corrections"] == 2
     assert rows[1]["status"] == "skipped"
     assert len(harness.model_calls) == 6
+
+
+def test_truncated_correction_does_not_replace_the_retained_candidate(harness):
+    harness.settings["enable_chat_orchestration_completeness_check"] = True
+    harness.settings["chat_orchestration_completeness_max_corrections"] = 1
+    harness.create(
+        [compose_step(), render_step("save", "md")],
+        replies=[
+            model_response("Evaluation", "stop"),
+            model_response(report("missing"), "stop"),
+            model_response("Evaluation, incomplete ", "length"),
+        ],
+        final_response=input_binding("prepare", "answer"),
+    )
+    execution = harness.prepare()
+    execution.execute()
+    saved = harness.read()
+    assert saved["status"] == "failed"
+    rows = stored_steps(harness)
+    assert rows[0]["status"] == "failed"
+    assert rows[1]["status"] == "skipped"
+    assert len(harness.model_calls) == 3
+    read_store = harness.recovery.checkpoint_store(
+        saved, lambda: harness.bootstrap.read_owned_conversation("owner", "conversation-1"),
+    )
+    checkpoint = read_store.load_completeness(
+        "prepare", binding=execution.context.completeness_binding,
+    )
+    assert checkpoint["candidate"] == "Evaluation"
 
 
 def test_unavailable_checker_never_publishes_success(harness):

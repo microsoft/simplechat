@@ -132,6 +132,7 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
                                     onChange={(value) => update('azure_agent_apim_gpt_api_version', value)} />
                                 <AgentSecretField label="APIM subscription key" value={draft.azure_agent_apim_gpt_subscription_key}
                                     original={original?.record.azure_agent_apim_gpt_subscription_key}
+                                    requiresReentry={original?.credential_reentry_required?.some((field) => field.path === '/azure_agent_apim_gpt_subscription_key')}
                                     onChange={(value) => update('azure_agent_apim_gpt_subscription_key', value)} />
                             </>
                         ) : (
@@ -144,6 +145,7 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
                                     onChange={(value) => update('azure_openai_gpt_api_version', value)} />
                                 <AgentSecretField label="Azure OpenAI API key" value={draft.azure_openai_gpt_key}
                                     original={original?.record.azure_openai_gpt_key}
+                                    requiresReentry={original?.credential_reentry_required?.some((field) => field.path === '/azure_openai_gpt_key')}
                                     onChange={(value) => update('azure_openai_gpt_key', value)} />
                             </>
                         )}
@@ -153,7 +155,7 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
     );
 }
 
-function FoundryModelFields({ draft, setDraft, options, neutralReadOnlyCopy, discoverFoundryResources }: ModelFieldsProps) {
+function FoundryModelFields({ draft, setDraft, options, original, neutralReadOnlyCopy, discoverFoundryResources }: ModelFieldsProps) {
     const [resources, setResources] = useState<FoundryDiscoveryRecord[]>([]);
     const [responseVersion, setResponseVersion] = useState('');
     const [loading, setLoading] = useState(false);
@@ -177,12 +179,17 @@ function FoundryModelFields({ draft, setDraft, options, neutralReadOnlyCopy, dis
 
     if (type === 'local') return null;
     const key = FOUNDRY_SETTINGS_KEYS[type];
+    const authenticationType = (current: AgentConfiguration) => {
+        const authentication = foundrySettings(current).authentication_type;
+        return authentication === 'service_principal' || authentication === 'managed_identity'
+            ? authentication : 'delegated_user';
+    };
     const update = (field: string, value: unknown) => setDraft((current) => {
         const reference = foundrySettings(current).agent_reference;
         const referenceKey = field === 'workflow_agent_id' ? 'id' : field;
         return updateAgentSetting(current, key, {
             [field]: value,
-            authentication_type: 'delegated_user',
+            authentication_type: authenticationType(current),
             ...(type === 'foundry_workflow' && ['workflow_agent_id', 'application_id', 'application_version'].includes(field) &&
                 reference && typeof reference === 'object' && !Array.isArray(reference)
                 ? { agent_reference: { ...reference, [referenceKey]: value } } : {}),
@@ -192,7 +199,7 @@ function FoundryModelFields({ draft, setDraft, options, neutralReadOnlyCopy, dis
         const topLevel = field === 'endpoint' ? 'azure_openai_gpt_endpoint'
             : field === 'project_name' ? 'azure_openai_gpt_deployment' : 'azure_openai_gpt_api_version';
         setDraft((current) => updateAgentSetting({ ...current, [topLevel]: value }, key, {
-            [field]: value, authentication_type: 'delegated_user',
+            [field]: value, authentication_type: authenticationType(current),
         }));
     };
     const discover = async () => {
@@ -223,7 +230,12 @@ function FoundryModelFields({ draft, setDraft, options, neutralReadOnlyCopy, dis
     };
     return (
         <div className="space-y-4">
-            <AgentNotice>Authentication uses the signed-in user’s delegated Foundry access. Prompts and tools are managed in Foundry, not in this editor.</AgentNotice>
+            <AgentNotice>{!endpointId && settings.authentication_type === 'service_principal'
+                ? 'Authentication uses this agent’s configured service principal.'
+                : !endpointId && settings.authentication_type === 'managed_identity'
+                    ? 'Authentication uses this agent’s configured managed identity.'
+                    : 'Authentication uses the configured connection or the signed-in user’s delegated Foundry access.'}
+                {' '}Prompts and tools are managed in Foundry, not in this editor.</AgentNotice>
             <AgentField id="agent-foundry-connection" label="Saved Foundry connection" help="Optional. Choose a permitted saved connection to discover its agents, applications, or workflows.">
                 <select id="agent-foundry-connection" className={AGENT_INPUT_CLASS} value={endpointId}
                     onChange={(event) => {
@@ -264,6 +276,14 @@ function FoundryModelFields({ draft, setDraft, options, neutralReadOnlyCopy, dis
                 </AgentField>
             ) : null}
             <div className="min-w-0">
+                {settings.authentication_type === 'service_principal' && !endpointId ? (
+                    <AgentSecretField label="Foundry client secret" value={settings.client_secret}
+                        original={original ? foundrySettings(original.record).client_secret : undefined}
+                        requiresReentry={original?.credential_reentry_required?.some((field) => field.path === `/other_settings/${key}/client_secret`)}
+                        onChange={(value) => setDraft((current) => updateAgentSetting(current, key, {
+                            client_secret: value, authentication_type: 'service_principal',
+                        }))} />
+                ) : null}
                 <AgentTextField label="Foundry project endpoint" required value={settings.endpoint || draft.azure_openai_gpt_endpoint}
                     onChange={(value) => updateConnection('endpoint', value)} />
                 <AgentTextField label="Foundry project name" value={settings.project_name || draft.azure_openai_gpt_deployment}

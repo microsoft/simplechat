@@ -1,8 +1,9 @@
 # test_group_agent_secret_roundtrip.py
 """
 §2.1 Key Vault scope round trips for group agents.
-Version: 0.261.138
+Version: 0.261.428
 Implemented in: 0.261.138
+Updated in: 0.261.428
 
 M4C §8 B5. ``test_group_agent_secret_scope.py`` pins the ``_secret_scope`` seam in
 isolation; this test proves the two round trips that seam exists to protect, using
@@ -28,10 +29,9 @@ harness, which stores secrets in an in-memory vault).
     it verbatim, minting nothing. Under the pre-§2.1 ``user`` scope the reference
     would fail its context check and the classic edit would be refused.
 
-Key Vault storage is enabled in the settings each helper actually reads
-(``app_settings_cache.get_settings_cache``); with it off the helpers return early,
-so the assertions on the fake vault client (the exact set/delete names) are the
-positive control proving the round trips execute rather than no-op.
+These round trips now use owner-bound credentials entered after the security
+update, not unverified legacy references. Legacy credentials require re-entry;
+that boundary is covered by test_agent_credential_reentry.py.
 """
 
 import sys
@@ -43,6 +43,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 
 from test_support.versioning import assert_app_version_at_least
 from test_workspace_authoring_backend import environment  # noqa: F401  (pytest fixture)
+from agent_credential_contracts import agent_credential_scope
 
 GROUP_ID = "group-a"
 MEMBER = "member-user"
@@ -64,24 +65,26 @@ def test_v1_group_key_is_kept_by_the_v2_editor_and_nothing_is_minted(environment
 
     # (a) V1 create: the legacy helper writes the key under the group namespace.
     v1_agent = {"id": agent_id, "name": agent_name, "azure_openai_gpt_key": "v1-secret-value"}
-    saved = env.keyvault.keyvault_agent_save_helper(v1_agent, agent_id, scope="group")
+    saved = env.keyvault.keyvault_agent_save_helper(v1_agent, agent_id, scope="group", owner_id=GROUP_ID)
     reference = saved["azure_openai_gpt_key"]
-    expected = env.keyvault.build_full_secret_name(agent_name, agent_id, "agent", "group")
-    assert reference == expected
+    binding = agent_credential_scope("group", GROUP_ID, agent_id, ("azure_openai_gpt_key",))
+    assert env.keyvault.secret_reference_matches_context(
+        reference, scope_value=binding, scope="group", allowed_sources={"agent"},
+    )
+    assert len(reference) <= 127
     assert "--agent--group--" in reference and "--agent--user--" not in reference
     assert env.services.vault[reference] == "v1-secret-value"
 
     # (b) V2 edit of another field: the engine re-checks and re-stages secrets.
     stored = {
-        "id": agent_id, "name": agent_name,
-        "azure_openai_gpt_key": reference, "description": "Edited in V2",
+        **saved, "description": "Edited in V2",
     }
     writes_before = list(env.services.secret_writes)
     # The stored group reference is recognised as this record's own credential.
     env.helper._check_stored_references(stored, "agents", MEMBER, group_id=GROUP_ID)
     staged = []
     env.helper._stage_editor_secrets(
-        stored, "agents", MEMBER, env.services.settings, staged, group_id=GROUP_ID,
+        stored, "agents", MEMBER, env.services.settings, staged, group_id=GROUP_ID, existing=saved,
     )
     # Nothing minted, the reference kept verbatim, no new Key Vault write.
     assert staged == []
@@ -97,7 +100,7 @@ def test_v1_group_key_would_be_rejected_under_the_old_user_scope(environment):
     agent_name = "V1 scope guard"
     v1_agent = {"id": agent_id, "name": agent_name, "azure_openai_gpt_key": "v1-secret-value"}
     reference = env.keyvault.keyvault_agent_save_helper(
-        v1_agent, agent_id, scope="group",
+        v1_agent, agent_id, scope="group", owner_id=GROUP_ID,
     )["azure_openai_gpt_key"]
     stored = {"id": agent_id, "name": agent_name, "azure_openai_gpt_key": reference}
 
@@ -127,7 +130,7 @@ def test_v2_group_key_is_deleted_by_the_legacy_group_path_with_no_user_orphan(en
     assert all("--agent--user--" not in name for name in _group_agent_secret_names(env.services.vault))
 
     # (b) Legacy delete through the group path removes the staged group reference.
-    env.keyvault.keyvault_agent_delete_helper(record, agent_id, scope="group")
+    env.keyvault.keyvault_agent_delete_helper(record, agent_id, scope="group", owner_id=GROUP_ID)
     assert v2_reference in env.services.secret_deletes
     assert v2_reference not in env.services.vault
     assert _group_agent_secret_names(env.services.vault) == []
@@ -155,9 +158,9 @@ def test_v2_group_key_is_preserved_by_a_classic_placeholder_edit(environment):
     # record as ``existing``. The legacy group save must recognise the editor
     # reference as belonging to this group scope and keep it verbatim.
     updated = {"id": agent_id, "name": agent_name, "azure_openai_gpt_key": env.keyvault.ui_trigger_word}
-    existing = {"id": agent_id, "name": agent_name, "azure_openai_gpt_key": v2_reference}
+    existing = record
     result = env.keyvault.keyvault_agent_save_helper(
-        updated, agent_id, scope="group", existing_agent=existing,
+        updated, agent_id, scope="group", existing_agent=existing, owner_id=GROUP_ID,
     )
     # The editor-staged group reference is preserved and nothing new is minted.
     assert result["azure_openai_gpt_key"] == v2_reference

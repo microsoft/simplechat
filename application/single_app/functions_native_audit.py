@@ -10,7 +10,7 @@ from native_document_evidence import NATIVE_FIELD_STATES, inaccessible_field
 
 
 NATIVE_AUDIT_VERSION = "native-audit-v1"
-NATIVE_AUDIT_ANSWER_VERSION = "native-audit-answer-v3"
+NATIVE_AUDIT_ANSWER_VERSION = "native-audit-answer-v5"
 MAX_AUDIT_FACTS = 1000
 MAX_AUDIT_BYTES = 100000
 NATIVE_AUDIT_ANSWER_ERRORS = {
@@ -47,13 +47,19 @@ NATIVE_AUDIT_REVIEW_POLICY = (
     "For this native audit, independently compare the explanation with evidence.native_audit_contract. "
     "A valid digest or an accurate appended table does not verify the prose. Check every object's "
     "property-state claims: absent means the property is not stored; present_empty means it is stored "
-    "as an empty string; inaccessible means the inspection cannot establish it. A normalized alt_text "
+    "but empty (an empty string, or a bookmark outline with no entries); inaccessible means the inspection "
+    "cannot establish it. A normalized alt_text "
     "or title default is not an exact native value. Reject a claim of a native empty string when the "
     "corresponding description/title fact is absent or inaccessible, even if other prose or the table "
     "states the correct absence. Preserve whitespace, false and zero as present values. "
     "Action-model paraphrases cannot override canonical facts. Native logical order, paint-operation "
     "counts, and complete returned inventory pages do not prove a rendered visible-content review. "
+    "Other authorized named-input sources support their own claims without becoming native fact "
+    "authorities. Their returned content is not unavailable merely because they have no native audit. "
     "An explicit, accurate limitation satisfies an unsupported check alongside useful findings. "
+    "Check current inventory_coverage separately from historical page coverage facts. "
+    "A previously incomplete returned chain and a later verified complete chain for the same "
+    "source/section are progress, not conflicting source statements. "
     "The candidate is customer Markdown, not the preparation JSON. Return the requested assessment "
     "schema, not a native-answer envelope."
 )
@@ -197,6 +203,16 @@ def build_native_audit(payload, *, _source_records=None):
         for record in metadata.get("unmarked_text", []):
             add(record["id"], f"Page {record['page_number']}; {record['id']}", "unmarked_text",
                 record["text"], record["text_state"])
+        page = (payload.get("native_inspection") or {}).get("page") or {}
+        for record in _source_records if _source_records is not None else page.get("records", []):
+            if record.get("kind") != "annotation":
+                continue
+            identity = record["id"]
+            location = f"Page {record['page_number']}; annotation {record['object_ref']}"
+            add(identity, location, "native_annotation", {
+                "page_number": record["page_number"], "object_ref": record["object_ref"],
+            })
+            fields(identity, location, record["native_fields"])
     objects = (metadata.get("objects_summary") or {}).get("items", metadata.get("objects") or [])
     page = (payload.get("native_inspection") or payload.get("excel_inspection") or {}).get("page") or {}
     if _source_records is not None and metadata.get("format") != "pdf":
@@ -220,6 +236,7 @@ def build_native_audit(payload, *, _source_records=None):
                 "placeholder", "is_decorative", "control_representation", "control_type_state", "checked", "checked_state",
                 "transform", "parent_id",
                 "drawing_part", "object_id", "style_id", "feature_property_bag_part", "feature_bag_path",
+                "xml_ordinal", "text", "text_complete",
             ) if key in obj
         })
         fields(identity, location, obj.get("native_fields") or {
@@ -281,20 +298,24 @@ def build_native_audit(payload, *, _source_records=None):
     }
 
 
-def _native_page_chain_complete(pages):
-    """Prove contiguous returned records, including fragments; a last page alone is insufficient."""
+def _native_page_chain_progress(pages):
+    """Return ``(complete, whole records contiguous from the start)`` for the returned pages.
+
+    A last page alone is insufficient: records and record fragments must continue exactly where the
+    previous page ended. The count states how much was actually returned, not how much exists.
+    """
     if not pages:
-        return False
+        return False, 0
     expected_offset = expected_fragment = 0
     total = pages[0].get("total_records")
     if type(total) is not int or total < 0:
-        return False
+        return False, 0
     if any(
         type(page.get("start_record")) is not int or page["start_record"] < 0
         or type(page.get("fragment_offset", 0)) is not int or page.get("fragment_offset", 0) < 0
         for page in pages
     ):
-        return False
+        return False, 0
     unique = {_encoded(page): page for page in pages}
     ordered = sorted(unique.values(), key=lambda page: (
         page.get("start_record", -1), page.get("fragment_offset", 0),
@@ -306,10 +327,10 @@ def _native_page_chain_complete(pages):
             or page.get("fragment_offset", 0) != expected_fragment
             or type(page.get("records")) is not list
         ):
-            return False
+            return False, expected_offset
         for record in page["records"]:
             if not isinstance(record, dict):
-                return False
+                return False, expected_offset
             if record.get("record_fragment"):
                 piece, length = record.get("record_json_fragment"), record.get("record_characters")
                 if (
@@ -317,21 +338,30 @@ def _native_page_chain_complete(pages):
                     or record.get("fragment_offset") != expected_fragment
                     or expected_fragment + len(piece) > length
                 ):
-                    return False
+                    return False, expected_offset
                 expected_fragment += len(piece)
                 if expected_fragment == length:
                     expected_offset, expected_fragment = expected_offset + 1, 0
             else:
                 if expected_fragment:
-                    return False
+                    return False, expected_offset
                 expected_offset += 1
         if page.get("has_more") is not (expected_offset < total or bool(expected_fragment)):
-            return False
-    return expected_offset == total and expected_fragment == 0
+            return False, expected_offset
+    return expected_offset == total and expected_fragment == 0, expected_offset
 
 
-def native_audit_contract(inputs):
-    """Only recognize actual native-reader invocation results, never document prose."""
+def _native_page_chain_complete(pages):
+    """Prove contiguous returned records, including fragments; a last page alone is insufficient."""
+    return _native_page_chain_progress(pages)[0]
+
+
+def native_audit_contract(inputs, *, authorized_answer_citations=()):
+    """Native facts come from reader results; only an owner may grant other answer citations.
+
+    ``authorized_answer_citations`` must come from the retained-result owner's reauthorized
+    named-input projection, not source prose or a model's citation declarations.
+    """
     facts, citations, files, limitations = [], [], [], []
     seen, source_hashes, inventory_pages, inventory_files, unfinished = {}, {}, {}, {}, set()
     source_versions = {}
@@ -403,22 +433,31 @@ def native_audit_contract(inputs):
                     facts.append(fact)
     if not facts:
         return None
-    complete_chains = {key: _native_page_chain_complete(pages) for key, pages in inventory_pages.items()}
+    chain_progress = {key: _native_page_chain_progress(pages) for key, pages in inventory_pages.items()}
+    complete_chains = {key: progress[0] for key, progress in chain_progress.items()}
     if any(not complete_chains.get(key, False) for key in unfinished):
         limitations.append("A native inventory page has a continuation; only returned records are represented.")
+    if type(authorized_answer_citations) not in (list, tuple) or any(
+        type(citation) is not dict
+        or type(citation.get("document_id")) is not str or not citation["document_id"]
+        or type(citation.get("citation")) is not str or not citation["citation"]
+        for citation in authorized_answer_citations
+    ):
+        raise ValueError("The authorized answer citation contract is invalid.")
     answer_citations = list(citations)
+    supporting_citations = list(authorized_answer_citations)
     for entry in inputs.values():
-        # These are projected by the authorized retained-result owner, never from source prose.
         for citation in entry.get("document_citations") or []:
-            if not isinstance(citation, dict) or citation.get("document_id") not in source_hashes:
-                continue
-            version = citation.get("version")
-            native_version = source_versions[citation["document_id"]]
-            if version is not None and native_version is not None and version != native_version:
-                raise ValueError("A supporting citation refers to a different native source version.")
-            marker = citation.get("citation")
-            if isinstance(marker, str) and marker:
-                answer_citations.append(marker)
+            if isinstance(citation, dict) and citation.get("document_id") in source_hashes:
+                supporting_citations.append(citation)
+    for citation in supporting_citations:
+        version = citation.get("version")
+        native_version = source_versions.get(citation["document_id"])
+        if version is not None and native_version is not None and version != native_version:
+            raise ValueError("A supporting citation refers to a different native source version.")
+        marker = citation.get("citation")
+        if isinstance(marker, str) and marker:
+            answer_citations.append(marker)
     return {
         "facts": facts, "citations": list(dict.fromkeys(citations)), "files": list(dict.fromkeys(files)),
         "answer_citations": list(dict.fromkeys(answer_citations)),
@@ -435,6 +474,7 @@ def native_audit_contract(inputs):
             "returned_chain_complete": complete_chains[key],
             "inventory_complete": all(page.get("inventory_complete") is True for page in pages),
             "total_records": pages[0].get("total_records"),
+            "returned_records_from_start": chain_progress[key][1],
         } for key, pages in inventory_pages.items()],
     }
 
@@ -543,7 +583,18 @@ def native_audit_policy(contract):
         "Disclose that boundary alongside useful native findings, not as an execution error. "
         "Do not infer rendered compliance or invent source assertions or citations. "
         "Copy native_audit_contract.answer_citations verbatim where used; supporting chunk citations "
-        "do not override native property facts. "
+        "do not override native property facts. Authorized supporting documents remain available "
+        "answer evidence even when they have no native inspection; do not describe their returned "
+        "content as unavailable. "
+        "Use native_audit_contract.inventory_coverage for current returned-chain coverage. "
+        "inventory_complete describes extraction, not whether every page was returned. When "
+        "returned_chain_complete is false, state that only returned_records_from_start of total_records "
+        "native records were reviewed; an unreturned record is not evidence that a property is absent. An earlier "
+        "has_more=true page is historical progress, not a contradiction of a later verified complete "
+        "chain for the same source and section. Do not claim completeness across changed sources. "
+        "Escape a literal vertical bar as \\| only inside a Markdown table row, including inline code in a "
+        "table cell, so an exact native title stays in one cell. Outside a table row, in prose, lists, headings "
+        "and inline code, write the exact native value with no added backslash. Do not change the native value itself. "
         "The server appends its immutable factual evidence table; do not copy that table into answer. "
         "The checker evaluates the rendered customer answer, not this JSON transport format."
     )
@@ -556,6 +607,80 @@ def _unique_native_object(pairs):
             raise NativeAuditAnswerError("native_answer_duplicate_key")
         value[key] = item
     return value
+
+
+_NATIVE_BLOCK_START = re.compile(
+    r"^(?: {4}|\t| {0,3}(?:#{1,6}(?:[ \t]+|$)|>|"
+    r"(?:[-+*]|\d{1,9}[.)])[ \t]+|<(?:"
+    r"!--|\?|![A-Z]|/?(?i:address|article|aside|base|basefont|blockquote|body|caption|"
+    r"center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|"
+    r"footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|"
+    r"menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|"
+    r"style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t>/]|$))))",
+)
+
+
+def _native_markdown_line_kinds(lines):
+    """Classify each line as fenced or indented code, a GFM table row, its delimiter row, or prose."""
+    kinds = ["prose"] * len(lines)
+    fence = None
+    table = False
+    for index, line in enumerate(lines):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if marker:
+            token = marker.group(1)
+            if fence is None:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence):
+                fence = None
+            kinds[index] = "fence"
+            table = False
+            continue
+        if fence is not None:
+            kinds[index] = "fence"
+            continue
+        if re.match(r"^(?: {4}|\t)", line):
+            kinds[index] = "indented"
+            table = False
+            continue
+        separator = re.match(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$", line)
+        if (
+            separator and index and "|" in lines[index - 1]
+            and not re.match(r"^(?: {4}|\t)", lines[index - 1])
+        ):
+            table = True
+            kinds[index - 1] = "table"
+            kinds[index] = "separator"
+        elif table:
+            if not line.strip() or "|" not in line or _NATIVE_BLOCK_START.match(line):
+                table = False
+                continue
+            kinds[index] = "table"
+    return kinds
+
+
+def _serialize_native_values(answer, contract):
+    """Serialize known native values by Markdown context, never altering fences or delimiters.
+
+    A vertical bar is escaped only inside table rows. Outside a table, an escaped native value
+    is an added backslash rather than a different native value, so the exact value is restored.
+    """
+    values = sorted({
+        fact["value"] for fact in contract["facts"]
+        if isinstance(fact.get("value"), str) and "|" in fact["value"]
+        and "\n" not in fact["value"] and "\r" not in fact["value"]
+    }, key=len, reverse=True)
+    if not values:
+        return answer
+    lines = answer.splitlines(keepends=True)
+    for index, kind in enumerate(_native_markdown_line_kinds(lines)):
+        if kind == "table":
+            for value in values:
+                lines[index] = lines[index].replace(value, value.replace("|", "\\|"))
+        elif kind == "prose":
+            for value in values:
+                lines[index] = lines[index].replace(value.replace("|", "\\|"), value)
+    return "".join(lines)
 
 
 def decode_native_audit_answer(response, contract, *, require_answer=False):
@@ -584,7 +709,7 @@ def decode_native_audit_answer(response, contract, *, require_answer=False):
         }
         if set(re.findall(r"\[#[^\]\r\n]+\]", answer)) - allowed:
             raise NativeAuditAnswerError("native_answer_citation_unknown")
-        rendered = f"{answer.rstrip()}\n\n{rendered}"
+        rendered = f"{_serialize_native_values(answer, contract).rstrip()}\n\n{rendered}"
     return value, rendered
 
 

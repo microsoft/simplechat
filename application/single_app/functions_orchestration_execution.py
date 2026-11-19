@@ -1,11 +1,12 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved orchestration attempts.
 
-Version: 0.261.380
+Version: 0.261.446
 Implemented in: 0.261.127
 Shared conversation answers mirrored into the shared thread in: 0.261.270
 Charts gather steps drew are shown, and chart and diagram delivery is checked, in: 0.261.293
 Saved reply verification tolerates lossless Cosmos numeric round trips in: 0.261.380
+Prepared program completion gating added in: 0.261.446
 
 Every saved attempt uses the Gather / Reason / Render contract; a run from the removed
 legacy contract is refused before any preparation. The ``Harness*`` names below are the
@@ -165,8 +166,13 @@ from functions_orchestration_registry import (
     CAPABILITY_WORKFLOW_HANDOFF, CAPABILITY_WORKFLOW_RESULTS, CapabilityResolutionError,
     resolve_admitted_export_catalog, resolve_available_capability_ids,
 )
-from functions_orchestration_result_contracts import InputBinding, ResultContractError, ResultRef, TaskResult
-from functions_orchestration_result_runtime import read_complete_input, read_result_document_citations, read_result_evidence_status
+from functions_orchestration_result_contracts import (
+    InputBinding, ResultContractError, ResultRef, TaskResult,
+)
+from functions_orchestration_result_runtime import (
+    qualified_calculation_answer_ready, read_complete_input, read_result_document_citations,
+    read_result_evidence_status,
+)
 from functions_orchestration_results import ResultUnavailableError
 from functions_orchestration_schema import (
     LEGACY_PLAN_CODE,
@@ -210,6 +216,7 @@ class HarnessExecutionError(OrchestrationInvocationControlError):
 
     def __init__(
         self, code="execution_interrupted", *, final_frames=(), durable_status=None, retryable=False,
+        rule=None, stage=None, producer_capability_id=None,
     ):
         self.failure = build_failure(code)
         self.code = self.failure["code"]
@@ -217,6 +224,9 @@ class HarnessExecutionError(OrchestrationInvocationControlError):
         self.final_frames = list(final_frames)
         self.durable_status = durable_status
         self.retryable = retryable
+        self.validation_rule = rule
+        self.stage = stage
+        self.producer_capability_id = producer_capability_id
         super().__init__(self.message)
 
 
@@ -275,6 +285,11 @@ def _failure(error):
 def _log_failure(message, record, error, *, stage="execution"):
     response_type = type(record).__name__
     record = record if isinstance(record, dict) else {}
+    diagnostic = next((
+        item for item in _known_failure_chain(error)
+        if getattr(item, "validation_rule", None)
+        or getattr(item, "producer_capability_id", None)
+    ), error)
     log_event(
         f"[ORCHESTRATION_RUNS] {message}",
         level=logging.WARNING,
@@ -283,8 +298,13 @@ def _log_failure(message, record, error, *, stage="execution"):
                 run_id=record.get("id"), conversation_id=record.get("conversation_id"),
                 turn_id=record.get("turn_id"),
             ),
-            "stage": stage, "response_type": response_type,
+            "stage": getattr(diagnostic, "stage", None) or stage, "response_type": response_type,
             "error_type": type(error).__name__, "execution_code": _failure(error)["code"],
+            "validation_rule": getattr(diagnostic, "validation_rule", None),
+            "producer_capability_id": getattr(diagnostic, "producer_capability_id", None),
+            "authority_reason": (
+                error.code if isinstance(error, (ResultUnavailableError, ResultContractError)) else None
+            ),
         },
     )
 
@@ -323,13 +343,17 @@ def _execution_bound_external_callback(callback, lease):
     return guarded
 
 
-def _create_answer_completion(model, messages, *, json_output, stage, response_format=None):
+def _create_answer_completion(
+    model, messages, *, json_output, stage, response_format=None, before_adjustment=None,
+):
     """Preserve the review schema, with bounded endpoint-format compatibility."""
     options = {
         "messages": messages, "temperature": ANSWER_TEMPERATURE,
         "max_tokens": ANSWER_MAX_TOKENS, "use_model_response_length": True,
     }
     def adjusted(details):
+        if callable(before_adjustment):
+            before_adjustment()
         log_event(
             "[ORCHESTRATION] Retrying the answer model with a compatible response format.",
             level=logging.INFO,
@@ -378,6 +402,7 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
             response = _create_answer_completion(
                 model, messages, json_output=(metadata or {}).get("json_output") is True, stage=stage,
                 response_format=(metadata or {}).get("response_format"),
+                before_adjustment=(metadata or {}).get("before_response_format_retry"),
             )
         except Exception as exc:
             transient_check = stage == "completeness_check" and is_transient_model_error(exc)
@@ -403,8 +428,19 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
                 raise CompletenessError("completeness_report_invalid")
             raise HarnessExecutionError("model_failed")
         choice = response.choices[0]
-        if choice.finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
+        finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
             raise HarnessExecutionError("model_failed")
+        if (metadata or {}).get("require_complete_generation") is True and finish_reason != "stop":
+            raise HarnessExecutionError(
+                "model_failed", rule="generation_incomplete", stage=stage,
+            )
+        if finish_reason not in (None, "stop"):
+            if stage == "completeness_check":
+                raise CompletenessError("completeness_report_invalid")
+            raise HarnessExecutionError(
+                "model_failed", rule="incomplete_completion", stage=stage,
+            )
         text = extract_chat_completion_response_text(response)
         if not text.strip():
             if stage == "completeness_check":
@@ -415,6 +451,7 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
     invoke_prompt.model_metadata = model.model_metadata or behavior_name
     invoke_prompt.provider = model.provider
     invoke_prompt.output_tokens = output_tokens
+    invoke_prompt.enforces_complete_generation = True
     return invoke_prompt
 
 
@@ -1082,6 +1119,7 @@ class HarnessExecution:
         self._bind_public_chat_scope(self.context, conversation_id)
         self.context.pending_results = deepcopy(pending)
         response = None
+        response_producer_capability_id = None
         if self.record["plan"].get("final_response"):
             binding = InputBinding.from_dict(self.record["plan"]["final_response"])
             if binding.existing_result is not None:
@@ -1092,10 +1130,16 @@ class HarnessExecution:
                 task = self.context.task_results.get(binding.step_id)
                 if task is not None and task.status in {"complete", "partial"}:
                     response = task.output(binding.output_name)
+            if response is not None:
+                response_producer_capability_id = response.producer.capability_id
         if self.record.get("final_response") and (
             response is None or response.to_dict() != self.record["final_response"]
         ):
-            raise HarnessExecutionError("recovery_changed")
+            raise HarnessExecutionError(
+                "recovery_changed", rule="final_response_reference_changed",
+                stage="final_response_binding",
+                producer_capability_id=response_producer_capability_id,
+            )
         return {
             **deepcopy(self.record),
             "final_response": response.to_dict() if response is not None else None,
@@ -1657,6 +1701,17 @@ class HarnessExecution:
             workflow_handoff = workflow_handoff_note(self.record["plan"], current.get("execution_steps") or [])
             if workflow_handoff:
                 content.append(workflow_handoff)
+        answer_qualified = (
+            outcome == "partial" and bool(prepared)
+            and reader is not None
+            and all(
+                output.get("state") == "completed" and output.get("available") is not False
+                for output in outputs
+            )
+            and qualified_calculation_answer_ready(
+                self.record["plan"], reader.reference, current.get("execution_steps") or [],
+            )
+        )
         if (
             (self._reads_workflow_results() or self.record["plan"].get("workflow_results_notes"))
             and (status not in {"waiting", "cancelled"} or workflow_result_reads)
@@ -1671,7 +1726,7 @@ class HarnessExecution:
                 content.append(workflow_results)
         if status == "waiting":
             content.append(build_failure("result_not_ready")["message"])
-        elif status in {"failed", "cancelled"}:
+        elif status in {"failed", "cancelled"} and not answer_qualified:
             content.append(failure_explanation(failures, partial=outcome == "partial", cancelled=status == "cancelled"))
         elif not content:
             # A plan saved before every gather step needed a reader can gather without answering.
@@ -1734,6 +1789,7 @@ class HarnessExecution:
             "deliverable_states": visual_states, "redraw_step_ids": redraw,
             "token_usage": combined_usage,
             "harness_prompt_token_usage": _usage(self.prompt_token_usage),
+            "answer_qualified": answer_qualified,
             "reasoning_adjustments": reasoning["reasoning_adjustments"],
             "assistant_message_created_at": timestamp,
             "message_saved": False, "finalization_status": "pending",
@@ -1992,6 +2048,9 @@ class HarnessExecution:
             return HarnessExecutionError(
                 _failure(error)["code"], final_frames=frames,
                 durable_status=(self._final_record or {}).get("status"),
+                rule=getattr(error, "validation_rule", None),
+                stage=getattr(error, "stage", None),
+                producer_capability_id=getattr(error, "producer_capability_id", None),
             )
         finally:
             self.close()

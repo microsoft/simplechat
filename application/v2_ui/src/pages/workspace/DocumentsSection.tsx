@@ -7,9 +7,12 @@
 //
 // The group section also offers the content screening controls personal documents have, to the
 // members the context's `screening_management` hint names: the screening routes' own authorization.
+//
+// Older documents are updated in the explorer itself (its notice offers the update to the viewers the
+// server allows), so no section sends anyone to the classic interface for it.
 
 import { useMemo } from 'react';
-import { ArrowUpRight, FolderSync } from 'lucide-react';
+import { FolderSync } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DocumentExplorer } from '../../components/documents/DocumentExplorer';
 import { ScreeningWorkspaceControls } from '../../components/screening/ScreeningWorkspaceControls';
@@ -18,15 +21,13 @@ import { createGroupDocumentReader, createPublicDocumentReader } from '../../lib
 import { createGroupDocumentOperations, createPublicDocumentOperations } from '../../lib/documentOperations';
 import { createDocumentCollaboration, createPublicDocumentCollaboration } from '../../lib/documentCollaboration';
 import type { GroupWorkspaceContext, PublicWorkspaceContext } from '../../lib/workspaceContext';
-import { GlassButton } from '../../components/ui/primitives';
 
 export function GroupDocumentsSection({
-    context, interactionDisabled, onOpenClassic, onDirtyChange, onBusyChange,
+    context, interactionDisabled, onDirtyChange, onBusyChange,
     linkedDocumentId, linkedDocumentError, onClearLinkedDocument,
 }: {
     context: GroupWorkspaceContext;
     interactionDisabled: boolean;
-    onOpenClassic: () => void;
     onDirtyChange: (dirty: boolean) => void;
     onBusyChange: (busy: boolean) => void;
     linkedDocumentId?: string | null;
@@ -53,16 +54,10 @@ export function GroupDocumentsSection({
             <div className="shrink-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="text-base font-semibold text-text-1">Documents</h2>
-                    <div className="flex flex-wrap items-center gap-2">
-                        {canManageScreening ? (
-                            <ScreeningWorkspaceControls scope={{ scope_type: 'group', scope_id: context.scope.id }}
-                                disabled={interactionDisabled} compact />
-                        ) : null}
-                        <GlassButton size="sm" disabled={interactionDisabled} onClick={onOpenClassic}
-                            aria-label="Open classic tools for group documents" title="Classic tools, including upgrading legacy documents">
-                            Classic tools<ArrowUpRight size={14} />
-                        </GlassButton>
-                    </div>
+                    {canManageScreening ? (
+                        <ScreeningWorkspaceControls scope={{ scope_type: 'group', scope_id: context.scope.id }}
+                            disabled={interactionDisabled} compact />
+                    ) : null}
                 </div>
                 <p className="mt-0.5 text-sm text-text-3">{canChange
                     ? 'Manage group files. Each action follows current document permissions.'
@@ -81,12 +76,11 @@ export function GroupDocumentsSection({
 }
 
 export function PublicDocumentsSection({
-    context, interactionDisabled, onOpenClassic, onDirtyChange, onBusyChange,
+    context, interactionDisabled, onDirtyChange, onBusyChange,
     linkedDocumentId, linkedDocumentError, onClearLinkedDocument,
 }: {
     context: PublicWorkspaceContext;
     interactionDisabled: boolean;
-    onOpenClassic: () => void;
     onDirtyChange: (dirty: boolean) => void;
     onBusyChange: (busy: boolean) => void;
     linkedDocumentId?: string | null;
@@ -107,13 +101,7 @@ export function PublicDocumentsSection({
     return (
         <div className="flex h-full min-h-0 flex-col gap-2">
             <div className="shrink-0">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h2 className="text-base font-semibold text-text-1">Documents</h2>
-                    <GlassButton size="sm" disabled={interactionDisabled} onClick={onOpenClassic}
-                        aria-label="Open classic tools to upgrade legacy public workspace documents" title="Classic tools, including upgrading legacy documents">
-                        Classic tools<ArrowUpRight size={14} />
-                    </GlassButton>
-                </div>
+                <h2 className="text-base font-semibold text-text-1">Documents</h2>
                 <p className="mt-0.5 text-sm text-text-3">{canChange
                     ? 'Manage public files. Each action follows current document permissions.'
                     : 'Read-only browsing for this public workspace.'}</p>

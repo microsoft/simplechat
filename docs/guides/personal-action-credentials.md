@@ -1,19 +1,24 @@
 ---
 layout: page
 title: "Use your own credentials with a shared action"
-description: "Provide a private personal identity when a shared Yamcs action needs your sign-in."
+description: "Provide a private personal identity when a shared Yamcs or Bitbucket action needs your sign-in."
 section: "Guides"
 audience: user
-version: "0.261.348"
+version: "0.261.450"
 ---
 
 ## What this does
 
 A shared action can describe the server and operations everyone uses while each
 person signs in separately. Your administrator does not need to publish a copy
-of the action or agent for you. This first integration supports Yamcs service
+of the action or agent for you. This supports Yamcs service
 credentials and the username/password required by a reverse proxy in front of
 Yamcs.
+
+As of **0.261.450**, [Bitbucket actions]({{ '/reference/actions/bitbucket/' | relative_url }})
+also support personal bearer-token identities and Cloud email/API-token
+identities through this card. OAuth uses a separate private Bitbucket
+connection page; connect there, return to chat and retry the request.
 
 Fixed/Implemented in version: **0.261.333**, recorded in
 `application/single_app/config.py`.

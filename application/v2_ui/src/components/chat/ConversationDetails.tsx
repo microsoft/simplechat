@@ -36,6 +36,8 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { toast } from '../../stores/toastStore';
 import { generateConversationSummary } from '../../lib/endpoints';
 import { ConversationExportDialog } from './ConversationExportDialog';
+import { ScopeLockControl } from './ScopeLockControl';
+import { useScopeLockStore } from '../../stores/scopeLockStore';
 import {
     formatChatType,
     labelsOfCategory,
@@ -368,6 +370,8 @@ export function ConversationDetails({ onClose }: { onClose: () => void }) {
     );
 
     const [exporting, setExporting] = useState(false);
+    // The scope lock dialog is hosted by the header, above this one, and closes itself on Escape.
+    const scopeLockOpen = useScopeLockStore((state) => state.open);
 
     useEffect(() => {
         if (activeConversationId && !metadata && !metadataLoading && !metadataError) {
@@ -377,16 +381,16 @@ export function ConversationDetails({ onClose }: { onClose: () => void }) {
 
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
-            // The export wizard is rendered inside this dialog and closes itself on Escape.
-            // Without this guard one keypress would dismiss both, losing the details view
-            // the user was reading as a side effect of cancelling an export.
-            if (event.key === 'Escape' && !exporting) {
+            // The export wizard and the scope lock dialog are rendered over this one and close
+            // themselves on Escape. Without this guard one keypress would dismiss both, losing
+            // the details view the user was reading as a side effect of cancelling.
+            if (event.key === 'Escape' && !exporting && !scopeLockOpen) {
                 onClose();
             }
         };
         document.addEventListener('keydown', onKeyDown);
         return () => document.removeEventListener('keydown', onKeyDown);
-    }, [onClose, exporting]);
+    }, [onClose, exporting, scopeLockOpen]);
 
     const classifications = metadata ? classificationList(metadata.classification) : [];
     const models = labelsOfCategory(metadata, 'model');
@@ -518,12 +522,6 @@ export function ConversationDetails({ onClose }: { onClose: () => void }) {
                                                 )}
                                                 {metadata.is_hidden ? 'Hidden' : 'Visible'}
                                             </span>
-                                            {metadata.scope_locked && (
-                                                <span className="inline-flex items-center gap-1 rounded-full bg-warn-soft px-2 py-0.5 text-xs text-warn">
-                                                    <Lock size={11} />
-                                                    Scope locked
-                                                </span>
-                                            )}
                                             {metadata.strict && (
                                                 <span className="rounded-full bg-surface-sunken px-2 py-0.5 text-xs text-text-3">
                                                     Strict
@@ -531,6 +529,11 @@ export function ConversationDetails({ onClose }: { onClose: () => void }) {
                                             )}
                                         </div>
                                     </Row>
+                                    {metadata.scope_locked !== null && metadata.scope_locked !== undefined && (
+                                        <Row label="Workspace scope">
+                                            <ScopeLockControl variant="row" />
+                                        </Row>
+                                    )}
                                     {classificationEnabled && classifications.length > 0 && (
                                         <Row label="Classification">
                                             <Chips labels={classifications} />

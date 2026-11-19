@@ -1,7 +1,8 @@
 # functions_orchestration_composition.py
 """Explicit content preparation from named authorized result readers.
 
-Version: 0.261.426
+Version: 0.261.446
+Qualified preparation-only calculation answers added in: 0.261.446
 Refusals for a missing signed-in session reported as their own failure in: 0.261.209
 Charts drawn upstream reach the model as their placement tokens in: 0.261.293
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
@@ -54,6 +55,7 @@ from functions_orchestration_result_contracts import (
 from functions_orchestration_result_runtime import (
     raise_source_service_failure, read_complete_input, read_result_document_citations,
     read_result_source_coverage, require_result_service, resolve_step_inputs,
+    validate_tabular_requirement_readers,
 )
 from functions_orchestration_results import MAX_VALUE_BYTES, NamedOutput, ResultUnavailableError
 from functions_orchestration_schema import (
@@ -84,7 +86,9 @@ COMPOSE_POLICY = (
     'status, because the owner may have sent or cancelled it during this run. Do not state that '
     'prepared or scheduled actions are still unsent. Graph acceptance does not prove '
     'recipient delivery. Disclose refused, failed or uncertain operations. No tools, source '
-    'retrieval, or file publication are available.'
+    'retrieval, or file publication are available. Prior partial reads do not contradict a '
+    'later verified complete chain for the same source/version/section. Use current coverage; '
+    'extraction, returned records and business completion are distinct.'
 )
 AVAILABLE_INFORMATION_INSTRUCTIONS = (
     'Answer every requested question using supported information or a precise explanation of '
@@ -95,6 +99,14 @@ AVAILABLE_INFORMATION_INSTRUCTIONS = (
     'are the only factual inputs: diagnostics and unresolved candidates are not facts. Partial '
     'coverage does not prove that a fact is absent from an entire source or corpus. Do not '
     'invent values, citations, inspection counts, or certainty to make an answer complete.'
+)
+CALCULATION_ANSWER_INSTRUCTIONS = (
+    'When complete calculation records, lineage and coverage are all present from one producer, '
+    'reason only from that atomic bundle and the complete preparation. When all three calculation '
+    'members are unavailable, state that the requested dated monetary determination could not be '
+    'verified. You may report only exact retained preparation facts such as rules, scope, counts '
+    'and evidence horizon; never infer an exceedance, monetary result or missing absence from '
+    'search previews, diagnostics or partial calculation members.'
 )
 KNOWLEDGE_POLICIES = {
     KNOWLEDGE_BASIS_GENERAL: (
@@ -618,6 +630,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
     try:
         with service.read_operation():
             readers = resolve_step_inputs(step, context)
+            validate_tabular_requirement_readers(step, readers, service)
             recheck()
             if sum(reader.reference.size_bytes for reader in readers.values()) > MAX_VALUE_BYTES:
                 raise ResultContractError('result_requires_streaming')
@@ -689,7 +702,12 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             transform_context = transform_preparation_context(step, readers, inputs, images)
             transform_policy = f'{TRANSFORM_POLICY} Required mode: {transform_context["mode"]}.'
         plain_text = len(outputs) == 1 and outputs[0]['kind'] in ('text-v1', 'markdown-v1')
-        audit_contract = native_audit_contract(inputs) if plain_text and not images else None
+        # Only the reauthorized owner projection can extend citations beyond native fact sources.
+        audit_contract = native_audit_contract(
+            inputs, authorized_answer_citations=[
+                citation for entry in inputs.values() for citation in entry['document_citations']
+            ],
+        ) if plain_text and not images else None
         unavailable = _missing_optional_inputs(step, context)
         missing_images = [item for item in unavailable if item['capability_id'] == CAPABILITY_GENERATE_IMAGE]
         missing = [item for item in unavailable if item not in missing_images]
@@ -705,6 +723,9 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         memory = _answer_memory(context)
         policy = ' '.join(part for part in (
             COMPOSE_POLICY, KNOWLEDGE_POLICIES[basis], transform_policy, MISSING_INPUT_POLICY if missing else '',
+            CALCULATION_ANSWER_INSTRUCTIONS
+            if (step['arguments'].get('tabular_requirement') or {}).get('mode') == 'calculation_answer'
+            else '',
             AVAILABLE_INFORMATION_INSTRUCTIONS if uses_available_information(step) else '',
             MISSING_IMAGE_POLICY if missing_images else '',
             CITATION_POLICY if _carries_citation_values(inputs) else '',
@@ -837,6 +858,25 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     values[specification['name']] = place_image_tokens(value, titles)
                 elif specification.get('profile') == PREPARED_SLIDE_DECK_VERSION:
                     values[specification['name']] = place_deck_images(value, titles)
+            provenance_input = step['arguments'].get('annotation_provenance_input')
+            if provenance_input:
+                from functions_orchestration_excel import project_word_comment_provenance
+
+                provenance = inputs[provenance_input]
+                if provenance['kind'] != 'structured-v1':
+                    raise ResultContractError('result_annotation_provenance_invalid')
+                try:
+                    values[outputs[0]['name']] = project_word_comment_provenance(
+                        values[outputs[0]['name']],
+                        provenance['value'],
+                        {
+                            source.get('document_id')
+                            for source in readers[provenance_input].lineage_sources()
+                            if isinstance(source, dict) and source.get('document_id')
+                        },
+                    )
+                except ValueError as exc:
+                    raise ResultContractError('result_annotation_provenance_invalid') from exc
             for specification in outputs:
                 try:
                     validate_prepared_output(
@@ -1172,10 +1212,23 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 response = invoke(retry_messages, stage='orchestration_compose', metadata=metadata)
                 recheck()
                 values = prepared_values(response)
-        partial = any(reader.completeness.status == 'partial' for reader in readers.values())
+        calculation_answer = (
+            (step['arguments'].get('tabular_requirement') or {}).get('mode')
+            == 'calculation_answer'
+        )
+        calculation_bundle_present = bool(
+            {reader.reference.output_name for reader in readers.values()}
+            & {'records', 'lineage', 'coverage'}
+        )
+        partial = (
+            any(reader.completeness.status == 'partial' for reader in readers.values())
+            or (calculation_answer and not calculation_bundle_present)
+        )
         limitations = tuple(dict.fromkeys(
             limitation for reader in readers.values() for limitation in reader.completeness.limitations
         ))
+        if calculation_answer and not calculation_bundle_present:
+            limitations += ('calculation_unavailable',)
         if partial and not limitations:
             raise ResultContractError('result_partial_unqualified')
         named = []

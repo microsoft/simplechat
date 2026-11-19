@@ -14,6 +14,20 @@ from azure.cosmos.exceptions import CosmosResourceExistsError
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from config import cosmos_activity_logs_container
+from runtime_usage import UsageTarget, build_usage_record
+
+
+def log_runtime_usage(target, **fields):
+    """Persist only the explicit metadata contract; never log a tool invocation object."""
+    try:
+        record = build_usage_record(target, **fields)
+        _create_activity_record(record, idempotency_key=f"runtime:{fields['attempt_id']}")
+    except Exception as error:
+        log_event(
+            "[ACTIVITY_LOGGING] Runtime usage could not be recorded.",
+            extra={"error_type": type(error).__name__, "outcome": "usage_write_failed"},
+            level=logging.ERROR,
+        )
 
 
 def build_activity_log_id(activity_type, user_id, idempotency_key):
@@ -2375,54 +2389,59 @@ def log_agent_run(
     conversation_id: Optional[str] = None,
     message_id: Optional[str] = None,
     model: Optional[str] = None,
-    agent_catalog_key: Optional[str] = None
+    agent_catalog_key: Optional[str] = None,
+    *,
+    attempt_id: Optional[str] = None,
+    outcome: str = 'unknown',
+    duration_ms: Optional[float] = None,
+    agent_type: str = 'unknown',
+    scope_id: Optional[str] = None,
+    workflow_id: str = '',
+    run_id: str = '',
+    trigger_type: str = '',
+    workspace_type: str = '',
+    workspace_group_id: Optional[str] = None,
+    workspace_public_workspace_id: Optional[str] = None,
 ) -> None:
     """Log an agent runtime invocation for analytics and popularity ranking."""
     try:
-        workspace_context = {}
-        if scope == 'group' and group_id:
-            workspace_context['group_id'] = group_id
-
-        activity_record = {
-            'id': str(uuid.uuid4()),
-            'user_id': user_id,
-            'activity_type': 'agent_run',
-            'timestamp': datetime.utcnow().isoformat(),
-            'created_at': datetime.utcnow().isoformat(),
-            'entity_type': 'agent',
-            'operation': 'run',
+        attempt_id = attempt_id or str(uuid.uuid4())
+        activity_record = build_usage_record(
+            UsageTarget(
+                'agent', agent_id or '', agent_display_name or agent_name,
+                scope_type=scope,
+                scope_id=scope_id or group_id or ('global' if scope == 'global' else user_id),
+                entity_type=agent_type,
+            ),
+            user_id=user_id, attempt_id=attempt_id, outcome=outcome,
+            duration_ms=duration_ms, workspace_type=workspace_type,
+            group_id=workspace_group_id or '', public_workspace_id=workspace_public_workspace_id or '',
+            conversation_id=conversation_id or '',
+            workflow_id=workflow_id, run_id=run_id, trigger_type=trigger_type,
+        )
+        activity_record.update({
             'agent_catalog_key': agent_catalog_key,
             'agent': {
                 'id': agent_id,
                 'name': agent_name,
                 'display_name': agent_display_name or agent_name,
             },
-            'workspace_type': scope,
-            'workspace_context': workspace_context,
             'conversation_id': conversation_id,
             'message_id': message_id,
             'model_deployment_name': model,
-        }
-        cosmos_activity_logs_container.create_item(body=activity_record)
-        log_event(
-            message=f"[AgentRun] Agent used: {agent_name} ({scope}) by user {user_id}",
-            extra=activity_record,
-            level=logging.INFO,
-        )
-        debug_print(f"Agent run logged: {agent_name} ({scope})")
+        })
+        _create_activity_record(activity_record, idempotency_key=f"runtime:{attempt_id}")
     except Exception as e:
         log_event(
-            message=f"[AgentRun] Error logging agent run: {str(e)}",
+            message="[ACTIVITY_LOGGING] Agent usage could not be recorded.",
             extra={
                 'user_id': user_id,
                 'agent_id': agent_id,
-                'agent_name': agent_name,
                 'scope': scope,
-                'error': str(e),
+                'error_type': type(e).__name__,
             },
             level=logging.ERROR,
         )
-        debug_print(f"Warning: Failed to log agent run: {str(e)}")
 
 
 def log_action_creation(
@@ -2743,6 +2762,11 @@ def log_workflow_run(
     workspace_type: str = 'personal',
     group_id: Optional[str] = None,
     public_workspace_id: Optional[str] = None,
+    started_at: Optional[str] = None,
+    completed_at: Optional[str] = None,
+    duration_ms: Optional[float] = None,
+    outcome: Optional[str] = None,
+    scope_id: Optional[str] = None,
 ) -> None:
     """Log a workflow run activity."""
     try:
@@ -2751,14 +2775,32 @@ def log_workflow_run(
             workspace_context['group_id'] = group_id
         if public_workspace_id:
             workspace_context['public_workspace_id'] = public_workspace_id
-        activity_record = {
-            'id': str(uuid.uuid4()),
-            'user_id': user_id,
-            'activity_type': 'workflow_run',
-            'timestamp': datetime.utcnow().isoformat(),
-            'created_at': datetime.utcnow().isoformat(),
-            'entity_type': 'workflow',
-            'operation': 'run',
+        if duration_ms is None and started_at and completed_at:
+            try:
+                start = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+                end = datetime.fromisoformat(completed_at.replace('Z', '+00:00'))
+                duration_ms = (end - start).total_seconds() * 1000
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                duration_ms = None
+        outcome = outcome or {
+            'completed_partial': 'partial', 'incomplete': 'partial',
+            'invalid': 'failed', 'skipped': 'succeeded',
+        }.get(status, status)
+        attempt_id = f"workflow:{workflow_id}:{run_id}" if run_id else str(uuid.uuid4())
+        activity_record = build_usage_record(
+            UsageTarget(
+                'workflow', workflow_id, workflow_name,
+                scope_type=workspace_type or 'personal',
+                scope_id=scope_id or group_id or public_workspace_id or user_id,
+                entity_type=runner_type or 'unknown',
+            ),
+            user_id=user_id, attempt_id=attempt_id, outcome=outcome,
+            duration_ms=duration_ms, workspace_type=workspace_type or 'personal',
+            group_id=group_id or '', public_workspace_id=public_workspace_id or '',
+            workflow_id=workflow_id, run_id=run_id or '',
+            conversation_id=conversation_id or '', trigger_type=trigger_source,
+        )
+        activity_record.update({
             'entity': {
                 'id': workflow_id,
                 'name': workflow_name,
@@ -2771,19 +2813,14 @@ def log_workflow_run(
                 'status': status,
                 'trigger_source': trigger_source,
                 'conversation_id': conversation_id,
-                'error': error,
+                'error': None,
             },
-        }
-        cosmos_activity_logs_container.create_item(body=activity_record)
-        log_event(
-            message=f"[WorkflowActivity] Workflow run {status}: {workflow_name} by user {user_id}",
-            extra=activity_record,
-            level=logging.INFO if status == 'completed' else logging.WARNING,
-        )
+        })
+        _create_activity_record(activity_record, idempotency_key=f"runtime:{attempt_id}")
     except Exception as e:
         log_event(
-            message=f"[WorkflowActivity] Error logging workflow run: {str(e)}",
-            extra={'user_id': user_id, 'workflow_id': workflow_id, 'error': str(e)},
+            message="[ACTIVITY_LOGGING] Workflow usage could not be recorded.",
+            extra={'user_id': user_id, 'workflow_id': workflow_id, 'error_type': type(e).__name__},
             level=logging.ERROR,
         )
 

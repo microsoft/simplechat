@@ -13,6 +13,12 @@
 
 import { create } from 'zustand';
 import { useUserSettingsStore } from './userSettingsStore';
+import {
+    normalizeColorMode,
+    normalizeCustomColorMode,
+    type ColorMode,
+    type CustomColorMode,
+} from '../lib/colorScheme';
 
 export type ThemeMode = 'light' | 'dark';
 export type ChatWidth = 'comfortable' | 'wide';
@@ -20,6 +26,68 @@ export type ChatWidth = 'comfortable' | 'wide';
 const THEME_STORAGE_KEY = 'simplechat.v2.theme';
 const RAIL_STORAGE_KEY = 'simplechat.v2.rail-collapsed';
 const WIDTH_STORAGE_KEY = 'simplechat.v2.chat-width';
+// The color mode (light, dark, system or custom) and the user's custom colors. Cached locally
+// for the same reason as the theme: the first paint happens before settings load.
+const COLOR_MODE_STORAGE_KEY = 'simplechat.v2.color-mode';
+const CUSTOM_COLORS_STORAGE_KEY = 'simplechat.v2.custom-colors';
+
+function prefersDark(): boolean {
+    try {
+        return Boolean(window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+    } catch {
+        return false;
+    }
+}
+
+function readStoredColorMode(fallback: ThemeMode): ColorMode {
+    try {
+        return normalizeColorMode(localStorage.getItem(COLOR_MODE_STORAGE_KEY)) ?? fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function readStoredCustomColorMode(): CustomColorMode | null {
+    try {
+        const raw = localStorage.getItem(CUSTOM_COLORS_STORAGE_KEY);
+        return raw ? normalizeCustomColorMode(JSON.parse(raw)) : null;
+    } catch {
+        return null;
+    }
+}
+
+function writeLocal(key: string, value: string | null) {
+    try {
+        if (value === null) {
+            localStorage.removeItem(key);
+        } else {
+            localStorage.setItem(key, value);
+        }
+    } catch {
+        /* Preference is not persisted in private mode; the session still works. */
+    }
+}
+
+/**
+ * The light or dark base a color mode resolves to.
+ *
+ * `custom` falls back to the current theme when there is no custom mode to use, or when an
+ * administrator has turned custom modes off, so the document is never left without a base.
+ */
+export function resolveTheme(
+    colorMode: ColorMode,
+    custom: CustomColorMode | null,
+    fallback: ThemeMode,
+    customAllowed = true,
+): ThemeMode {
+    if (colorMode === 'light' || colorMode === 'dark') {
+        return colorMode;
+    }
+    if (colorMode === 'system') {
+        return prefersDark() ? 'dark' : 'light';
+    }
+    return customAllowed && custom ? custom.base : fallback;
+}
 
 function readStoredTheme(): ThemeMode {
     try {
@@ -58,6 +126,10 @@ function applyThemeToDocument(theme: ThemeMode) {
 
 interface UiState {
     theme: ThemeMode;
+    /** What the user picked: a fixed light or dark, follow the system, or their custom colors. */
+    colorMode: ColorMode;
+    /** The user's own color mode, used when `colorMode` is `custom`. */
+    customColorMode: CustomColorMode | null;
     railCollapsed: boolean;
     /** Mobile-only overlay state for the rail; separate from the desktop collapse. */
     mobileNavOpen: boolean;
@@ -71,13 +143,22 @@ interface UiState {
     chatWidth: ChatWidth;
     setTheme: (theme: ThemeMode) => void;
     toggleTheme: () => void;
+    setColorMode: (colorMode: ColorMode) => void;
+    /** Saves the user's custom colors; resolves false when the server refused them. */
+    saveCustomColorMode: (custom: CustomColorMode | null) => Promise<boolean>;
+    /** Applies the base a mode resolves to, without saving anything. */
+    applyResolvedTheme: (customAllowed: boolean) => void;
     toggleRail: () => void;
     toggleChatWidth: () => void;
     setMobileNavOpen: (open: boolean) => void;
 }
 
+const initialTheme = readStoredTheme();
+
 export const useUiStore = create<UiState>((set, get) => ({
-    theme: readStoredTheme(),
+    theme: initialTheme,
+    colorMode: readStoredColorMode(initialTheme),
+    customColorMode: readStoredCustomColorMode(),
     railCollapsed: readStoredRailCollapsed(),
     mobileNavOpen: false,
     chatWidth: readStoredChatWidth(),
@@ -89,12 +170,48 @@ export const useUiStore = create<UiState>((set, get) => ({
         } catch {
             /* Preference is not persisted in private mode; the session still works. */
         }
-        useUserSettingsStore.getState().update({ darkModeEnabled: theme === 'dark' });
-        set({ theme });
+        writeLocal(COLOR_MODE_STORAGE_KEY, theme);
+        useUserSettingsStore.getState().update({ darkModeEnabled: theme === 'dark', v2ColorMode: theme });
+        set({ theme, colorMode: theme });
     },
 
     toggleTheme: () => {
         get().setTheme(get().theme === 'dark' ? 'light' : 'dark');
+    },
+
+    setColorMode: (colorMode) => {
+        const theme = resolveTheme(colorMode, get().customColorMode, get().theme);
+        applyThemeToDocument(theme);
+        writeLocal(THEME_STORAGE_KEY, theme);
+        writeLocal(COLOR_MODE_STORAGE_KEY, colorMode);
+        // darkModeEnabled still follows the resolved base, so the classic interface matches.
+        useUserSettingsStore.getState().update({ darkModeEnabled: theme === 'dark', v2ColorMode: colorMode });
+        set({ theme, colorMode });
+    },
+
+    saveCustomColorMode: async (custom) => {
+        const previous = get().customColorMode;
+        set({ customColorMode: custom });
+        writeLocal(CUSTOM_COLORS_STORAGE_KEY, custom ? JSON.stringify(custom) : null);
+        const settingsStore = useUserSettingsStore.getState();
+        settingsStore.update({ v2CustomColorMode: custom });
+        await settingsStore.flush();
+        if (useUserSettingsStore.getState().saveError) {
+            set({ customColorMode: previous });
+            writeLocal(CUSTOM_COLORS_STORAGE_KEY, previous ? JSON.stringify(previous) : null);
+            return false;
+        }
+        return true;
+    },
+
+    applyResolvedTheme: (customAllowed) => {
+        const { colorMode, customColorMode, theme } = get();
+        const next = resolveTheme(colorMode, customColorMode, theme, customAllowed);
+        applyThemeToDocument(next);
+        if (next !== theme) {
+            writeLocal(THEME_STORAGE_KEY, next);
+            set({ theme: next });
+        }
     },
 
     toggleRail: () => {
@@ -137,10 +254,12 @@ export function initializeTheme() {
  */
 export function hydrateUiPreferences(settings: {
     darkModeEnabled?: unknown;
+    v2ColorMode?: unknown;
+    v2CustomColorMode?: unknown;
     v2RailCollapsed?: unknown;
     v2ChatWidth?: unknown;
 }) {
-    const next: Partial<Pick<UiState, 'theme' | 'railCollapsed' | 'chatWidth'>> = {};
+    const next: Partial<Pick<UiState, 'theme' | 'railCollapsed' | 'chatWidth' | 'colorMode' | 'customColorMode'>> = {};
 
     if (typeof settings.darkModeEnabled === 'boolean') {
         const theme: ThemeMode = settings.darkModeEnabled ? 'dark' : 'light';
@@ -161,6 +280,28 @@ export function hydrateUiPreferences(settings: {
 
     if (settings.v2ChatWidth === 'wide' || settings.v2ChatWidth === 'comfortable') {
         next.chatWidth = settings.v2ChatWidth;
+    }
+
+    // darkModeEnabled is shared with the classic interface and stays the authority for a plain
+    // light or dark choice, so switching there is honoured here. v2ColorMode only adds what
+    // classic has no way to express: following the system, or a custom mode.
+    const storedMode = normalizeColorMode(settings.v2ColorMode);
+    const colorMode =
+        storedMode === 'system' || storedMode === 'custom'
+            ? storedMode
+            : typeof settings.darkModeEnabled === 'boolean'
+              ? settings.darkModeEnabled
+                  ? 'dark'
+                  : 'light'
+              : storedMode;
+    if (colorMode) {
+        writeLocal(COLOR_MODE_STORAGE_KEY, colorMode);
+        next.colorMode = colorMode;
+    }
+    if ('v2CustomColorMode' in settings) {
+        const custom = normalizeCustomColorMode(settings.v2CustomColorMode);
+        writeLocal(CUSTOM_COLORS_STORAGE_KEY, custom ? JSON.stringify(custom) : null);
+        next.customColorMode = custom;
     }
 
     if (Object.keys(next).length > 0) {

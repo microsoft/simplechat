@@ -37,7 +37,6 @@ import type {
     OrchestrationPlanWorkflow,
     OrchestrationPlanWorkflowResult,
     OrchestrationStep,
-    OrchestrationRole,
     OrchestrationValidation,
     PlanComplexity,
     PlanEdits,
@@ -969,15 +968,34 @@ export function orderStepsForDisplay(steps: OrchestrationStep[]): OrchestrationS
     return steps.slice();
 }
 
-const ROLE_LABELS: Record<OrchestrationRole, { label: string; progress: string }> = {
-    gather: { label: 'Gather', progress: 'Gathering' },
-    reason: { label: 'Reason', progress: 'Reasoning' },
-    render: { label: 'Render', progress: 'Rendering' },
-};
+function stepPurpose(step: OrchestrationStep): { label: string; progress: string } {
+    if (step.capability_id === 'compose' || step.capability_id === 'document_create_from_reference') {
+        return { label: 'Prepare answer', progress: 'Preparing answer' };
+    }
+    if (step.role === 'render' || step.capability_id.startsWith('render_')) {
+        return { label: 'Deliver file', progress: 'Preparing file' };
+    }
+    if (step.capability_id === 'tabular_analyze') {
+        const operation = step.arguments.native_operation;
+        if (operation === 'relate') return { label: 'Gather evidence', progress: 'Calculating' };
+        if (operation === 'prepare') return { label: 'Gather evidence', progress: 'Preparing evidence' };
+    }
+    if (step.capability_id === 'document_compare') {
+        return { label: 'Gather evidence', progress: 'Comparing' };
+    }
+    if (step.capability_id === 'document_search') {
+        return { label: 'Gather evidence', progress: 'Searching' };
+    }
+    if (step.role === 'gather') return { label: 'Gather evidence', progress: 'Reading evidence' };
+    if (step.role === 'reason') return { label: 'Prepare answer', progress: 'Reasoning' };
+    return { label: 'Gather evidence', progress: 'Working' };
+}
+
 export function stepRoleLabel(step: OrchestrationStep, progress = false): string | null {
     const role = step.role;
-    if (role !== 'gather' && role !== 'reason' && role !== 'render') return null;
-    return ROLE_LABELS[role][progress ? 'progress' : 'label'];
+    if (role !== 'gather' && role !== 'reason' && role !== 'render' && !step.capability_id) return null;
+    const purpose = stepPurpose(step);
+    return purpose[progress ? 'progress' : 'label'];
 }
 
 /** Step statuses after which a step reports nothing more in this run. */

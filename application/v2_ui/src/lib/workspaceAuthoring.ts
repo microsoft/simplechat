@@ -57,6 +57,7 @@ export interface AuthoringResource<T> {
     revision: string;
     secret_paths: string[];
     read_only: boolean;
+    credential_reentry_required?: Array<{ path: string; label: string }>;
 }
 
 export interface EditorWrite {

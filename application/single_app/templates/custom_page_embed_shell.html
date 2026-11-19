@@ -1,0 +1,36 @@
+{# templates/custom_page_embed_shell.html -#}
+{#-
+    The chrome-less shell for a static custom page. V2 frames /custom/<slug>?embed=1, which renders
+    this template, and a page open to any signed-in user is served it as a full page in the
+    modern interface. The classic copy, custom_page_shell.html, is unchanged.
+
+    There is no hero here. When V2 frames the page, its own page header carries the title, and a
+    second title inside the frame would repeat it. A page opened on its own gets the slim bar
+    from custom_page_embed_base.html instead.
+-#}
+{% extends "custom_page_embed_base.html" %}
+
+{% block title %}{{ custom_page.title }}{% endblock %}
+
+{% block page_title %}{{ custom_page.title }}{% endblock %}
+
+{% block head %}
+    {% for stylesheet in custom_page.css_files %}
+        <link rel="stylesheet" href="{{ url_for('custom_pages.custom_page_asset', slug=custom_page.slug, folder='css', filename=stylesheet) }}" />
+    {% endfor %}
+{% endblock %}
+
+{% block content %}
+<section class="custom-page" data-custom-page-slug="{{ custom_page.slug }}">
+    <div class="custom-page-content">
+        {# xss-check: ignore - Custom page HTML files are deployment-time trusted app-team content loaded from the deployed artifact, not end-user input. #}
+        {{ custom_page_html | safe }}
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+    {% for script in custom_page.js_files %}
+        <script type="module" src="{{ url_for('custom_pages.custom_page_asset', slug=custom_page.slug, folder='js', filename=script) }}"></script>
+    {% endfor %}
+{% endblock %}

@@ -48,6 +48,7 @@ import { GlassButton } from '../ui/primitives';
 import { inputClass } from './fields';
 import { ModelCatalogDetail, type CatalogDetailTab } from './ModelCatalogDetail';
 import { ModelCatalogEditor } from './ModelCatalogEditor';
+import { ModelCatalogUpdates } from './ModelCatalogUpdates';
 
 interface Notice {
     kind: 'info' | 'success' | 'error';
@@ -398,6 +399,10 @@ export function ModelCatalogManager({
                 <p className="mb-4 max-w-[72ch] text-[0.8125rem] leading-relaxed text-text-3">{help}</p>
             ) : null}
 
+            <ModelCatalogUpdates locked={locked || dirty} onApplied={() => {
+                onSaved();
+                void load();
+            }} />
             <fieldset disabled={locked} className="m-0 min-w-0 border-0 p-0">
                 <legend className="sr-only">Model Catalog</legend>
 

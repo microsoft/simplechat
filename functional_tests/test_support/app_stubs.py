@@ -15,7 +15,7 @@ Only the seams that keep a pure-logic module from importing are stubbed. A test
 that needs real behaviour from one of these dependencies should not be using
 this helper.
 
-Version: 0.261.207
+Version: 0.261.447
 Workflow diagnostic import surface updated in: 0.261.140
 Workflow creation activity stub added in: 0.261.207
 """
@@ -43,6 +43,7 @@ def _build_stub_modules():
     activity_logging.log_web_search_consent_acceptance = lambda **payload: None
     # route_backend_orchestration imports it for accepted workflow proposals.
     activity_logging.log_workflow_creation = lambda **payload: None
+    activity_logging.log_agent_run = lambda **payload: None
 
     appinsights = types.ModuleType("functions_appinsights")
     appinsights.log_event = lambda *args, **kwargs: None

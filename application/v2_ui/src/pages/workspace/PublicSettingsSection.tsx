@@ -5,11 +5,9 @@
 //
 // The danger zone describes deletion as it actually is. Deleting a public workspace removes only its
 // record (functions_public_workspaces.delete_public_workspace): its documents, prompts, identities and
-// file sources are not deleted with it, and the classic DELETE route checks nothing but ownership. The
-// classic page itself refuses to start a delete while its own document count (every stored document
-// record, earlier versions included) is above zero, so the copy says that of the page, never that the
-// server enforces it. The count shown here is this workspace's own current documents, from the native
-// file-count read, never classic's number.
+// file sources are not deleted with it, and the DELETE route checks nothing but ownership. Like classic's
+// manage page, the section holds the delete while the workspace still has documents, so the count it
+// quotes and enforces is this workspace's own current documents, from the native file-count read.
 
 import { useMemo } from 'react';
 import { Globe } from 'lucide-react';
@@ -22,7 +20,7 @@ import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { WorkspaceSettingsSection, type WorkspaceSettingsSectionScope } from './WorkspaceSettingsSection';
 
 export function PublicSettingsSection({
-    adapter, management, interactionDisabled, onBusyChange, onDirtyChange, onAccessChanged, onSaved, onOpenClassic,
+    adapter, management, interactionDisabled, onBusyChange, onDirtyChange, onAccessChanged, onSaved, onDeleted,
 }: {
     adapter: PublicSettingsAdapter;
     /** The latest `settings_management` hint from the workspace context (see WorkspaceSettingsSection). */
@@ -35,8 +33,8 @@ export function PublicSettingsSection({
     onAccessChanged: () => void;
     /** Re-read the workspace context after a successful profile or logo save, so the header follows. */
     onSaved: () => void;
-    /** Open the classic public workspace page for the delete flow classic still owns. */
-    onOpenClassic: () => void;
+    /** Leave the workspace page once it is deleted: read the workspaces again and return to the list. */
+    onDeleted: () => void | Promise<void>;
 }) {
     const { singular, lower_singular: lowerSingular } = usePublicWorkspaceLabels();
     // Keyed on the label strings, which the bootstrap re-read may rebuild as a fresh object.
@@ -64,24 +62,34 @@ export function PublicSettingsSection({
         downloadsHint: 'Its documents stay available in chat; nobody can download the original files.',
         danger: {
             title: `Delete this ${lowerSingular}`,
-            body: `Deleting removes only the ${lowerSingular} record. Its documents, prompts, identities and file `
-                + `sources are left behind, not deleted with it. Deletion still happens on the classic ${lowerSingular} `
-                + 'page, which counts documents itself, earlier versions included, and won\u2019t start while it finds any.',
+            body: `Deleting is permanent. It removes only the ${lowerSingular} record, so everyone loses access to it. `
+                + `Its documents have to be removed first, and its prompts, identities and file sources are left behind, `
+                + 'not deleted with it.',
             counting: `Counting the ${lowerSingular}\u2019s documents...`,
             count: (count) => (count === 0
                 ? `This ${lowerSingular} holds no current documents.`
-                : `This ${lowerSingular} holds ${count} current document${count === 1 ? '' : 's'}.`),
-            button: `Delete ${lowerSingular} (classic)`,
-            confirmTitle: `Delete this ${lowerSingular} in classic?`,
-            confirmDescription: `Deletion is permanent and is completed on the classic ${lowerSingular} page. It removes `
-                + `only the ${lowerSingular} record; its documents, prompts, identities and file sources stay behind. `
-                + 'You\u2019ll be taken there to confirm.',
+                : `This ${lowerSingular} holds ${count} current document${count === 1 ? '' : 's'}. `
+                    + `Remove them before deleting the ${lowerSingular}.`),
+            button: `Delete ${lowerSingular}`,
+            confirmTitle: `Delete this ${lowerSingular}?`,
+            confirmDescription: (name) => `Delete ${name} permanently? Everyone loses access to it right away, and `
+                + 'this can\u2019t be undone.',
+            confirmDetail: `The ${lowerSingular} holds no current documents. Its prompts, identities and file sources `
+                + 'are left behind, not deleted with it.',
+            confirmLabel: `Delete ${lowerSingular}`,
+            checkFailed: `The document count couldn\u2019t be checked, so the ${lowerSingular} wasn\u2019t deleted. Try again.`,
+            held: `The ${lowerSingular} wasn\u2019t deleted because it still holds documents. Remove them first.`,
+            failed: `The ${lowerSingular} couldn\u2019t be deleted. Try again.`,
+            gone: `This ${lowerSingular} no longer exists. It may already have been deleted.`,
+            deleted: (name) => `${name} was deleted.`,
+            leaving: `The ${lowerSingular} was deleted. Returning to the ${lowerSingular} list...`,
+            unsaved: `Save or discard your profile and retention changes before deleting the ${lowerSingular}.`,
         },
     }), [singular, lowerSingular]);
 
     return (
         <WorkspaceSettingsSection scope={scope} adapter={adapter} management={management}
             interactionDisabled={interactionDisabled} onBusyChange={onBusyChange} onDirtyChange={onDirtyChange}
-            onAccessChanged={onAccessChanged} onSaved={onSaved} onOpenClassic={onOpenClassic} />
+            onAccessChanged={onAccessChanged} onSaved={onSaved} onDeleted={onDeleted} />
     );
 }

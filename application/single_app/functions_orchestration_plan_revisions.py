@@ -46,7 +46,8 @@ from functions_orchestration_registry import (
 from functions_orchestration_result_contracts import InputBinding, ResultContractError, ResultRef
 from functions_orchestration_schema import (
     LEGACY_PLAN_CODE, LEGACY_PLAN_MESSAGE, PlanValidationError, apply_plan_edits, is_legacy_plan,
-    plan_approval_floor, plan_contract_version, summarize_plan,
+    generated_plan_admission_stamp, plan_approval_floor, plan_contract_version, summarize_plan,
+    validate_generated_plan_tabular_admission,
 )
 from functions_orchestration_timing import initial_execution_deadline
 
@@ -860,6 +861,8 @@ def _new_revision(record, document, turn_context, chat, instruction, origin):
         raise _invalid('A validated plan is required.')
     if origin not in ('ai', 'restore'):
         raise _invalid('Invalid revision origin.')
+    if origin == 'ai':
+        validate_generated_plan_tabular_admission(document)
     contract_version = plan_revision_contract_version(record['plan'], record)
     if plan_revision_contract_version(document, turn_context) != contract_version:
         raise _invalid('A revision cannot change the saved plan contract.')
@@ -896,6 +899,15 @@ def _new_revision(record, document, turn_context, chat, instruction, origin):
         'revision_root_run_id': _root_id(record), 'parent_run_id': record['id'],
         'revision_origin': origin,
         'revision_note': instruction[:EDIT_NOTE_LIMIT] if isinstance(instruction, str) else '',
+        'generated_plan_origin': (
+            'model' if origin == 'ai'
+            else record.get('generated_plan_origin', 'trusted_legacy')
+        ),
+        'generated_plan_admission': (
+            generated_plan_admission_stamp(plan)
+            if origin == 'ai'
+            else deepcopy(record.get('generated_plan_admission'))
+        ),
     }
     for key in (*_IMMUTABLE_FIELDS, *_OPTIONAL_TURN_FIELDS, *_CONTEXT_FIELDS):
         if key in record:
@@ -1050,6 +1062,22 @@ def claim_plan_run(
         contract_version=contract_version, export_catalog=admitted_catalog,
         composition_profiles=composition_profiles,
     )
+    admission = record.get('generated_plan_admission')
+    admission_origin = record.get(
+        'generated_plan_origin',
+        'model' if admission is not None else 'trusted_legacy',
+    )
+    if admission_origin == 'model':
+        validate_generated_plan_tabular_admission(plan)
+    if (
+        admission_origin not in ('model', 'trusted_legacy')
+        or admission_origin == 'model'
+        and admission != generated_plan_admission_stamp(plan)
+    ):
+        raise PlanRevisionError(
+            'This plan changed after its generated calculation policy was admitted. Ask for a new plan.',
+            code='prepared_calculation_required',
+        )
     _require_approval_floor(record, plan)
     started_at = _now()
     now = started_at.isoformat()

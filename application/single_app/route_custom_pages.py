@@ -7,13 +7,18 @@ import logging
 
 from flask import Response, jsonify, render_template, request, send_file, session
 
+import functions_ui_mode
 from functions_appinsights import log_event
 from functions_authentication import admin_required, login_required
 from functions_custom_pages import (
+    CUSTOM_PAGE_EMBED_QUERY_PARAM,
+    CUSTOM_PAGE_EMBED_QUERY_VALUE,
+    allow_same_origin_framing,
     build_custom_page_context,
     delete_custom_page,
     get_custom_page,
     is_custom_page_authorized,
+    is_custom_page_embeddable,
     is_custom_pages_enabled,
     list_custom_pages,
     resolve_custom_page_file,
@@ -67,17 +72,45 @@ def _strip_markdown_front_matter(markdown_text):
     return markdown_text
 
 
+def _is_embed_request():
+    """Return True when the request asks for the chrome-less copy the V2 interface frames."""
+    return request.args.get(CUSTOM_PAGE_EMBED_QUERY_PARAM) == CUSTOM_PAGE_EMBED_QUERY_VALUE
+
+
+def _is_modern_standalone_page(page, settings):
+    """Return True when a page must be served chrome-less as a full page of its own.
+
+    Pages open to any signed-in user are the ones people without the app role reach, such as
+    Request Access, and /v2 refuses those people. In the modern interface they therefore cannot
+    be shown inside the V2 shell, and the classic shell would put the classic navigation around
+    a page of an interface they were not given.
+    """
+    return (
+        page.get("access_level") == "authenticated"
+        and functions_ui_mode.get_ui_mode(settings) == functions_ui_mode.UI_MODE_MODERN
+    )
+
+
 def _render_custom_page_response(slug):
     """Render a custom page response for canonical and compatibility routes."""
     page, settings, error_response = _load_enabled_custom_page_or_404(slug)
     if error_response:
         return error_response
 
+    public_settings = sanitize_settings_for_user(settings)
+    embeddable = is_custom_page_embeddable(page)
+    framed_embed = embeddable and _is_embed_request()
+    standalone_embed = embeddable and not framed_embed and _is_modern_standalone_page(page, settings)
+    embed_mode = framed_embed or standalone_embed
+
     if page.get("entry_type") == "python":
         extension = page.get("extension")
         if not extension or not hasattr(extension, "render"):
             return "Not Found", 404
-        return extension.render(build_custom_page_context(page, sanitize_settings_for_user(settings)))
+        response = extension.render(build_custom_page_context(page, public_settings, embed=embed_mode))
+        if framed_embed:
+            allow_same_origin_framing()
+        return response
 
     html_file = page.get("html_file")
     html_path, error = resolve_custom_page_file(page, "html", html_file)
@@ -92,11 +125,23 @@ def _render_custom_page_response(slug):
     with open(html_path, "r", encoding="utf-8") as html_handle:
         trusted_html = html_handle.read()
 
+    if embed_mode:
+        response = render_template(
+            "custom_page_embed_shell.html",
+            custom_page=page,
+            custom_page_html=trusted_html,
+            settings=public_settings,
+            embed_standalone=standalone_embed,
+        )
+        if framed_embed:
+            allow_same_origin_framing()
+        return response
+
     return render_template(
         "custom_page_shell.html",
         custom_page=page,
         custom_page_html=trusted_html,
-        settings=sanitize_settings_for_user(settings),
+        settings=public_settings,
     )
 
 

@@ -1,8 +1,9 @@
 # test_orchestration_initial_claim_recovery.py
 """Initial V2 claims survive interruption before the first execution checkpoint.
 
-Version: 0.261.129
+Version: 0.261.445
 Implemented in: 0.261.129
+Timeout fallback alignment added in: 0.261.445
 Real claims, preparation, scheduler and checkpoint owners run with external I/O
 doubled. Tests never fabricate an initial deadline or substitute checkpoint owners.
 """
@@ -67,11 +68,11 @@ def execution_clock(harness, monkeypatch):
 @pytest.mark.parametrize("configured, expected", [
     (173, 173),
     ("173", 173),
-    (None, 600),
-    (0, 600),
-    (-2, 600),
-    ("invalid", 600),
-    ([], 600),
+    (None, 900),
+    (0, 900),
+    (-2, 900),
+    ("invalid", 900),
+    ([], 900),
 ])
 def test_initial_claim_persists_the_deadline_in_its_own_conditional_write(
     harness, monkeypatch, configured, expected,
@@ -487,19 +488,25 @@ def deny_network(event, args):
 
 sys.addaudithook(deny_network)
 sys.path.insert(0, sys.argv[1])
-from functions_orchestration_timing import execution_timeout_seconds, initial_execution_deadline
+from functions_orchestration_timing import (
+    execution_timeout_seconds, initial_execution_deadline, step_timeout_seconds,
+)
 
 loaded_owners = {"config", "functions_appinsights", "functions_settings"}.intersection(sys.modules)
 if loaded_owners:
     raise SystemExit("Timing imported an application owner.")
 started = datetime(2030, 1, 1, tzinfo=timezone.utc)
-for configured, expected in ((173, 173), ("173", 173), (None, 600), (0, 600), ("bad", 600)):
+for configured, expected in ((173, 173), ("173", 173), (None, 900), (0, 900), ("bad", 900)):
     settings = {"chat_orchestration_total_timeout_seconds": configured}
     seconds = execution_timeout_seconds(settings)
     deadline = initial_execution_deadline(started, settings)
     elapsed = (datetime.fromisoformat(deadline) - started).total_seconds()
     if seconds != expected or elapsed != expected:
         raise SystemExit("Initial and runtime timeout policies diverged.")
+for configured, expected in ((173, 173), ("173", 173), (None, 180), (0, 180), ("bad", 180)):
+    settings = {"chat_orchestration_step_timeout_seconds": configured}
+    if step_timeout_seconds(settings) != expected:
+        raise SystemExit("Step timeout fallback diverged from the shipped default.")
 if network_attempts:
     raise SystemExit("Timing swallowed a network failure.")
 sys.stdout.write("timing-policy-ready")

@@ -12,6 +12,12 @@ The V2 Control Center is a separate administration pane for users assigned Contr
 
 The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. Users, Groups and Public Workspaces have native V2 management.
 
+## Refresh the stored figures
+
+The Users and Groups lists, and the Dashboard figures that come from them, read stored snapshots of each person's and group's activity. Control Center administrators see a strip under the page title that says when those figures were **last refreshed** and when the **automatic refresh** runs next. It runs daily by itself; choose **Refresh data** to run it now, for example when Users shows "Not refreshed" on a deployment whose schedule has not fired yet.
+
+While it runs the button reads "Refreshing data…". When it finishes the strip says how many users and groups were updated and reloads the section you are on. If some could not be refreshed the message is a warning and stays on screen, because those figures are as old as before; a failure shows the server's reason and reloads nothing. The refresh covers users and groups. Public workspace figures are read from stored records, so **Refresh workspaces** there rereads them rather than recalculating. Dashboard readers do not see the strip. The daily schedule is set under **Admin Settings → Operations → Automatic Data Refresh**.
+
 ## Manage users
 
 Open **Users** to find accounts by email or display name, filter by access, upload permission, recent login, or document ownership, and sort usage columns. Accounts without a recorded value for the sort column, such as users whose metrics have not been refreshed yet, are listed after the others in either direction. Filters and sorting are reflected in the URL, so a filtered view can be bookmarked or opened from a Dashboard drill-through. The list reports when its cached usage metrics were calculated and how many accounts on the current page have not yet received a metrics refresh.
@@ -113,6 +119,18 @@ Under the filters, a slim trend strip shows how many records match, one bar per 
 Each row reads as a sentence: the time, the person, the activity, what happened and the workspace. Select a person, an activity or a workspace in any row to filter the log by it. Select the details to open the record. Times show in your local time; hover over a time to see it in UTC, or switch the table to **UTC**. **Compact** fits more rows on screen. Both choices are remembered on your account. The log reads 50 records at a time, newest first; **Refresh** starts over with newly recorded activity.
 
 The record drawer shows what happened, **Who** (with **Show only this person's activity** and **Open in Users**), **Where** (with **Show only this workspace** and the group or workspace), the recorded details, and the record's IDs and approval link. The raw JSON is collapsed at the bottom with **Copy JSON**. Use **Previous** and **Next** to step through the page without closing the drawer.
+
+### Agent, action and workflow usage
+
+Implemented in **0.261.447**. Expand **Agent, action & workflow usage** inside Activity Logs to review recorded invocation attempts, distinct executing users, outcomes, and measured durations. It includes actual retries and delegated calls rather than configuration changes or selections.
+
+Usage inherits the date, person and workspace filters. Its exact entity, configuration-scope, host, authentication-category, operation and outcome filters also work in saved investigation URLs. General log search and token/model filters do not change usage totals. **View events** narrows the log to a ranked entity/operation; **Export usage CSV** exports metadata-only rankings.
+
+Only the configured action host and operation are recorded, not full URLs, tool inputs/outputs, prompts, or credentials. Unknown historical metadata is not interpreted as success, zero duration, or unauthenticated access. Historical action executions are not backfilled, and older agent records do not cover every failure or retry.
+
+Usage totals are calculated separately from the activity trend strip's 5,000-record sample. The inclusive UTC window defaults to 30 days and cannot exceed 366 days. Queries above 250,000 records or 20,000 distinct entity/operation combinations fail explicitly instead of showing partial totals; narrow the filters and retry. Complete results may be cached for 90 seconds; **Reload usage** recalculates them.
+
+Distinct users are counted independently for each entity and kind; adding row counts can count the same person twice. Average duration excludes missing measurements, and nested agent/tool durations overlap. These are recorded operational attempts, not token/cost allocations or an exactly-once billing ledger. Process termination, unavailable storage, and activity-log retention can leave gaps.
 
 ### Save and reuse views
 

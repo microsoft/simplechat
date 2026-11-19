@@ -62,7 +62,7 @@ def test_group_selection_populates_shared_shell_without_personal_data(group_ui, 
     # The Owner's server-computed document_management offers upload, so the native command renders
     # in group scope while nothing personal is read.
     expect(ui.page.get_by_role("button", name="Upload", exact=True)).to_be_visible()
-    expect(ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True)).to_have_count(0)
     assert not [entry for entry in ui.requests if entry.path.startswith("/api/documents") or entry.path in ("/api/user/plugins", "/api/user/agents")]
     section(ui.page, "Overview")
     ui.assert_no_overflow()
@@ -367,16 +367,6 @@ def test_refocus_retains_dirty_draft_and_blocks_saving_until_access_is_confirmed
     ui.page.get_by_role("button", name="Retry workspace details", exact=True).click()
     expect(ui.page.get_by_role("button", name="Save Call agent action", exact=True)).to_be_enabled()
     expect(ui.page.get_by_label("Action name", exact=True)).to_have_value("Retained draft")
-
-
-def test_classic_handoff_reconfirms_the_selected_group(group_ui):
-    ui = group_ui
-    ui.active_group = "group-a"
-    ui.open("/groups/group-a/documents")
-    ui.active_group = "group-b"
-    ui.page.get_by_role("button", name="Open classic tools for group documents", exact=True).click()
-    expect(ui.page).to_have_url(f"{ORIGIN}/group_workspaces")
-    assert ui.classic_visits == [("/group_workspaces", "group-a")]
 
 
 def test_disabled_and_revoked_workspaces_do_not_fetch_resources(group_ui):

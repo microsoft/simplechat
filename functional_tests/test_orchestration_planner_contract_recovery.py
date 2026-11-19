@@ -1,8 +1,13 @@
 # test_orchestration_planner_contract_recovery.py
 """
 Functional regressions for effective planner contracts and document action binding.
-Version: 0.261.423
+Version: 0.261.446
 Implemented in: 0.261.419; 0.261.422
+Source-schema preflight and native semantic correction added in: 0.261.439
+Column preflight and content-free schema locations added in: 0.261.443
+Complete tabular purpose handoff added in: 0.261.444
+Effective-limit and protocol recovery added in: 0.261.445
+Prepared multi-source admission added in: 0.261.446
 
 Real registry, planner, validation, source preparation and logger owners run with
 external model/storage I/O isolated. A corrected draft must retain the original
@@ -20,6 +25,7 @@ from test_orchestration_document_planning_recovery import planning, proposal, ru
 from test_orchestration_harness_routes import modules, real_http_harness
 from test_orchestration_source_kind_planning import LEFT, RIGHT, candidates, enrich, source_runtime
 from test_support.orchestration_harness_execution import compose_step, input_binding
+from test_tabular_relational_calculations import join_spec
 
 
 __all__ = ["planning", "modules", "real_http_harness", "source_runtime"]
@@ -29,6 +35,15 @@ ACTION = {
     "scope_type": "personal", "scope_id": "owner", "scope_label": "Personal",
 }
 PRIVATE = "PRIVATE_PROMPT_OR_DOCUMENT_CONTENT"
+
+
+@pytest.fixture(autouse=True)
+def trusted_legacy_relational_planner_contract(monkeypatch):
+    """Keep the old explicit-spec validator tests on the separate compatibility path."""
+    schema = importlib.import_module("functions_orchestration_schema")
+    monkeypatch.setattr(
+        schema, "validate_generated_plan_tabular_admission", lambda _plan: None,
+    )
 
 
 def action_proposal(document_ids=(LEFT,), *, action=ACTION):
@@ -88,6 +103,119 @@ def correction_records(caplog):
     ]
 
 
+def test_planner_always_sees_effective_limits_without_advertising_handoff(planning):
+    planning.harness.settings.update(
+        chat_orchestration_max_steps=2,
+        chat_orchestration_total_timeout_seconds=173,
+    )
+    kind, plan = run_plan(planning, [proposal([LEFT])])
+    assert kind == "plan"
+    prompt = planning.harness.model_calls[0]["messages"][0]["content"]
+    assert "At most 2 steps in one plan." in prompt
+    assert "At most 173 seconds for the whole plan to run." in prompt
+    assert "workflow_handoff step" not in prompt
+    assert "Hand-off tasks can run" not in prompt
+
+
+def test_oversized_and_protocol_drafts_share_the_two_correction_allowance(planning, caplog):
+    valid = proposal([LEFT])
+    oversized = deepcopy(valid)
+    duplicate = deepcopy(oversized["steps"][0])
+    duplicate["step_id"] = "extra-read"
+    oversized["steps"].insert(1, duplicate)
+    planning.harness.settings["chat_orchestration_max_steps"] = 2
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(planning, ["not a plan", oversized, valid])
+    assert kind == "plan" and plan["validation"]["ok"]
+    assert len(planning.harness.model_calls) == 3
+    records = correction_records(caplog)
+    assert [record.sc_validation_code for record in records] == [
+        "plan_structure_invalid", "result_step_limit",
+    ]
+    assert records[-1].sc_plan_step_count == 3
+    assert records[-1].sc_plan_step_limit == 2
+
+
+@pytest.mark.parametrize("draft,rule", [
+    ({"kind": "unsupported"}, "invalid_planner_response_kind"),
+    ({"kind": "plan"}, "invalid_plan_work"),
+    ({"kind": "plan", "steps": "not-a-list"}, "invalid_plan_work"),
+    ({"kind": "plan", "steps": []}, "invalid_plan_work"),
+])
+def test_model_owned_protocol_drafts_receive_one_bounded_correction(planning, caplog, draft, rule):
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(planning, [draft, proposal([LEFT])])
+    assert kind == "plan" and plan["validation"]["ok"]
+    assert len(planning.harness.model_calls) == 2
+    assert correction_records(caplog)[0].sc_validation_rule == rule
+
+
+@pytest.mark.parametrize("fault,rule", [
+    ("header_subset", "relational_schema_mismatch"),
+    ("selection_order", "relational_selection_invalid"),
+])
+def test_native_calculation_drafts_get_precise_correction_without_becoming_previews(planning, caplog, fault, rule):
+    columns = {LEFT: ["exercise", "code", "quantity"], RIGHT: ["exercise", "sku", "price"]}
+    sources = [{
+        "document_id": identifier, "file_name": f"{identifier}.csv", "source_kind": "tabular",
+        "availability": "available",
+        "inspection": {
+            "status": "inspected",
+            "tables": [{"sheet": None, "header_row": 1, "columns": header, "sample_rows": []}],
+        },
+    } for identifier, header in columns.items()]
+    spec = join_spec()
+    spec["datasets"][0].update(document_id=LEFT, columns=columns[LEFT])
+    spec["datasets"][1].update(document_id=RIGHT, columns=columns[RIGHT])
+    corrected = proposal([LEFT, RIGHT])
+    corrected["steps"][0] = {
+        "step_id": "read", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Compute complete order amounts from both original sources.",
+            "native_operation": "relate", "document_ids": [LEFT, RIGHT], "relational_spec": spec,
+        },
+    }
+    corrected["steps"][1]["inputs"] = {
+        name: {"binding": input_binding("read", name), "allow_partial": False}
+        for name in ("records", "lineage", "coverage")
+    }
+    corrected["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "calculation", "document_ids": [LEFT, RIGHT],
+    }
+    invalid = deepcopy(corrected)
+    if fault == "header_subset":
+        invalid["steps"][0]["arguments"]["relational_spec"]["datasets"][0]["columns"] = ["code", "quantity"]
+    else:
+        invalid["steps"][0]["arguments"]["document_ids"].reverse()
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(
+            planning, [invalid, corrected], identifiers=(LEFT, RIGHT),
+            context_updates={"selected_sources": sources},
+        )
+    assert kind == "plan"
+    assert len(planning.harness.model_calls) == 2
+    assert correction_records(caplog)[0].sc_validation_rule == rule
+    assert plan["steps"][0]["capability_id"] == "tabular_analyze"
+    assert plan["steps"][0]["arguments"]["relational_spec"]["datasets"][0]["columns"] == columns[LEFT]
+    assert {output["name"] for output in plan["steps"][0]["outputs"]} == {"records", "lineage", "coverage"}
+    assert planning.harness.assistant_messages() == []
+    assert planning.harness.blobs.file_uploads == 0
+
+
+def test_document_gather_reference_must_come_from_the_admitted_catalog(planning, caplog):
+    invalid = action_proposal()
+    invalid["steps"][0]["arguments"]["action_ref"] = "DocumentSearchPlugin"
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_action_plan(planning, [invalid, action_proposal()])
+    assert kind == "plan"
+    assert len(planning.harness.model_calls) == 2
+    assert plan["steps"][0]["arguments"]["action_ref"] == ACTION["action_ref"]
+    assert plan["steps"][0]["arguments"]["document_ids"] == [LEFT]
+    assert correction_records(caplog)[0].sc_validation_rule == "action_unavailable"
+    assert planning.harness.assistant_messages() == []
+    assert planning.harness.blobs.file_uploads == 0
+
+
 @pytest.mark.parametrize("options,records", [
     (None, False),
     ({}, True),
@@ -142,6 +270,45 @@ def test_requested_records_are_corrected_by_explicit_semantics_not_dropped(plann
     assert plan["steps"][0]["arguments"]["analysis_options"]["required_fields"] == ["amount"]
     assert correction_records(caplog)[0].sc_validation_rule == "fixed_output_not_supported"
     assert {call["model"] for call in planning.harness.model_calls} == {"gpt-4o"}
+
+
+def test_selected_tabular_search_preview_requires_an_explicit_compose_purpose(planning, caplog):
+    preview_only = proposal([RIGHT])
+    corrected = deepcopy(preview_only)
+    corrected["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "overview", "document_ids": [RIGHT],
+    }
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(
+            planning, [preview_only, corrected], identifiers=(RIGHT,),
+        )
+    assert kind == "plan" and len(planning.harness.model_calls) == 2
+    assert correction_records(caplog)[0].sc_validation_rule == "tabular_requirement_required"
+    assert plan["steps"][1]["arguments"]["tabular_requirement"] == {
+        "mode": "overview", "document_ids": [RIGHT],
+    }
+
+
+def test_model_labelled_tabular_overview_cannot_prepare_preview_records(planning, caplog):
+    invalid = proposal([RIGHT])
+    invalid["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "overview", "document_ids": [RIGHT],
+    }
+    invalid["steps"][1]["outputs"] = [{
+        "name": "answer", "kind": "records-v1",
+        "columns": [{"name": "total", "value_type": "number", "nullable": False}],
+    }]
+    corrected = proposal([RIGHT])
+    corrected["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "overview", "document_ids": [RIGHT],
+    }
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(
+            planning, [invalid, corrected], identifiers=(RIGHT,),
+        )
+    assert kind == "plan" and len(planning.harness.model_calls) == 2
+    assert correction_records(caplog)[0].sc_validation_rule == "tabular_overview_output_invalid"
+    assert plan["steps"][1]["outputs"] == [{"name": "answer", "kind": "markdown-v1"}]
 
 
 @pytest.mark.parametrize("invalid", ["kind", "missing", "shape", "input"])
@@ -374,3 +541,143 @@ def test_model_owned_step_and_graph_declarations_are_corrected_once(planning, sh
     assert kind == "plan" and len(planning.harness.model_calls) == 2
     assert plan["steps"][0]["arguments"]["document_ids"] == [LEFT]
     assert [step["capability_id"] for step in plan["steps"]] == ["document_search", "compose"]
+
+
+def relate_case(*, inspected=True):
+    """A valid native calculation over two sources, and what the planner knows of their headers."""
+    columns = {LEFT: ["exercise", "code", "quantity"], RIGHT: ["exercise", "sku", "price"]}
+    sources = [{
+        "document_id": identifier, "file_name": f"{identifier}.csv", "source_kind": "tabular",
+        "availability": "available",
+        "inspection": {
+            "status": "inspected",
+            "tables": [{"sheet": None, "header_row": 1, "columns": header, "sample_rows": []}],
+        } if inspected else {"status": "limited"},
+    } for identifier, header in columns.items()]
+    spec = join_spec()
+    spec["datasets"][0]["document_id"] = LEFT
+    spec["datasets"][1]["document_id"] = RIGHT
+    corrected = proposal([LEFT, RIGHT])
+    corrected["steps"][0] = {
+        "step_id": "read", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Compute complete order amounts from both original sources.",
+            "native_operation": "relate", "document_ids": [LEFT, RIGHT], "relational_spec": spec,
+        },
+    }
+    corrected["steps"][1]["inputs"] = {
+        name: {"binding": input_binding("read", name), "allow_partial": False}
+        for name in ("records", "lineage", "coverage")
+    }
+    corrected["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "calculation", "document_ids": [LEFT, RIGHT],
+    }
+    return sources, corrected
+
+
+def logged_text(caplog):
+    return json.dumps([
+        {name: value for name, value in record.__dict__.items() if name.startswith("sc_")}
+        for record in caplog.records
+    ])
+
+
+def test_an_unavailable_column_is_corrected_with_its_role_before_approval(planning, caplog):
+    sources, corrected = relate_case()
+    invalid = deepcopy(corrected)
+    invalid["steps"][0]["arguments"]["relational_spec"]["steps"][0]["on"][0]["right"] = "catalog.private_marker_typo"
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(
+            planning, [invalid, corrected], identifiers=(LEFT, RIGHT),
+            context_updates={"selected_sources": sources},
+        )
+    assert kind == "plan" and len(planning.harness.model_calls) == 2
+    record = correction_records(caplog)[0]
+    assert record.sc_validation_rule == "relational_column_missing"
+    assert (record.sc_native_check, record.sc_native_role, record.sc_native_category, record.sc_native_step_op) == (
+        "column_missing", "join_right_key", "name_not_in_prefix", "join",
+    )
+    assert record.sc_native_step_index == 0
+    repair = planning.harness.model_calls[1]["messages"][-1]["content"]
+    assert '"native_role": "join_right_key"' in repair and "column rules and expression grammar" in repair
+    assert "private_marker" not in repair and "private_marker" not in logged_text(caplog)
+    assert plan["steps"][0]["capability_id"] == "tabular_analyze"
+
+
+def test_the_column_preflight_never_guesses_a_header_the_planner_does_not_know(planning):
+    sources, corrected = relate_case(inspected=False)
+    unverifiable = deepcopy(corrected)
+    unverifiable["steps"][0]["arguments"]["relational_spec"]["steps"][0]["on"][0]["right"] = "catalog.skuu"
+    kind, plan = run_plan(
+        planning, [unverifiable], identifiers=(LEFT, RIGHT), context_updates={"selected_sources": sources},
+    )
+    assert kind == "plan" and len(planning.harness.model_calls) == 1
+    assert plan["steps"][0]["arguments"]["relational_spec"]["steps"][0]["on"][0]["right"] == "catalog.skuu"
+
+
+def test_a_header_the_reader_spells_differently_is_left_to_the_run(planning):
+    sources, proposed = relate_case()
+    # Discovery shows the stored text; the calculation reader collapses repeated spaces, so the spelling
+    # the planner used may be the one the reader accepts and the preflight must not call it unavailable.
+    sources[1]["inspection"]["tables"][0]["columns"][2] = "unit  price"
+    spec = proposed["steps"][0]["arguments"]["relational_spec"]
+    spec["steps"][1]["transform"]["fields"][0]["expression"]["right"] = {"source": "catalog.unit price"}
+    kind, _plan = run_plan(
+        planning, [proposed], identifiers=(LEFT, RIGHT), context_updates={"selected_sources": sources},
+    )
+    assert kind == "plan" and len(planning.harness.model_calls) == 1
+
+
+@pytest.mark.parametrize("fault,expected", [
+    ("unsupported_property", {
+        "argument_keyword": "additionalproperties", "argument_path": "relational_spec_steps_1",
+        "argument_branch": "derive",
+    }),
+    ("unknown_operation", {"argument_keyword": "const", "argument_path": "relational_spec_steps_1_op"}),
+    ("missing_property", {
+        "argument_keyword": "required", "argument_path": "relational_spec_steps_0", "argument_branch": "join",
+    }),
+    ("derive_with_several_faults", {
+        "argument_keyword": "additionalproperties", "argument_path": "relational_spec_steps_1_transform",
+        "argument_branch": "derive",
+    }),
+])
+def test_a_relational_schema_rejection_names_the_step_and_what_is_allowed(planning, caplog, fault, expected):
+    sources, corrected = relate_case()
+    invalid = deepcopy(corrected)
+    steps = invalid["steps"][0]["arguments"]["relational_spec"]["steps"]
+    if fault == "unsupported_property":
+        steps[1]["private_marker_property"] = "private_marker_value"
+    elif fault == "unknown_operation":
+        steps[1]["op"] = "private_marker_operation"
+    elif fault == "derive_with_several_faults":
+        steps[1]["transform"] = {"version": "unsupported", "fields": [], "private_marker": True}
+    else:
+        del steps[0]["how"]
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, _plan = run_plan(
+            planning, [invalid, corrected], identifiers=(LEFT, RIGHT),
+            context_updates={"selected_sources": sources},
+        )
+    assert kind == "plan" and len(planning.harness.model_calls) == 2
+    record = correction_records(caplog)[0]
+    assert record.sc_validation_code == "plan_arguments_invalid" and record.sc_argument_field == "relational_spec"
+    for name, value in expected.items():
+        assert getattr(record, f"sc_{name}") == value
+    repair = planning.harness.model_calls[1]["messages"][-1]["content"]
+    assert "private_marker" not in repair and "private_marker" not in logged_text(caplog)
+    if fault == "unsupported_property":
+        assert '"allowed_properties": ["id", "input", "op", "transform"]' in repair
+    elif fault == "unknown_operation":
+        assert (
+            '"allowed_values": ["join", "filter", "derive", "project", "aggregate", '
+            '"allocate", "cumulative_sum"]'
+        ) in repair
+    elif fault == "derive_with_several_faults":
+        marker = "Content-free diagnostics: "
+        diagnostics, _end = json.JSONDecoder().raw_decode(repair[repair.index(marker) + len(marker):])
+        located = diagnostics["argument_problems"][0]
+        assert located["argument_branch"] == "derive" and located["allowed_properties"] == ["fields", "version"]
+        assert "predicate" not in json.dumps(diagnostics)
+    else:
+        assert '"missing_properties": ["how"]' in repair

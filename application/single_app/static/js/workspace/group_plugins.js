@@ -166,7 +166,7 @@ function renderPluginsTable(list) {
         <i class="bi bi-eye"></i>
       </button>`;
 
-    if (canManage && !isGlobal) {
+    if (canManage && !isGlobal && plugin.read_only !== true) {
       actionsHtml += `
         <button type="button" class="btn btn-sm btn-outline-secondary me-1 edit-group-plugin-btn" data-plugin-id="${escapeHtml(plugin.id || plugin.name || '')}">
           <i class="bi bi-pencil"></i>
@@ -220,10 +220,11 @@ function renderPluginsGrid(list) {
   const canManage = canManagePlugins() && groupAllowsModifications();
   list.forEach(plugin => {
     const isGlobal = Boolean(plugin.is_global);
+    const canEdit = canManage && !isGlobal && plugin.read_only !== true;
     const col = createActionCard(plugin, {
       onView: p => openGroupPluginViewModal(p),
-      onEdit: (canManage && !isGlobal) ? p => openPluginModal(p.id || p.name) : null,
-      onDelete: (canManage && !isGlobal) ? p => deleteGroupPlugin(p.id || p.name) : null
+      onEdit: canEdit ? p => openPluginModal(p.id || p.name) : null,
+      onDelete: canEdit ? p => deleteGroupPlugin(p.id || p.name) : null
     });
     gridView.appendChild(col);
   });
@@ -249,7 +250,7 @@ function openGroupPluginViewModal(plugin) {
   const canManage = canManagePlugins() && groupAllowsModifications();
   const isGlobal = Boolean(plugin.is_global);
   const callbacks = {};
-  if (canManage && !isGlobal) {
+  if (canManage && !isGlobal && plugin.read_only !== true) {
     callbacks.onEdit = (p) => openPluginModal(p.id || p.name);
     callbacks.onDelete = (p) => deleteGroupPlugin(p.id || p.name);
   }
@@ -318,10 +319,15 @@ async function openPluginModal(pluginId = null) {
       return;
     }
     try {
-      const response = await fetch(`/api/group/plugins/${encodeURIComponent(pluginId)}`);
+      const groupId = cached?.group_id || currentContext.activeGroupId;
+      const response = await fetch(`/api/group/plugins/${encodeURIComponent(pluginId)}?group_id=${encodeURIComponent(groupId)}`);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(payload?.error || "Failed to load group action");
+      }
+      if (payload.read_only === true) {
+        showToast('This action is read-only. Refresh its permissions before editing.', 'warning');
+        return;
       }
       plugin = payload;
     } catch (error) {
@@ -364,7 +370,8 @@ function setupSaveHandler(existingPlugin, modalInstance) {
         formData.id = existingPlugin.id;
       }
 
-      const validation = await validatePluginManifest(formData);
+      const { expected_revision, clear_secret_paths, ...manifest } = formData;
+      const validation = await validatePluginManifest(manifest);
       const validationFailed = validation === false || (validation && validation.valid === false);
       if (validationFailed) {
         const message = validation?.errors?.join("\n") || "Validation error: Invalid action data.";
@@ -418,7 +425,9 @@ async function saveGroupPlugin(pluginManifest, existingPlugin) {
     payload.id = existingPlugin.id;
   }
 
-  const url = hasId ? `/api/group/plugins/${encodeURIComponent(payload.id)}` : "/api/group/plugins";
+  const groupId = existingPlugin?.group_id || currentContext.activeGroupId;
+  const baseUrl = hasId ? `/api/group/plugins/${encodeURIComponent(payload.id)}` : "/api/group/plugins";
+  const url = `${baseUrl}?group_id=${encodeURIComponent(groupId)}`;
   const method = hasId ? "PATCH" : "POST";
 
   const response = await fetch(url, {

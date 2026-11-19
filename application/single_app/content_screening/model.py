@@ -1060,13 +1060,18 @@ def _checkpoint_record(window, check, fingerprint, model_fingerprint, findings, 
 
 def evaluate_model_units(
     units: list[ContentUnit], check: dict, *, settings=None, client=None, on_progress=None,
-    checkpoint_store=None,
+    checkpoint_store=None, token_ceiling=None, input_ceiling=None, binding_validator=None,
 ) -> DetectorResult:
     """Inspect every required window or return a safe error/incomplete result.
 
     Shared policy limits bound source size, windows, wall time, and findings.
     Output tokens, total tokens, response size, and per-request time have internal
     hard ceilings, not additional editable policy keys.
+    Trusted callers may lower ``token_ceiling`` and ``input_ceiling`` for an
+    operation. Conservative complete-window reservations are checked before
+    inference; defaults preserve the document scanner's existing budgets.
+    A trusted ``binding_validator`` may additionally require the freshly resolved
+    binding to match the host's disclosure before constructing an inference client.
     Missing/placeholder provider usage is charged a conservative request/output reservation,
     not reported as measured token usage. Progress never includes evidence or IDs.
     ``usage.coverage`` binds the canonical source/rule and lists only fully
@@ -1117,6 +1122,13 @@ def evaluate_model_units(
     if checkpoint_store is not None:
         result.usage["checkpoint_windows"] = 0
     try:
+        total_token_limit = _MODEL_MAX_TOTAL_TOKENS if token_ceiling is None else token_ceiling
+        if (
+            type(total_token_limit) is not int or not 1 <= total_token_limit <= _MODEL_MAX_TOTAL_TOKENS
+            or (input_ceiling is not None and (type(input_ceiling) is not int or input_ceiling < 1))
+            or (binding_validator is not None and not callable(binding_validator))
+        ):
+            raise ScreeningValidationError()
         if isinstance(units, (list, tuple)):
             result.required_units = len(units)
         units = normalize_units(units)
@@ -1155,10 +1167,18 @@ def evaluate_model_units(
             )
         )
         binding = _resolve_binding(settings, check["model_selection"])
+        if binding_validator is not None and binding_validator(binding) is not True:
+            raise _ModelFailure("model_configuration_unavailable")
         client, deployment, protocol, behavior = _inference_configuration(
             binding, settings, client, deadline, result, on_progress,
             initialize_client=checkpoint_store is None,
         )
+        if token_ceiling is not None or input_ceiling is not None:
+            reservations = [_parameters(window, check, binding, deployment, protocol, behavior)[1] for window in windows]
+            if sum(reservations) > total_token_limit:
+                raise _ModelFailure("model_token_limit", status="incomplete")
+            if input_ceiling is not None and any(reservation > input_ceiling for reservation in reservations):
+                raise _ModelFailure("model_input_limit", status="incomplete")
         checkpoint_context, model_fingerprint = (
             _checkpoint_context(
                 checkpoint_store, binding, check, check_metadata, planner.source_fingerprint, protocol,
@@ -1184,13 +1204,13 @@ def evaluate_model_units(
                 )
             if cached is not None:
                 findings, window_usage = cached
-                if result.usage["budgeted_tokens"] + window_usage["budgeted_tokens"] > _MODEL_MAX_TOTAL_TOKENS:
+                if result.usage["budgeted_tokens"] + window_usage["budgeted_tokens"] > total_token_limit:
                     raise _ModelFailure("model_token_limit", status="incomplete")
                 for name in _MODEL_USAGE_FIELDS:
                     result.usage[name] += window_usage[name]
                 result.usage["checkpoint_windows"] += 1
             else:
-                if result.usage["budgeted_tokens"] + reservation > _MODEL_MAX_TOTAL_TOKENS:
+                if result.usage["budgeted_tokens"] + reservation > total_token_limit:
                     raise _ModelFailure("model_token_limit", status="incomplete")
                 _emit_progress(result, on_progress)
                 if client is None:
@@ -1209,7 +1229,7 @@ def evaluate_model_units(
                 reported = _record_usage(response, result)
                 if reported is not None:
                     result.usage["budgeted_tokens"] += reported - reservation
-                if result.usage["budgeted_tokens"] > _MODEL_MAX_TOTAL_TOKENS:
+                if result.usage["budgeted_tokens"] > total_token_limit:
                     raise _ModelFailure("model_token_limit", status="incomplete")
                 content = _response_text(response, _MODEL_MAX_RESPONSE_CHARACTERS)
                 result.usage["output_characters"] += len(content)
