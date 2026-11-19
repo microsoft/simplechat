@@ -1,0 +1,145 @@
+{
+    "libraries": [
+        {
+            "name": "Microsoft Teams SDK",
+            "version": "2.19.0",
+            "source": "https://www.npmjs.com/package/@microsoft/teams-js/v/2.19.0",
+            "license": "MIT; application/single_app/static/js/MicrosoftTeams.min.LICENSE.txt",
+            "patch": "Only m=new URL(remote trusted-domain JSON) becomes m=/static/js/teams-2.19.0/validDomains.json. The snapshot is the identical embedded SDK validOrigins list; origin matching and embedded-list fallback are unchanged.",
+            "upstream_sha256": "5424d056be67ce60974bee82c8954f311628c1cef62bb028501eea261116b97c",
+            "files": [
+                "application/single_app/static/js/MicrosoftTeams.min.js",
+                "application/single_app/static/js/MicrosoftTeams.min.LICENSE.txt",
+                "application/single_app/static/js/teams-2.19.0/validDomains.json"
+            ],
+            "sha256": {
+                "application/single_app/static/js/MicrosoftTeams.min.js": "591da54cb3eb1202de968b2780bed77d3a54ba9b931fded99e042021f6dbd827",
+                "application/single_app/static/js/teams-2.19.0/validDomains.json": "ea2b4b9aa8c659101356922c57637f334ebf4dd63bba535b174b29e255706e4e"
+            },
+            "upstream_original_sha256": "9be1f4e408255d8ce3c2a379c1fbf872a2ba754ba8ba1c842f9c84e28970c58e"
+        },
+        {
+            "name": "V2 rich rendering",
+            "version": "KaTeX 0.18.4; Mermaid 11.17.2; Chart.js 4.5.1; DOMPurify 3.4.14; OpenLayers 10.6.1",
+            "source": "https://registry.npmjs.org/",
+            "license": "Per-library LICENSE or LICENSE.md in each versioned public/vendor directory",
+            "patch": "Unmodified local bundles. KaTeX CSS references local fonts; OpenLayers worker source is embedded in the bundle. public/vendor is copied by Vite, not fetched at runtime.",
+            "files": [
+                "application/v2_ui/src/lib/vendorAssets.ts",
+                "application/v2_ui/public/vendor/katex-0.18.4/katex.min.js",
+                "application/v2_ui/public/vendor/katex-0.18.4/katex.min.css",
+                "application/v2_ui/public/vendor/katex-0.18.4/LICENSE",
+                "application/v2_ui/public/vendor/mermaid-11.17.2/mermaid.min.js",
+                "application/v2_ui/public/vendor/mermaid-11.17.2/LICENSE",
+                "application/v2_ui/public/vendor/chartjs-4.5.1/chart.umd.min.js",
+                "application/v2_ui/public/vendor/chartjs-4.5.1/LICENSE.md",
+                "application/v2_ui/public/vendor/dompurify-3.4.14/purify.min.js",
+                "application/v2_ui/public/vendor/dompurify-3.4.14/LICENSE",
+                "application/v2_ui/public/vendor/openlayers-10.6.1/ol.js",
+                "application/v2_ui/public/vendor/openlayers-10.6.1/ol.css",
+                "application/v2_ui/public/vendor/openlayers-10.6.1/LICENSE.md"
+            ]
+        },
+        {
+            "name": "Classic and standalone fixture libraries",
+            "version": "Bootstrap 5.3.3; Marked 15.0.7; SimpleMDE 1.11.2; Mermaid 11.17.2; OpenLayers 10.6.1",
+            "source": "Version and upstream attribution are retained in distribution headers",
+            "license": "Upstream attribution in the existing distribution headers; Mermaid LICENSE alongside bundle",
+            "patch": "Existing SimpleMDE patch disables automatic FontAwesome/dictionary downloads. Browser fixtures reuse Marked and Bootstrap plus V2 DOMPurify rather than downloading a second copy.",
+            "files": [
+                "application/single_app/static/css/bootstrap.min.css",
+                "application/single_app/static/js/chat/marked.min.js",
+                "application/single_app/static/js/simplemde/simplemde.js",
+                "application/single_app/static/js/simplemde/simplemde.min.js",
+                "application/single_app/static/js/mermaid/mermaid-11.17.2.min.js",
+                "application/single_app/static/js/mermaid/LICENSE",
+                "application/single_app/static/js/openlayers/ol.js",
+                "application/single_app/static/css/openlayers/ol.css",
+                "application/single_app/static/swagger-ui/swagger-ui-bundle.js",
+                "application/single_app/static/swagger-ui/swagger-ui-standalone-preset.js",
+                "application/single_app/static/swagger-ui/swagger-ui.css"
+            ]
+        },
+        {
+            "name": "Documentation libraries",
+            "version": "Bootstrap 5.3.0; Bootstrap Icons 1.11.3; Prism 1.29.0; Lunr 2.3.9",
+            "source": "Versioned docs/assets/vendor and docs/assets/js/vendor distributions",
+            "license": "LICENSE in each versioned directory; fonts LICENSE-OFL.txt",
+            "patch": "No remote analytics loader. Fonts and syntax grammars are served from docs assets.",
+            "files": [
+                "docs/assets/vendor/bootstrap-5.3.0/LICENSE",
+                "docs/assets/vendor/bootstrap-icons-1.11.3/LICENSE",
+                "docs/assets/vendor/prism-1.29.0/LICENSE",
+                "docs/assets/js/vendor/lunr-2.3.9/LICENSE",
+                "docs/assets/vendor/fonts/fonts.css",
+                "docs/assets/vendor/fonts/LICENSE-OFL.txt"
+            ]
+        },
+        {
+            "name": "Reviewed minified distributions",
+            "version": "Distribution bytes pinned by SHA-256 with CRLF normalized to LF; upstream versions and attribution remain in existing file headers and versioned directories",
+            "source": "Existing repository-vendored distributions; no new runtime downloads",
+            "license": "Retain upstream attribution in distribution headers and adjacent license files",
+            "patch": "Computed loader identifiers cannot be resolved across minified scopes by the static checker. Any byte change requires renewed loader review and browser validation. Remote literal loader checks still run. Local-only sourceMappingURL comments are retained; missing development maps are not runtime fallbacks.",
+            "files": [
+                "application/single_app/static/js/MicrosoftTeams.min.js",
+                "application/single_app/static/js/chart.min.js",
+                "application/single_app/static/js/prism-original.js",
+                "application/single_app/static/js/prism-tomorrow-night.js",
+                "application/single_app/static/js/bootstrap/bootstrap.bundle.min.js",
+                "application/single_app/static/js/bootstrap/bootstrap.esm.min.js",
+                "application/single_app/static/js/bootstrap/bootstrap.min.js",
+                "application/single_app/static/js/chat/bootstrap.bundle.min.js",
+                "application/single_app/static/js/chat/dataTables.responsive.min.js",
+                "application/single_app/static/js/chat/jquery.dataTables.min.js",
+                "application/single_app/static/js/chat/jquery.min.js",
+                "application/single_app/static/js/chat/marked.min.js",
+                "application/single_app/static/js/chat/purify.min.js",
+                "application/single_app/static/js/datatables/datatables.min.js",
+                "application/single_app/static/js/mermaid/mermaid-11.17.2.min.js",
+                "application/single_app/static/js/openlayers/ol.js",
+                "application/single_app/static/js/simplemde/simplemde.min.js",
+                "application/single_app/static/swagger-ui/swagger-ui-bundle.js",
+                "application/single_app/static/swagger-ui/swagger-ui-standalone-preset.js",
+                "application/v2_ui/public/vendor/chartjs-4.5.1/chart.umd.min.js",
+                "application/v2_ui/public/vendor/dompurify-3.4.14/purify.min.js",
+                "application/v2_ui/public/vendor/katex-0.18.4/katex.min.js",
+                "application/v2_ui/public/vendor/mermaid-11.17.2/mermaid.min.js",
+                "application/v2_ui/public/vendor/openlayers-10.6.1/ol.js",
+                "docs/assets/js/vendor/lunr-2.3.9/lunr.min.js",
+                "docs/assets/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js",
+                "docs/assets/vendor/prism-1.29.0/prism.min.js"
+            ],
+            "sha256": {
+                "application/single_app/static/js/MicrosoftTeams.min.js": "591da54cb3eb1202de968b2780bed77d3a54ba9b931fded99e042021f6dbd827",
+                "application/single_app/static/js/chart.min.js": "321e3a3fa98da4aaa957d10be57cbb514de0989eed8f9d726b5d05902cd01904",
+                "application/single_app/static/js/prism-original.js": "208af7d85fab5541858b19a1912c2cadde91760f366c69b2b91f81d16024a4e0",
+                "application/single_app/static/js/prism-tomorrow-night.js": "e496da11caac9d76b617f80b34b7760cffe6b7080bbc3818255ef966c31d34e4",
+                "application/single_app/static/js/bootstrap/bootstrap.bundle.min.js": "0833b2e9c3a26c258476c46266e6877fc75218625162e0460be9a3a098a61c6c",
+                "application/single_app/static/js/bootstrap/bootstrap.esm.min.js": "4197454f564d765cb8ae681406d5e65c54bd054d454dafac3deea1efde2c1514",
+                "application/single_app/static/js/bootstrap/bootstrap.min.js": "de040986d9a3ed89d5d5f9ad6d5727015e9e238c2cd13af8f1b55909386d0864",
+                "application/single_app/static/js/chat/bootstrap.bundle.min.js": "0833b2e9c3a26c258476c46266e6877fc75218625162e0460be9a3a098a61c6c",
+                "application/single_app/static/js/chat/dataTables.responsive.min.js": "d58bfe4fe08a3da83d4e921ff7bb9a84759d361d59b59c512bd6e888a0345eda",
+                "application/single_app/static/js/chat/jquery.dataTables.min.js": "a33146fad8c7228dc4dc90043e3e50d51cead8b2267aeac32b0a8f3be8a52b86",
+                "application/single_app/static/js/chat/jquery.min.js": "ff1523fb7389539c84c65aba19260648793bb4f5e29329d2ee8804bc37a3fe6e",
+                "application/single_app/static/js/chat/marked.min.js": "874536e781eeb9f967ff84bad12ff8c7c040e55d3d581b390a94fffb2c87b43f",
+                "application/single_app/static/js/chat/purify.min.js": "291e88071b6814a7d87449a603d125fc45ce53fbb05f2c4da14d4862ecc0e8ff",
+                "application/single_app/static/js/datatables/datatables.min.js": "10147704a2127d874b6f1ec7e9c55e3101d2674f5e224abc6de685c66e6a546f",
+                "application/single_app/static/js/mermaid/mermaid-11.17.2.min.js": "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8",
+                "application/single_app/static/js/openlayers/ol.js": "eb5ceb37f7f15f210e9a9db54e471b994ed1f3b205af73c98a7156c95a911b77",
+                "application/single_app/static/js/simplemde/simplemde.min.js": "d42b6dc31a2e207f9dba5796501722ccb0279ca58dad3c662881b1dd40e05da1",
+                "application/single_app/static/swagger-ui/swagger-ui-bundle.js": "fd76294e33356ab3fd111ddaeeb10d3f79de8ae1a4d34dbf777f5eef224648d9",
+                "application/single_app/static/swagger-ui/swagger-ui-standalone-preset.js": "8e910e1d42309b49aec560301a5d32930c698848df752ced0490691918ce9a5b",
+                "application/v2_ui/public/vendor/chartjs-4.5.1/chart.umd.min.js": "48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a",
+                "application/v2_ui/public/vendor/dompurify-3.4.14/purify.min.js": "c2f26ea4fc0d88141c9aa430eb515ac86fce59418ceebd85fa475b87a8d6c3e6",
+                "application/v2_ui/public/vendor/katex-0.18.4/katex.min.js": "2ec5916941ef4383e0314eaabcc712301b06001d9fb68e08d751d2bae5a27a1a",
+                "application/v2_ui/public/vendor/mermaid-11.17.2/mermaid.min.js": "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8",
+                "application/v2_ui/public/vendor/openlayers-10.6.1/ol.js": "eb5ceb37f7f15f210e9a9db54e471b994ed1f3b205af73c98a7156c95a911b77",
+                "docs/assets/js/vendor/lunr-2.3.9/lunr.min.js": "0c50d9002b85780a842afffb567bb54ede402dae7c6dc5997a018614d8044fc8",
+                "docs/assets/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js": "aa53d582f97eb594c2a5cc5824574707f9ba9837bce3046bfa5f3556860f4e04",
+                "docs/assets/vendor/prism-1.29.0/prism.min.js": "e7b88bddc6c757b2fc8cb113e2469801ab14a78ec1a8fada4d6391e3573f5f9f"
+            }
+        }
+    ],
+    "checksum_format": "SHA-256 of distribution bytes with CRLF normalized to LF for Git checkout portability; all other bytes are unchanged."
+}

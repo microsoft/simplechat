@@ -15,10 +15,13 @@
             "source": "https://mcr.microsoft.com/api/v1/catalog/azurelinux/distroless/python/tags?reg=mar"
         },
         {
-            "reference": "mcr.microsoft.com/azurelinux/base/nodejs:20.14.0-13-azl3.0.20260304@sha256:b8a48ba88fdff68c20a2895cb002d547ea47779e37e2fdcb6cd64e4a875f8a71",
+            "reference": "mcr.microsoft.com/azurelinux/base/nodejs:24.22.3-1-azl3.0.20261116@sha256:1c87a74ac10b0ad7711bcc862fa6a2b13e6a4db96d3a026dbb7fcf8486d57ba3",
             "file": "application/single_app/Dockerfile",
-            "released_at": "2026-03-11T21:31:55Z",
-            "source": "https://mcr.microsoft.com/api/v1/catalog/azurelinux/base/nodejs/tags?reg=mar"
+            "source": "https://mcr.microsoft.com/v2/azurelinux/base/nodejs/manifests/24.22.3-1-azl3.0.20261116",
+            "inherited_from": {
+                "commit": "a86483d3f12dfb4b969f4ce7f552f23be6f9c6b6",
+                "reference": "mcr.microsoft.com/azurelinux/base/nodejs:24.22.3-1-azl3.0.20261116"
+            }
         },
         {
             "reference": "mcr.microsoft.com/devcontainers/base:1.2.6-ubuntu-24.04@sha256:763eca1839b2c6366f25b9c2b4c75c46e3d485a8d1b95f725e829397398a4c46",
@@ -53,11 +56,13 @@
             "precision": "Release date conservatively treated as end of day UTC."
         },
         {
-            "reference": "20.20.2",
+            "reference": "24.22.3",
             "file": ".github/workflows/staging-ui-smoke.yml",
-            "released_at": "2026-03-24T23:59:59Z",
             "source": "https://nodejs.org/dist/index.json",
-            "precision": "Release date conservatively treated as end of day UTC."
+            "inherited_from": {
+                "commit": "a86483d3f12dfb4b969f4ce7f552f23be6f9c6b6",
+                "reference": "24.22.3"
+            }
         },
         {
             "reference": "24.22.1",

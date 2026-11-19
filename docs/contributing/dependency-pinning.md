@@ -7,6 +7,7 @@ permalink: /contributing/dependency-pinning/
 ---
 
 Implemented in version: **0.261.454** (`application/single_app/config.py`).
+Current integration version: **0.261.460**.
 
 ## Selection policy
 
@@ -14,6 +15,10 @@ Retain existing exact versions and lock resolutions unless a compatibility
 repair requires changing them. Every newly selected release, including a
 transitive dependency, must have been published for at least **14 full days**.
 Existing exact pins are grandfathered; their age is not a reason to downgrade.
+When integrating an existing security pin from Development, retain that version
+and record its immutable baseline commit in `inherited_from` selection evidence.
+The audit checks the baseline content and exact reference rather than inventing
+an older publication timestamp.
 
 Only SimpleChat's own application image in its Azure Container Registry may
 use `latest`. Third-party images, devcontainer features, installed tools, and
@@ -44,7 +49,9 @@ python -m pip install -r scripts/requirements-dependency-locks.txt
 python scripts/lock_python_dependencies.py --uv uv
 ```
 
-The generator keeps existing constraint selections by default. `--upgrade`
+The generator keeps existing constraint selections by default, releasing only
+an obsolete constraint for an explicitly changed direct pin. During a merge,
+both parents supply the existing exact-version baseline. `--upgrade`
 explicitly permits new selections, still subject to release-age checks.
 `--profile` limits regeneration to one environment. A trusted `--index-url`
 or local `--find-links` cache may be supplied; do not disable TLS validation

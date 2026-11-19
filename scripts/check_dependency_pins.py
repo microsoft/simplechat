@@ -214,6 +214,21 @@ def audit_selections(root):
         source = root / selection["file"]
         if not source.is_file() or selection["reference"] not in source.read_text(encoding="utf-8"):
             errors.append(finding(selection["file"], "selection-sync", "Selection evidence no longer matches its input."))
+        inherited = selection.get("inherited_from")
+        if inherited:
+            if (
+                not re.fullmatch(r"[a-f0-9]{40}", inherited["commit"])
+                or selection["reference"].split("@sha256:", 1)[0] != inherited["reference"]
+            ):
+                errors.append(finding(selection["file"], "inherited-pin", "Inherited evidence must identify the same exact pin and a full commit SHA."))
+                continue
+            baseline = subprocess.run(
+                ["git", "show", f"{inherited['commit']}:{selection['file']}"],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            if baseline.returncode or inherited["reference"] not in baseline.stdout:
+                errors.append(finding(selection["file"], "inherited-pin", "Existing pin is not present in the recorded baseline."))
+            continue
         error = release_age_error(selection["released_at"], evidence["selected_at"])
         if error:
             errors.append(finding(selection["file"], "release-age", error))

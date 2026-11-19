@@ -1,6 +1,6 @@
 -c ../application/single_app/requirements.lock.txt
 pytest==9.0.3
-playwright==1.58.0
+playwright==1.65.1
 pytest-playwright==0.7.2
 azure-mgmt-playwright==1.0.0
 azure-identity==1.24.0

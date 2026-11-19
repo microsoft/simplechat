@@ -5,6 +5,15 @@ Package: @microsoft/teams-js
 Pinned version: 2.19.0
 Source: https://www.npmjs.com/package/@microsoft/teams-js
 
+Local patch (SimpleChat 0.261.456):
+The single trusted-domain JSON URL is /static/js/teams-2.19.0/validDomains.json,
+not the upstream CDN. This snapshot contains exactly the 35 validOrigins in
+this SDK's embedded list. No domains were added or removed from that list.
+The SDK's existing matching, validation and embedded-list fallback are unchanged.
+SSO token exchange and other service calls are not redirected.
+Review SDK and domain updates together; do not silently refresh from a live CDN.
+Checksums and patch provenance: functional_tests/browser_asset_inventory.json.
+
 MIT License
 
 Copyright (c) Microsoft Corporation.

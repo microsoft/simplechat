@@ -1,9 +1,10 @@
 # Existing staging UI validation
 
-Version: **0.261.402**, tracked in `application/single_app/config.py`.
+Version: **0.261.453**, tracked in `application/single_app/config.py`.
 
 Fixed/Implemented in version: **0.261.399**; isolated runner-local validation
-implemented in **0.261.400**; pinned per-session onboarding in **0.261.401**.
+implemented in **0.261.400**; pinned per-session onboarding in **0.261.401**;
+patched Node/Playwright runtime baseline in **0.261.453**.
 
 ## Purpose and scope
 
@@ -197,6 +198,12 @@ to repair a redeployment.
 The job validates configuration, logs in with OIDC, obtains application
 authentication when configured, and checks endpoint reachability with normal
 TLS certificate validation.
+
+The job uses Node 24.22.3 and Python Playwright 1.65.1. The independent JavaScript
+runner retains its own pinned Playwright package and browser download; each
+runner must use its matching browser revision. The Python package also bundles
+its own patched Node driver, independent of the job's system Node. See
+[Brotli Runtime Security Fix](../fixes/BROTLI_RUNTIME_SECURITY_FIX.md).
 
 A redirect, 401, or 403 can establish that an authentication boundary is
 reachable; it does not prove that the application is ready or the test identity

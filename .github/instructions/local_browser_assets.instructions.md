@@ -10,6 +10,12 @@ Never load browser runtime JavaScript from the public Internet. If SimpleChat us
 
 This rule also applies to browser companion assets that are required by JavaScript libraries, including CSS, fonts, source maps, worker files, WebAssembly files, dictionaries, and library-managed fallback downloads.
 
+It applies to all runtime-loaded third-party assets, including standalone CSS,
+fonts, library-managed JSON metadata and optional loaders, across the classic
+app, V2, Swagger UI, documentation, standalone browser fixtures and generators.
+The Teams SDK trusted-domain list is a versioned local snapshot; review its
+origin-validation behavior when updating it.
+
 ## Required Pattern
 
 - Store third-party browser assets under an appropriate local static path, such as `application/single_app/static/js/<vendor>/` or `application/single_app/static/css/<vendor>/`.
@@ -38,7 +44,21 @@ When adding or changing browser assets:
 3. Add or update a regression test when fixing an external asset dependency.
 4. Run a syntax check for changed JavaScript files, such as `node --check <file>`.
 5. Run `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check` before finishing.
+6. Run `python scripts/check_browser_assets.py`. After building V2, run it with
+   `--require-v2-build`; the CI gate requires built output rather than silently
+   skipping it. Run `functional_tests/test_browser_assets.py` and
+   `ui_tests/test_local_runtime_assets.py` for scanner and real-library coverage.
+7. Review changed minified distributions and update their SHA-256 entries in
+   `functional_tests/browser_asset_inventory.json` only after tracing computed
+   loaders and companion dependencies. Hashes enforce review of changes; they
+   are not a vulnerability assessment or a replacement for browser testing.
 
 ## Allowed Network Calls
 
 This rule does not prohibit authenticated API calls, application data fetches, server-side Azure service calls, proxied map tile requests, user-requested links, or documentation-only examples. It specifically prohibits loading browser runtime code and required companion assets from public Internet CDNs.
+
+Normal package installation, package registries, lockfiles and build-time
+dependency resolution are unchanged. Packages bundled into local output do
+not need to be copied into a second vendor directory. Do not blanket-block API
+connectivity to enforce the asset rule. Upstream attribution and namespace URLs
+inside local files are not network loaders.

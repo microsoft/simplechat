@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 BASE_IMAGE = "mcr.microsoft.com/azurelinux/base/python:3.12.16-1-azl3.0.20261028@sha256:71a1f5a1821f4c56e45aff52e792ed6c0500631e201cfc140c4c9d22886b29f9"
 PACKAGES = {
-    "common": ["curl", "ca-certificates", "unixODBC", "unixODBC-devel", "msodbcsql18"],
+    "common": ["curl", "ca-certificates", "unixODBC", "unixODBC-devel", "msodbcsql18", "libgcc-atomic"],
     "chromium": [
         "alsa-lib", "atk", "at-spi2-atk", "at-spi2-core", "cairo", "cups-libs",
         "dbus-libs", "expat", "fontconfig", "freetype", "glib2", "gtk3", "libdrm",

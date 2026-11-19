@@ -4084,7 +4084,10 @@ def _graph_get_json(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         },
         params=params,
         timeout=20,
+        allow_redirects=False,
     )
+    if 300 <= response.status_code < 400:
+        raise requests.exceptions.HTTPError("Microsoft Graph metadata redirects are not allowed", response=response)
     response.raise_for_status()
     return response.json()
 
@@ -4094,19 +4097,23 @@ def _get_directory_user_by_id(user_id: str) -> Optional[Dict[str, str]]:
     if not normalized_user_id:
         return None
 
+    user_endpoint = get_graph_endpoint(f"/users/{quote(normalized_user_id, safe='')}")
     token = get_valid_access_token()
     if not token:
         raise PermissionError("Could not acquire access token")
 
     response = requests.get(
-        get_graph_endpoint(f"/users/{quote(normalized_user_id)}"),
+        user_endpoint,
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         },
         params={"$select": "id,displayName,mail,userPrincipalName"},
         timeout=20,
+        allow_redirects=False,
     )
+    if 300 <= response.status_code < 400:
+        raise requests.exceptions.HTTPError("Microsoft Graph metadata redirects are not allowed", response=response)
     if response.status_code == 404:
         return None
     response.raise_for_status()

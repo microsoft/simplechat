@@ -97,16 +97,36 @@ def combine_platforms(resolutions):
     return "\n".join(lines) + "\n", packages
 
 
+def retained_constraints(source, inputs):
+    direct = {
+        canonical_name(match[1]): match[2]
+        for line in inputs if (match := REQUIREMENT.fullmatch(line))
+    }
+    retained = []
+    for line in source.splitlines():
+        match = REQUIREMENT.fullmatch(line.split(";", 1)[0].strip())
+        if match and canonical_name(match[1]) in direct and direct[canonical_name(match[1])] != match[2]:
+            continue
+        retained.append(line)
+    return "\n".join(retained) + "\n"
+
+
 def generate(profile, args, selected):
     input_names, output_name = PROFILES[profile]
     output = ROOT / output_name
     visited = set()
     inputs = read_inputs([ROOT / name for name in input_names], visited)
     existing = set()
-    for path in [*visited, output]:
+    baselines = ["HEAD"]
+    merge = subprocess.run(
+        ["git", "rev-parse", "--verify", "MERGE_HEAD"], cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    if merge.returncode == 0:
+        baselines.append(merge.stdout.strip())
+    for baseline, path in ((baseline, path) for baseline in baselines for path in [*visited, output]):
         relative = path.relative_to(ROOT).as_posix()
         result = subprocess.run(
-            ["git", "show", f"HEAD:{relative}"], cwd=ROOT, capture_output=True, text=True, check=False,
+            ["git", "show", f"{baseline}:{relative}"], cwd=ROOT, capture_output=True, text=True, check=False,
         )
         if result.returncode:
             continue
@@ -120,6 +140,9 @@ def generate(profile, args, selected):
         directory = Path(directory)
         source = directory / "requirements.in"
         source.write_text("\n".join(sorted(inputs)) + "\n", encoding="utf-8")
+        constraints = directory / "constraints.txt"
+        if output.is_file() and not args.upgrade:
+            constraints.write_text(retained_constraints(output.read_text(encoding="utf-8"), inputs), encoding="utf-8")
         versions = ("3.11", "3.12") if profile in {"catalog", "build"} else ("3.12",)
         targets = [
             (version, platform, target) for version in versions
@@ -134,8 +157,8 @@ def generate(profile, args, selected):
             ]
             for name, _ in sorted(existing):
                 command.extend(("--exclude-newer-package", f"{name}={selected.isoformat()}"))
-            if output.is_file() and not args.upgrade:
-                command.extend(("--constraint", str(output)))
+            if constraints.is_file():
+                command.extend(("--constraint", str(constraints)))
             if args.index_url:
                 command.extend(("--index-url", args.index_url))
             if args.find_links:

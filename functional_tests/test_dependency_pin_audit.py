@@ -1,7 +1,7 @@
 # test_dependency_pin_audit.py
 """Regressions for honest direct-pin and transitive-lock auditing.
 
-Version: 0.261.454
+Version: 0.261.460
 Implemented in: 0.261.454
 """
 
@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from packaging.requirements import Requirement
@@ -135,6 +136,43 @@ def test_python_lock_retains_python_and_platform_specific_packages():
             }):
                 selected.add(requirement.name)
         assert selected == names
+
+
+def test_python_lock_updates_changed_direct_pins_without_upgrading_other_constraints():
+    generator = load_dependency_script("scripts/lock_python_dependencies.py")
+    retained = generator.retained_constraints(
+        "playwright==1.58.0\npyee==13.0.1\ncolorama==0.4.6; sys_platform == \"win32\"\n",
+        {"playwright==1.65.1"},
+    )
+    assert retained == "pyee==13.0.1\ncolorama==0.4.6; sys_platform == \"win32\"\n"
+
+
+def test_inherited_security_pin_requires_matching_immutable_baseline(tmp_path, monkeypatch):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "Dockerfile").write_text(f"FROM vendor/image:1.2.3@sha256:{'a' * 64}\n", encoding="utf-8")
+    selection = {
+        "reference": f"vendor/image:1.2.3@sha256:{'a' * 64}",
+        "file": "Dockerfile",
+        "inherited_from": {"commit": "b" * 40, "reference": "vendor/image:1.2.3"},
+    }
+    ledger = tmp_path / "scripts" / "dependency-selections.json"
+    ledger.write_text(json.dumps({"selections": [selection]}), encoding="utf-8")
+    monkeypatch.setattr(audit.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stdout="FROM vendor/image:1.2.3\n",
+    ))
+    findings = audit.audit_selections(tmp_path)
+    assert findings == []
+    selection["inherited_from"]["reference"] = "vendor/image:1.2.2"
+    ledger.write_text(json.dumps({"selections": [selection]}), encoding="utf-8")
+    findings = audit.audit_selections(tmp_path)
+    assert [item["rule"] for item in findings] == ["inherited-pin"]
+    selection["inherited_from"]["reference"] = "vendor/image:1.2.3"
+    ledger.write_text(json.dumps({"selections": [selection]}), encoding="utf-8")
+    monkeypatch.setattr(audit.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stdout="FROM vendor/image:1.2.2\n",
+    ))
+    findings = audit.audit_selections(tmp_path)
+    assert [item["rule"] for item in findings] == ["inherited-pin"]
 
 
 def test_compiler_sdk_cannot_silently_replace_locked_versions():

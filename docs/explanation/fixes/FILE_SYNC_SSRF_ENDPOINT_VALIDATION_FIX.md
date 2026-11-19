@@ -31,6 +31,12 @@ rejects traversal segments, and percent-encodes each segment beneath a user's
 Graph drive path. The reported browse-path input cannot change the Graph origin.
 No OneDrive runtime change or alert suppression is included.
 
+Follow-up in **0.261.456**:
+[Graph request boundaries](GRAPH_REQUEST_BOUNDARY_FIX.md) validates OneDrive
+metadata pagination destinations and refuses metadata redirects while preserving
+content-download redirects. That later fix also covers directory identifier
+components; it does not change this fix's Azure Files endpoint policy.
+
 ## Technical details
 
 ### Files modified

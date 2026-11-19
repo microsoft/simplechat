@@ -19,7 +19,7 @@ ARG V2_UI_API_BASE=""
 # Uses the Azure Linux Node image to stay consistent with the Python stages below and to
 # avoid introducing a Docker Hub dependency, which matters for sovereign-cloud builds.
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/azurelinux/base/nodejs:20.14.0-13-azl3.0.20260304@sha256:b8a48ba88fdff68c20a2895cb002d547ea47779e37e2fdcb6cd64e4a875f8a71 AS v2uibuilder
+FROM mcr.microsoft.com/azurelinux/base/nodejs:24.22.3-1-azl3.0.20261116@sha256:1c87a74ac10b0ad7711bcc862fa6a2b13e6a4db96d3a026dbb7fcf8486d57ba3 AS v2uibuilder
 
 ARG V2_UI_API_BASE
 ENV VITE_API_BASE=${V2_UI_API_BASE}
@@ -153,8 +153,14 @@ RUN set -eux; \
             ;; \
     esac
 
+# The Node driver needs libatomic even when Chromium is omitted.
 RUN set -eux; \
-    mkdir -p /playwright-runtime; \
+    mkdir -p /playwright-runtime/usr/lib; \
+    for lib in /usr/lib64/libatomic.so* /usr/lib/libatomic.so*; do \
+        if [ -e "${lib}" ]; then cp -a "${lib}" /playwright-runtime/usr/lib/; fi; \
+    done; \
+    find /playwright-runtime/usr/lib -maxdepth 1 -name 'libatomic.so*' | grep -q .; \
+    tdnf clean all; \
     case "$(printf '%s' "${INSTALL_PLAYWRIGHT_CHROMIUM}" | tr '[:upper:]' '[:lower:]')" in \
         true|1|yes|on) \
             python3 -m playwright install chromium; \

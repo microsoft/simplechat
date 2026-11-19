@@ -1,6 +1,6 @@
 # Development PR contracts and reproducible dependency installation
 
-Version: **0.261.454**, tracked in `application/single_app/config.py`.
+Version: **0.261.460**, tracked in `application/single_app/config.py`.
 
 Fixed/Implemented in version: **0.261.454**.
 
@@ -63,7 +63,48 @@ dependency-install command selects that build tool through `PYTHONPATH`.
 
 See the [dependency maintenance guide]({{ '/contributing/dependency-pinning/' | relative_url }})
 for regeneration commands, release-age evidence, and limitations.
-Deployer changes are tracked separately as `deployers/version.txt` **1.0.38**.
+Deployer changes are tracked separately as `deployers/version.txt` **1.0.39**.
+
+## Development integration
+
+The conflict resolution preserves Development's Node **24.22.3** builder and
+Playwright **1.65.1** security updates. The Node image additionally uses its
+verified MCR manifest digest. These existing exact versions are inherited
+from Development, not newly selected older releases to satisfy the age policy.
+The selection ledger records the immutable source commit; the audit verifies
+that commit contains the inherited pin.
+
+The application lock is regenerated for both supported platforms, changing
+only the Playwright package version while retaining other constraint versions.
+The resolver drops an obsolete constraint only when an explicit direct pin
+changes, and recognizes pins from both merge parents. The common RPM profile
+includes `libgcc-atomic`, so the Playwright Node driver retains its required
+library even when Chromium is disabled, without adding floating package installs.
+
+The five conflicting user-route review fingerprints retain Development's
+reviewed module identity and its added owner-runtime evidence. The application
+version advances beyond Development to **0.261.460**.
+
+The newly inherited browser-assets workflow uses the same exact Python, patched
+Node, and runner versions as the other pinned jobs, and installs the declared UI
+test requirements through the shared constraints.
+
+After integration, the locked Windows environment passed `pip check` and **52
+focused tests** covering pin/registry safeguards, patched runtime execution,
+and dependency compatibility. Another **70 tests** passed with networking
+blocked, covering merged user-route Cosmos evidence and credential/workflow
+regressions. The real patched Node TypeScript/Vite Docker
+stage also built successfully. Documentation coverage and site quality passed
+**7/7** and **6/6** checks respectively. The inventory still reports **1,107
+owners, 433 doubles, and zero review gaps**. The dependency audit now inspects
+**46 surfaces** and retains only its documented devcontainer closure finding.
+
+The merged production Python builder also completed using a temporary context
+that routes pip through the approved Microsoft mirror; no repository feed or
+TLS settings were changed. Its Linux `pip check` passed. A nonroot distroless
+probe with networking and Chromium disabled executed Playwright **1.65.1**'s
+bundled Node **26.13.1**, found the copied `libatomic`, loaded the ODBC driver,
+and loaded the TLS trust store successfully.
 
 ## Validation and remaining work
 
@@ -101,10 +142,11 @@ The enabled variant also completed the production Chromium/audio installation
 steps: real Chromium rendered an offline page and the copied FFmpeg executable
 ran successfully, again as UID 65532 with networking disabled.
 
-The final locked Linux prerequisite suite passed **53 tests**. The complete
+Before the Development integration, the locked Linux prerequisite suite passed **53 tests**. The complete
 network-blocked Cosmos contract gate then passed **2,378 tests and 471
 subtests**, with **1,107 owners, 433 doubles, and zero review gaps**.
-No test deadlines or strict response validators were relaxed.
+No test deadlines or strict response validators were relaxed. These full-gate
+results describe the pre-integration snapshot, not the subsequently merged tree.
 
 Publishing remains externally blocked until an administrator verifies
 `ACR_LOGIN_SERVER` and the registry's DNS/network access from the selected
