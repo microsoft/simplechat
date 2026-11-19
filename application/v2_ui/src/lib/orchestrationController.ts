@@ -1550,37 +1550,41 @@ async function continueFailedRunAutomatically(conversationId: string, runId: str
     const shownError = useOrchestrationStore.getState().runRecovery[runId]?.error ?? null;
     const pause = () => new Promise((resolve) => setTimeout(resolve, 1500));
     try {
-        // Read the saved run directly. `loadOrchestrationRecovery` returns nothing when another
-        // reader of the same run (the recovery notice, the plan panel) stored its copy first,
-        // and the decision must not be lost to that.
+        // The server starts the next attempt itself, shortly after it releases the failed one.
+        // This page only finds that attempt and follows it; it never starts one. Read the saved
+        // run directly: `loadOrchestrationRecovery` returns nothing when another reader of the
+        // same run (the recovery notice, the plan panel) stored its copy first.
         let record = await fetchOrchestrationRun(runId, { conversationId });
-        // The terminal frame can arrive just before the server releases the attempt it ended.
-        for (let check = 0; check < 4 && record && (isOrchestrationRunPending(record)
-            || normalizeOrchestrationRecovery(record.recovery)?.reason_code === 'execution_live'); check += 1) {
+        const nextAttempt = () => {
+            const next = record?.latest_attempt_run_id
+                ?? normalizeOrchestrationRecovery(record?.recovery)?.current_run_id;
+            return next && next !== runId ? next : null;
+        };
+        for (let check = 0; check < 14 && record && !nextAttempt() && (isOrchestrationRunPending(record)
+            || normalizeOrchestrationRecovery(record.recovery)?.reason_code === 'execution_live'
+            || normalizeOrchestrationRecovery(record.recovery)?.auto_continue); check += 1) {
             await pause();
             record = await fetchOrchestrationRun(runId, { conversationId });
         }
-        const decision = normalizeOrchestrationRecovery(record?.recovery)?.auto_continue;
-        if (!decision) return;
-        // The failed attempt's own stream is still closing when its terminal frame arrives, and
-        // a retry is refused while the conversation is busy. Wait for it to become idle; the
-        // second try covers a saved-run read that lost to another reader.
-        let tries = 0;
-        for (let check = 0; check < 12 && tries < 2; check += 1) {
-            if (useChatStore.getState().activeConversationId !== conversationId) break;
-            const busy = useChatStore.getState().streaming
-                || Object.values(useOrchestrationStore.getState().inFlight)
-                    .some((run) => run.conversationId === conversationId);
-            if (!busy) {
-                tries += 1;
-                const result = await retryOrchestrationRun(
-                    conversationId, runId, undefined, decision.kind === 'available_information', true,
-                );
-                if (result.started || result.confirmationRequired) return;
-            }
-            await pause();
+        const nextRunId = nextAttempt();
+        if (!nextRunId) return;
+        const next = await fetchOrchestrationRun(nextRunId, { conversationId });
+        const plan = next ? persistedRunPlan(next) : null;
+        const normalized = plan ? normalizePlan(plan) : null;
+        if (!next || !plan || !normalized || !next.turn_id || next.run_id !== nextRunId
+            || next.conversation_id !== conversationId || next.retry_of_run_id !== runId) return;
+        if (useOrchestrationStore.getState().inFlight[nextRunId]) return;
+        if (useChatStore.getState().activeConversationId === conversationId) {
+            const steps = await fetchRunSteps(nextRunId, { conversationId }).catch(() => []);
+            const current = useOrchestrationStore.getState();
+            current.adoptPersistedPlan(conversationId, next.turn_id, plan, steps, { readOnly: true });
+            current.setActiveTurn(conversationId, next.turn_id);
         }
-        useOrchestrationStore.getState().updateRunRecovery(runId, { error: shownError });
+        useOrchestrationStore.getState().beginRun({
+            conversationId, turnId: next.turn_id, runId: nextRunId,
+            planId: normalized.plan_id, startedAt: Date.now(),
+        });
+        void reconcileOrchestrationRun(conversationId, nextRunId);
     } catch {
         useOrchestrationStore.getState().updateRunRecovery(runId, { error: shownError });
     }

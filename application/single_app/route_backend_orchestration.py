@@ -38,6 +38,7 @@ import json
 import logging
 import queue
 import threading
+import time
 import uuid
 from copy import deepcopy
 from contextlib import ExitStack
@@ -643,8 +644,12 @@ def _plan_result_options(record, user_id, settings):
     }
 
 
-def _stream_execution(execution, *, run_id, conversation_id, settings=None):
-    """Detach the browser on stream loss, not the owning durable execution."""
+def _stream_execution(execution, *, run_id, conversation_id, settings=None, after=None):
+    """Detach the browser on stream loss, not the owning durable execution.
+
+    ``after`` runs on the worker once the run has been closed and its stream ended, whether or
+    not a browser is still attached. It is how a failed attempt is followed by the next one.
+    """
     worker_started = False
 
     def generate():
@@ -687,6 +692,17 @@ def _stream_execution(execution, *, run_id, conversation_id, settings=None):
                     )
                 finally:
                     emit(finished)
+            if after is not None:
+                try:
+                    after()
+                except Exception as exc:
+                    log_event(
+                        '[ORCHESTRATION_RUNS] The step after this execution could not finish.',
+                        level=logging.ERROR, extra={
+                            **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                            'stage': 'execution_after', **exception_log_fields(exc),
+                        },
+                    )
 
         thread = threading.Thread(target=worker, name=f'orchestration-run-{run_id}', daemon=True)
         try:
@@ -711,7 +727,9 @@ def _stream_execution(execution, *, run_id, conversation_id, settings=None):
     return response
 
 
-def _prepare_execution_stream(record, data, user_id, settings, snapshot, identity, execution_identity, services):
+def _prepare_execution_stream(
+    record, data, user_id, settings, snapshot, identity, execution_identity, services, after=None,
+):
     # Initialize the shared web/scheduler runner only after the run is authorized.
     from functions_orchestration_execution import HarnessExecutionError, prepare_harness_execution
 
@@ -793,7 +811,9 @@ def _prepare_execution_stream(record, data, user_id, settings, snapshot, identit
             'error': 'Execution could not start. Reload the run to check its saved status.',
             'code': 'recovery_unavailable',
         }), 503
-    return _stream_execution(execution, run_id=run_id, conversation_id=conversation_id, settings=settings)
+    return _stream_execution(
+        execution, run_id=run_id, conversation_id=conversation_id, settings=settings, after=after,
+    )
 
 
 def _authorized_document_ids(candidates, seeds):
@@ -2206,6 +2226,96 @@ def _automatic_continuation(record, recovery, user_id, settings):
             # History that cannot be read is treated as a repeat: nothing continues by itself.
             parent = None
     return automatic_continuation(record, recovery, settings, parent=parent)
+
+
+_CONTINUATION_RELEASE_CHECKS = 10
+_CONTINUATION_RELEASE_PAUSE_SECONDS = 1.0
+
+
+def _continue_failed_run(run_id, conversation_id, user_id, run_plan):
+    """Follow a failed attempt with its next one, on the server.
+
+    Called on the run's own worker after the attempt was closed, inside a copy of the request
+    context that started it. The next attempt does not depend on any page: the user may have
+    moved to another conversation or closed the tab. The decision is the same one the retry
+    route applies to an automatic request, the attempt is prepared by the same fenced code as a
+    clicked retry, and it runs through the same execution admission as every run. A failure
+    here leaves the failed attempt exactly as it was, with its own retry controls.
+    """
+    settings = get_settings()
+    if not reactive_loop_enabled(settings):
+        return
+    authorize = lambda: _authorize_context_conversation(conversation_id, user_id)
+    record, recovery = None, None
+    try:
+        for _check in range(_CONTINUATION_RELEASE_CHECKS):
+            record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id, strict=True)
+            if not record or record.get('status') != PLAN_STATUS_FAILED:
+                return
+            record = reconcile_checkpoints(record, authorize)
+            recovery = recovery_projection(record)
+            if recovery.get('reason_code') != 'execution_live':
+                break
+            # The attempt is released just after its outcome is saved.
+            time.sleep(_CONTINUATION_RELEASE_PAUSE_SECONDS)
+        decision, reason = _automatic_continuation(record, recovery, user_id, settings)
+        if decision is None:
+            log_continuation_offer(None, reason, record, recovery)
+            return
+        use_available = decision['kind'] == 'available_information'
+
+        def validate_retry(current):
+            if _is_workflow_replay_run(current):
+                raise RecoveryError(
+                    _workflow_replay_run_message(),
+                    code=WORKFLOW_REPLAY_RUN_MANAGED_CODE, status_code=409,
+                )
+            again, _why = _automatic_continuation(current, recovery_projection(current), user_id, settings)
+            if again is None or again['kind'] != decision['kind']:
+                raise RecoveryError(
+                    'This attempt is not continued automatically.', code='automatic_continuation_unavailable',
+                )
+            return _validate_retry_context(current, user_id, settings, preparing=True)
+
+        child = prepare_retry(
+            run_id, user_id, {
+                'conversation_id': conversation_id, 'submission_id': uuid.uuid4().hex,
+                'expected_version': recovery.get('expected_version'),
+                **({'use_available_information': True} if use_available else {}),
+            },
+            authorize=authorize, validate=validate_retry, message_container=cosmos_messages_container,
+        )
+        log_automatic_continuation(decision, None, record, successor_run_id=child['id'])
+        response = make_response(run_plan({
+            'run_id': child['id'], 'conversation_id': conversation_id,
+            'plan_id': (child.get('plan') or {}).get('plan_id'),
+            'expected_version': child.get('edit_version'),
+        }))
+        try:
+            if response.status_code >= 400:
+                refusal = response.get_json(silent=True) or {}
+                log_event(
+                    '[ORCHESTRATION_RUNS] The next attempt was prepared but could not start.',
+                    level=logging.WARNING, extra={
+                        **workflow_log_context(run_id=child['id'], conversation_id=conversation_id),
+                        'stage': 'automatic_continuation', 'validation_code': refusal.get('code'),
+                        'status_code': response.status_code,
+                    },
+                )
+            else:
+                # Reading the stream to its end is what runs the attempt; nobody is listening.
+                for _frame in response.response:
+                    pass
+        finally:
+            response.close()
+    except RecoveryError as exc:
+        log_event(
+            '[ORCHESTRATION_RUNS] The next attempt could not be prepared.',
+            level=logging.WARNING, extra={
+                **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                'stage': 'automatic_continuation', 'validation_code': exc.code,
+            },
+        )
 
 
 def _validate_retry_context(record, user_id, settings, *, preparing=False):
@@ -4235,8 +4345,16 @@ def register_route_backend_orchestration(bp):
         except PlanValidationError as exc:
             payload, status = _plan_edit_error(exc)
             return jsonify(payload), status
+        after = None
+        if reactive_loop_enabled(settings):
+            # Bound to this request's identity now; it runs after the attempt, on its worker.
+            @copy_current_request_context
+            def after():
+                _continue_failed_run(run_id, conversation_id or record['conversation_id'], user_id, _run_saved_plan)
+
         return _prepare_execution_stream(
             record, data, user_id, settings, snapshot, identity, agent_execution_identity, services,
+            after=after,
         )
 
     @bp.route("/api/v2/orchestration/run", methods=["POST"])

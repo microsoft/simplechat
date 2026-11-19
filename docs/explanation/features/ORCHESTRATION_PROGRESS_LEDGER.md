@@ -1,6 +1,6 @@
 # Orchestration progress ledger, step recoveries and automatic continuation
 
-Version: **0.261.461**
+Version: **0.261.462**
 
 Implemented in version: **0.261.457** (ledger and step recovery), **0.261.458** (automatic
 continuation). Off by default.
@@ -55,6 +55,11 @@ document analysis had covered every source and reported limitations, and the ans
 planned before any result existed, had declared it would accept only a complete input.
 
 ### Automatic continuation (0.261.458)
+
+From 0.261.462 the next attempt is started by the server on the run's own worker, not by the
+page: see `docs/explanation/fixes/ORCHESTRATION_SERVER_SIDE_CONTINUATION_FIX.md`. Steps 2 and 3
+under "How it runs" below describe the earlier page-started flow, which now only serves pages
+loaded before that version.
 
 A run that still ends failed can be followed by its next attempt without the user's sign-off.
 The decision was the project owner's (18 November 2026): a change that stays inside what the

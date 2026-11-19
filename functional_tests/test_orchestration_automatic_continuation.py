@@ -2,7 +2,7 @@
 # test_orchestration_automatic_continuation.py
 """
 Functional test for automatic continuation of a failed orchestration attempt.
-Version: 0.261.459
+Version: 0.261.462
 Implemented in: 0.261.458
 
 This test ensures that a failed attempt is followed by the next one without the user's
@@ -186,19 +186,26 @@ def test_what_the_server_offered_is_recorded_once_per_run(runtime, monkeypatch):
         assert 'run-1' not in str(extra) and 'conversation-1' not in str(extra)
 
 
-def test_the_client_reads_the_decision_itself_and_waits_for_the_conversation_to_be_idle():
+def test_the_server_starts_the_next_attempt_and_the_page_only_follows_it():
     controller = _read('v2_ui', 'src', 'lib', 'orchestrationController.ts')
     helper = controller[controller.index('async function continueFailedRunAutomatically('):]
     helper = helper[:helper.index('\n}\n')]
-    # The shared loader drops a read that lost to another reader of the same run.
+    # The page never asks for a retry here: which conversation is on screen cannot matter.
+    assert 'retryOrchestrationRun(' not in helper and 'activeConversationId' in helper
     assert 'loadOrchestrationRecovery(' not in helper
-    assert helper.count('await fetchOrchestrationRun(runId, { conversationId })') == 2
-    # A retry is refused while the failed attempt's stream is still closing.
-    assert 'useChatStore.getState().streaming' in helper and '.inFlight)' in helper
-    assert helper.index('if (!busy) {') < helper.index('await retryOrchestrationRun(')
-    assert 'tries < 2' in helper
+    assert 'record?.latest_attempt_run_id' in helper and 'next.retry_of_run_id !== runId' in helper
+    assert 'void reconcileOrchestrationRun(conversationId, nextRunId);' in helper
+    # Following is tracked whatever is on screen; only showing its plan needs the conversation open.
+    assert helper.index('activeConversationId === conversationId') < helper.index('.beginRun({')
     route = _read('single_app', 'route_backend_orchestration.py')
     assert "log_continuation_offer(decision, reason, record, public.get('recovery'))" in route
+    assert '_continue_failed_run(run_id, conversation_id or record[' in route
+    stream = route[route.index('def _stream_execution('):route.index('def _prepare_execution_stream(')]
+    # After the run is closed and its stream ended, on the worker, with or without a browser.
+    assert stream.index('emit(finished)') < stream.index('after()')
+    follow = route[route.index('def _continue_failed_run('):route.index('def _validate_retry_context(')]
+    assert 'prepare_retry(' in follow and '_validate_retry_context(current, user_id, settings, preparing=True)' in follow
+    assert "run_plan({" in follow and 'reactive_loop_enabled(settings)' in follow
 
 
 def test_the_route_decides_and_a_click_is_not_held_to_the_rule():
@@ -220,8 +227,7 @@ def test_the_client_only_continues_attempts_it_was_following():
     helper = controller[controller.index('async function continueFailedRunAutomatically('):]
     helper = helper[:helper.index('\n}\n')]
     assert 'automaticContinuations.has(key)' in helper and 'automaticContinuations.add(key)' in helper
-    assert 'normalizeOrchestrationRecovery(record?.recovery)?.auto_continue' in helper
-    assert 'if (!decision) return;' in helper
+    assert 'if (!nextRunId) return;' in helper
     # Two call sites: the live stream's terminal frame, and a stream this tab lost and re-read.
     assert controller.count('void continueFailedRunAutomatically(conversationId, runId);') == 2
     assert "const continueUnasked = status === 'failed' && Boolean(tracked) && !tracked?.resumed;" in controller
