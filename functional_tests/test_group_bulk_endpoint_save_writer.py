@@ -1,7 +1,7 @@
 # test_group_bulk_endpoint_save_writer.py
 """
 Functional test for the legacy bulk group model endpoint save on the etag guard.
-Version: 0.261.160
+Version: 0.261.428
 Implemented in: 0.261.160
 
 ``POST /api/group/model-endpoints`` saved the whole endpoint list through
@@ -16,9 +16,9 @@ Now:
 
 - ``update_group_model_endpoints`` replaces the list on the copy the etag guard
   reads, re-checks the caller's role on it (``user_id=``), reports the endpoints it
-  replaced (``outcome=``) and raises ``LookupError`` for a deleted group. The list
-  is still last writer wins, as before; the overlap with the per-item routes is
-  recorded, not changed.
+  replaced (``outcome=``) and raises ``LookupError`` for a deleted group. A legacy
+  whole-list route write is also conditional on the group revision, so an unrelated
+  concurrent edit is retained instead of being silently overwritten.
 - The route answers a group that keeps changing with 409 ``group_write_conflict``,
   and a deleted group and a demoted caller with its own 404 and 403.
 - Superseded and removed credentials are deleted only after the write commits,
@@ -79,8 +79,9 @@ def rotated(env, endpoint_id="ep-1", key="rotated-key"):
     return endpoint
 
 
-def save(env, endpoints):
-    return env.call("POST", SAVE, {"endpoints": endpoints})
+def save(env, endpoints, *, revision=None):
+    revision = revision or env.stored_group(GROUP_A).get("_etag")
+    return env.call("POST", SAVE, {"endpoints": endpoints, "revision": revision})
 
 
 def staged_name(env):
@@ -138,22 +139,27 @@ def test_an_unchanged_endpoint_keeps_its_credential(env):
     assert env.stored_endpoint(GROUP_A, "ep-1")["auth"]["api_key"] == deterministic("ep-1")
 
 
-def test_a_concurrent_membership_change_is_kept(env):
+def test_a_concurrent_membership_change_conflicts_without_reverting_it(env):
     concurrently(env, lambda group: group["pendingUsers"].append({"userId": "applicant", "email": "applicant@example.test"}))
-    assert save(env, [classic_copy(env, "ep-1")]).status_code == 200
+    response = save(env, [classic_copy(env, "ep-1")])
+    assert (response.status_code, response.get_json()) == (409, conflict(env))
     stored = env.stored_group(GROUP_A)
     assert [entry["userId"] for entry in stored["pendingUsers"]] == ["applicant"]
-    assert [endpoint["id"] for endpoint in stored["model_endpoints"]] == ["ep-1"]
-    assert [call[0] for call in env.write_calls()] == ["replace_item", "replace_item"]
+    assert [endpoint["id"] for endpoint in stored["model_endpoints"]] == ["ep-1", "ep-2"]
+    assert env.bumps == []
 
 
-def test_credentials_are_judged_against_the_endpoints_the_write_replaced(env):
-    """An endpoint added meanwhile is replaced by the saved list, and its credential goes too."""
+def test_a_concurrent_endpoint_addition_conflicts_and_keeps_its_credential(env):
+    """A stale bulk writer must not replace an endpoint added after it loaded."""
     added = env.legacy_stored_endpoints(GROUP_A, [aoai_endpoint("ep-3", api_key="key-three")])
     concurrently(env, lambda group: group["model_endpoints"].extend(added))
-    assert save(env, [classic_copy(env, "ep-1"), classic_copy(env, "ep-2")]).status_code == 200
-    assert env.vault.deletes == [deterministic("ep-3")]
-    assert deterministic("ep-1") in env.vault.secrets and deterministic("ep-2") in env.vault.secrets
+    response = save(env, [classic_copy(env, "ep-1"), classic_copy(env, "ep-2")])
+    assert (response.status_code, response.get_json()) == (409, conflict(env))
+    assert deterministic("ep-3") in env.vault.secrets
+    assert any(
+        endpoint["id"] == "ep-3"
+        for endpoint in env.stored_group(GROUP_A)["model_endpoints"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -185,9 +191,7 @@ def test_a_caller_demoted_mid_write_is_refused_on_the_current_copy(env):
     env.as_user("admin")
     concurrently(env, lambda group: group["admins"].remove("admin"))
     response = save(env, [rotated(env)])
-    assert (response.status_code, response.get_json()) == (
-        403, {"error": "You do not have access to group model endpoint settings."},
-    )
+    assert (response.status_code, response.get_json()) == (409, conflict(env))
     assert env.vault.deletes == [staged_name(env)]
     assert env.stored_endpoint(GROUP_A, "ep-1")["auth"]["api_key"] == deterministic("ep-1")
     assert env.bumps == []
@@ -214,6 +218,15 @@ def test_an_uncertain_write_failure_keeps_the_staged_credential(env, monkeypatch
 def test_the_classic_refusals_are_unchanged(env, body, expected):
     response = env.call("POST", SAVE, body)
     assert (response.status_code, response.get_json()) == expected
+    assert env.write_calls() == [] and env.vault.writes == []
+
+
+def test_the_legacy_collection_write_requires_a_revision(env):
+    response = env.call(
+        "POST", SAVE, {"endpoints": [classic_copy(env, "ep-1")]}
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error_code"] == "revision_required"
     assert env.write_calls() == [] and env.vault.writes == []
 
 

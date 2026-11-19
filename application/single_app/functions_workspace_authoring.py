@@ -1788,6 +1788,14 @@ def build_secret_reminder_defaults(settings):
     })
 
 
+def _project_agent_editor_endpoints(settings_module, model_endpoints):
+    # Redact complete records before filtering; an empty picker row is not a saved route.
+    projected = settings_module.sanitize_settings_for_user(
+        {"model_endpoints": model_endpoints},
+    ).get("model_endpoints", [])
+    return filter_model_endpoints_by_capability(projected, preserve_empty=True)
+
+
 def build_agent_editor_options(user_id, settings, model_endpoints):
     can_manage_agents = ensure_editor_options_access(user_id, settings)
     settings_module = import_module("functions_settings")
@@ -1805,9 +1813,7 @@ def build_agent_editor_options(user_id, settings, model_endpoints):
         model_endpoints = []
         safe["gpt_model"] = {}
         safe["default_model_selection"] = {}
-    model_endpoints = settings_module.sanitize_settings_for_user(
-        {"model_endpoints": filter_model_endpoints_by_capability(model_endpoints, preserve_empty=True)},
-    ).get("model_endpoints", [])
+    model_endpoints = _project_agent_editor_endpoints(settings_module, model_endpoints)
     # These names contain "key"/"secret", but their values are strictly UI flags/defaults.
     reminder_options = build_secret_reminder_defaults(settings)
     safe.update({
@@ -1895,9 +1901,7 @@ def build_group_agent_editor_options(user_id, group_id, settings, model_endpoint
         model_endpoints = []
         safe["gpt_model"] = {}
         safe["default_model_selection"] = {}
-    model_endpoints = settings_module.sanitize_settings_for_user(
-        {"model_endpoints": filter_model_endpoints_by_capability(model_endpoints, preserve_empty=True)},
-    ).get("model_endpoints", [])
+    model_endpoints = _project_agent_editor_endpoints(settings_module, model_endpoints)
     reminder_options = build_secret_reminder_defaults(settings)
     safe.update({
         "enable_key_vault_secret_storage": reminder_options["storage_enabled"],
@@ -1988,9 +1992,7 @@ def build_global_agent_editor_options(settings, model_endpoints):
         key: deepcopy(settings.get(key, default)) for key, default in _GLOBAL_OPTION_DEFAULTS.items()
     })
     safe = {key: sanitized[key] for key in _GLOBAL_OPTION_DEFAULTS if key in sanitized}
-    model_endpoints = settings_module.sanitize_settings_for_user(
-        {"model_endpoints": filter_model_endpoints_by_capability(model_endpoints, preserve_empty=True)},
-    ).get("model_endpoints", [])
+    model_endpoints = _project_agent_editor_endpoints(settings_module, model_endpoints)
     # These names contain "key"/"secret", but their values are strictly UI flags/defaults.
     reminder_options = build_secret_reminder_defaults(settings)
     safe.update({

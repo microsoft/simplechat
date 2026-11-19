@@ -55,7 +55,12 @@ CORE_CONTRACT_TESTS = frozenset({
 
 
 def _digest(node):
-    return hashlib.sha256(ast.dump(node, include_attributes=False).encode("utf-8")).hexdigest()
+    options = {"include_attributes": False}
+    if sys.version_info >= (3, 13):
+        # 3.13 omits empty optional fields by default. Keep the existing reviewed
+        # representation rather than reapproving every unchanged storage owner.
+        options["show_empty"] = True
+    return hashlib.sha256(ast.dump(node, **options).encode("utf-8")).hexdigest()
 
 
 def review_digest(boundary):

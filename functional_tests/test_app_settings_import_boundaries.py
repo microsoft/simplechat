@@ -1,7 +1,7 @@
 # test_app_settings_import_boundaries.py
 """
 Regression coverage for CodeQL py/cyclic-import and py/side-effect-in-assert.
-Version: 0.261.027
+Version: 0.261.051
 Implemented in: 0.261.027
 
 Import real cache/logging modules in fresh interpreters with configuration imports
@@ -175,7 +175,7 @@ print("PASS: cold imports and settings-driven configuration; no reverse imports 
 '''
 
 
-@pytest.mark.parametrize("first_module", ["app_settings_cache", "functions_appinsights"])
+@pytest.mark.parametrize("first_module", ["app_settings_cache", "functions_appinsights", "functions_terms_of_use_config"])
 @pytest.mark.parametrize("optimized", [False, True])
 def test_real_imports_and_bootstrap_do_not_reenter_config(first_module, optimized):
     command = [sys.executable, "-B"]
@@ -194,7 +194,7 @@ def test_real_imports_and_bootstrap_do_not_reenter_config(first_module, optimize
 
 def test_cache_dependency_graph_has_no_reverse_imports():
     """Inspect function-local imports too: deferring an edge does not remove it."""
-    pending = ["app_settings_cache"]
+    pending = ["app_settings_cache", "functions_terms_of_use_config"]
     inspected = set()
     while pending:
         name = pending.pop()

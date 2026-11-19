@@ -1,9 +1,10 @@
 # test_model_endpoint_capacity_save_validation.py
 """
 Functional tests for safe capacity validation at existing endpoint save routes.
-Version: 0.261.126
+Version: 0.261.435
 Implemented in: 0.261.035
 Catalog association round trips implemented in: 0.261.126
+Explicit route and global agent projection regressions added in: 0.261.435
 
 Fresh normal/optimized processes import the real application, settings normalizer,
 and route modules with external bootstrap I/O blocked. The registered route bodies
@@ -115,7 +116,9 @@ def _run_offline_probe():
                     "model_endpoints_json": json.dumps([endpoint]),
                 })
             return web.test_request_context(
-                f"/api/{scope}/model-endpoints", method="POST", json={"endpoints": [endpoint]},
+                f"/api/{scope}/model-endpoints",
+                method="POST",
+                json={"endpoints": [endpoint], "revision": "budget-revision"},
             )
 
         replacements = (
@@ -253,6 +256,57 @@ def _run_offline_probe():
                     _require(saved.call_count == 1, "Valid scoped save did not persist exactly once.")
 
         _check_editor_projection_round_trips(web, defaults, settings_module, models, admin, offline)
+        _check_single_connection_and_agent_routes(app.app, models, offline)
+
+
+def _check_single_connection_and_agent_routes(web, models, offline):
+    # These imports depend on the offline application bootstrap in the caller.
+    import functions_global_editor_access as agent_access
+    import route_backend_v2 as admin_api
+
+    endpoint = _endpoint()
+    endpoint.update(provider="custom", routing_schema_version=2)
+    endpoint["connection"]["endpoint"] = "https://budget.invalid/team;rev=2"
+    endpoint["models"][0].update({
+        "api_type": "azure_openai_v1", "modelName": "gpt-6.1-terra", "inference_api": "responses",
+    })
+    endpoint_id = endpoint["id"]
+    snapshot = {"model_endpoints": [endpoint], "enable_multi_model_endpoints": True}
+    bad_model = {**endpoint["models"][0], "api_path": "../not-a-model-path"}
+    write = Mock(side_effect=AssertionError("Invalid routing reached persistence."))
+
+    def request(rule, method, **kwargs):
+        registration = next(item for item in web.url_map.iter_rules() if item.rule == rule and method in item.methods)
+        path = rule.replace("<endpoint_id>", endpoint_id)
+        args = {"endpoint_id": endpoint_id} if path != rule else {}
+        with web.test_request_context(path, method=method, **kwargs):
+            return web.make_response(inspect.unwrap(web.view_functions[registration.endpoint])(**args))
+
+    with (
+        patch.object(admin_api, "get_settings", return_value=snapshot),
+        patch.object(admin_api, "_persist_global_model_endpoints", write),
+        patch.object(models, "get_current_user_id", return_value="budget-user"),
+        patch.object(models, "get_user_settings", return_value={"settings": {"personal_model_endpoints": [endpoint]}}),
+        patch.object(models, "ensure_governance_access"),
+        patch.object(models, "update_user_settings", write),
+    ):
+        for rule in ("/api/v2/admin/model-endpoints/<endpoint_id>", "/api/user/model-endpoints/<endpoint_id>"):
+            reply = request(rule, "PATCH", json={"models": [bad_model]})
+            _require(reply.status_code == 400, f"{rule} did not reject invalid per-model routing with HTTP 400.")
+            _require(reply.get_json()["code"] == "invalid_custom_endpoint", "A route rejection lost its safe error code.")
+            _require("Invalid model routing" in reply.get_json()["error"], "The routing error is not actionable.")
+        _require(not write.called, "Invalid routing attempted a settings mutation.")
+
+    with patch.object(agent_access, "get_settings", return_value=snapshot):
+        options = request("/api/v2/admin/agent-options", "GET")
+    _require(options.status_code == 200, "The V2 agent editor rejected a valid saved Responses binding.")
+    records = options.get_json()["model_endpoints"]
+    _require(len(records) == 1 and records[0]["id"] == endpoint_id, "The agent editor lost the saved connection.")
+    visible = records[0]
+    _require(visible["scope"] == "global" and visible["models"][0]["inference_api"] == "responses", "The binding changed.")
+    _require(visible["has_api_key"] is True and "auth" not in visible and "connection" not in visible, "The picker did not preserve the safe credential-presence projection.")
+    _require("test-secret-must-not-be-returned" not in options.get_data(as_text=True), "The picker leaked a credential.")
+    _require(not offline.network_attempts, "Route tests attempted to access the network.")
 
 
 def _check_editor_projection_round_trips(web, defaults, settings_module, models, admin, offline):
@@ -314,11 +368,21 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
     def user_settings(_user_id):
         return {"settings": {"personal_model_endpoints": copy.deepcopy(stores["user"])}}
 
-    def save_user(_user_id, changes):
+    def save_user(_user_id, changes, *, expected_etag=None):
         stores["user"] = copy.deepcopy(changes["personal_model_endpoints"])
+        return True
 
-    def save_group(_group_id, endpoints):
+    def save_group(
+        _group_id, endpoints, *, user_id=None, outcome=None, expected_etag=None
+    ):
+        previous = copy.deepcopy(stores["group"])
         stores["group"] = copy.deepcopy(endpoints)
+        if outcome is not None:
+            outcome.update(previous=previous, saved=copy.deepcopy(endpoints))
+        return {
+            "id": _group_id,
+            "model_endpoints": copy.deepcopy(endpoints),
+        }
 
     def verify(records, expected_endpoint, expected_model):
         _require(len(records) == 1, "The endpoint projection changed the visible record set.")
@@ -359,6 +423,10 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
             patch.object(models, "get_current_user_id", return_value="budget-user"),
             patch.object(models, "get_user_settings", side_effect=user_settings),
             patch.object(models, "get_group_model_endpoints", side_effect=lambda _group_id: copy.deepcopy(stores["group"])),
+            patch.object(models, "list_group_model_endpoints", side_effect=lambda *_args: ({
+                "endpoints": settings_module.sanitize_model_endpoints_for_frontend(stores["group"]),
+            }, 200)),
+            patch.object(models, "find_group_by_id", return_value={"_etag": "projection-revision"}),
             patch.object(models, "get_settings", side_effect=snapshot),
             patch.object(models, "ensure_governance_access"),
             patch.object(models, "require_active_group", return_value="budget-group"),
@@ -372,6 +440,14 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
             patch.object(admin, "get_current_user_id", return_value="budget-admin"),
             patch.object(admin, "get_user_settings", side_effect=user_settings),
             patch.object(admin, "get_audio_runtime_capabilities", return_value={}),
+            patch.object(
+                admin,
+                "get_application_update_status",
+                return_value={
+                    "latest_version": web.config["VERSION"],
+                    "update_available": False,
+                },
+            ),
             patch.object(admin, "get_source_review_runtime_capabilities", return_value={"js_rendering_available": False}),
             patch.object(admin, "get_enhanced_citations_storage_status", return_value={}),
             patch.object(admin, "update_settings", side_effect=AssertionError("Projection unexpectedly wrote settings.")),
@@ -417,7 +493,12 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
                     else:
                         handler = inspect.unwrap(web.view_functions[f"backend_models.save_{scope}_model_endpoints"])
                         with web.test_request_context(
-                            f"/api/{scope}/model-endpoints", method="POST", json={"endpoints": incoming},
+                            f"/api/{scope}/model-endpoints",
+                            method="POST",
+                            json={
+                                "endpoints": incoming,
+                                "revision": "projection-revision",
+                            },
                         ):
                             response = web.make_response(handler())
                             payload = response.get_json()

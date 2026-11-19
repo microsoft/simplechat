@@ -87,6 +87,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_group_settings": ("login_required", "user_required"),
     "backend_groups": ("login_required", "user_required"),
     "backend_models": ("login_required", "user_required"),
+    "backend_model_ca_bundles": ("login_required", "user_required"),
     "backend_msgraph_pending_actions": ("login_required", "user_required"),
     "backend_m365": ("login_required", "user_required"),
     "backend_bitbucket": ("login_required", "user_required"),

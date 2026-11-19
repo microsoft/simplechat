@@ -100,6 +100,7 @@ from route_backend_groups import *
 from route_backend_users import *
 from route_backend_group_documents import *
 from route_backend_models import *
+from route_backend_model_ca_bundles import register_route_backend_model_ca_bundles
 from route_backend_workflows import *
 from route_backend_safety import *
 from route_backend_feedback import *
@@ -176,6 +177,8 @@ from route_plugin_logging import bpl as plugin_logging_bp
 from functions_custom_pages import get_custom_pages_nav, is_same_origin_framing_allowed
 from functions_debug import debug_print
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_model_capabilities import get_model_endpoint_library_options
+from model_endpoint_profiles import get_custom_endpoint_profile_options
 from functions_terms_of_use import has_terms_of_use_acceptance
 from functions_mcp_server_auth import inbound_mcp_required_blueprint
 
@@ -637,6 +640,9 @@ def inject_settings():
         idle_timeout_minutes=idle_timeout_minutes,
         idle_warning_minutes=idle_warning_minutes,
         model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
+        model_endpoint_routing_api_types=get_model_endpoint_provider_ui_options(routing_schema_version=2),
+        model_endpoint_library=get_model_endpoint_library_options(),
+        model_endpoint_profiles=get_custom_endpoint_profile_options(),
         mcp_ui_enabled=is_mcp_ui_enabled()
     )
 
@@ -1192,12 +1198,12 @@ def add_security_headers(response):
     return response
 
 # Register a custom Jinja filter for Markdown
-def markdown_filter(text):
+def markdown_filter(text, extras=None, safe_mode=None):
     if not text:
         text = ""
 
     # Convert Markdown to HTML
-    html = markdown2.markdown(text)
+    html = markdown2.markdown(text, extras=extras, safe_mode=safe_mode)
 
     # Add target="_blank" to all <a> links
     html = re.sub(r'(<a\s+href=["\'](https?://.*?)["\'])', r'\1 target="_blank" rel="noopener noreferrer"', html)
@@ -1212,6 +1218,7 @@ def markdown_filter(text):
         'h5',
         'h6',
         'br',
+        'hr',
         'table',
         'thead',
         'tbody',
@@ -1527,6 +1534,9 @@ register_route_blueprint('backend_bitbucket', register_route_backend_bitbucket, 
 
 @app.after_request
 def finalize_m365_json_request(response):
+    # File delivery and streams must not be consumed by JSON request finalization.
+    if response.direct_passthrough or response.is_streamed:
+        return response
     if response.is_json:
         payload = response.get_json()
         success = response.status_code < 400 and isinstance(payload, dict) and not (
@@ -1549,6 +1559,7 @@ register_route_blueprint('backend_group_documents', register_route_backend_group
 
 # ------------------- API Model Routes -------------------
 register_route_blueprint('backend_models', register_route_backend_models, user_required_blueprint)
+register_route_blueprint('backend_model_ca_bundles', register_route_backend_model_ca_bundles, user_required_blueprint)
 
 # ------------------- API Workflow Routes ----------------
 register_route_blueprint('backend_workflows', register_route_backend_workflows, user_required_blueprint)

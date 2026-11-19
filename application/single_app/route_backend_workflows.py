@@ -107,6 +107,9 @@ from functions_workflow_definitions import (
 from functions_workflow_editor import get_workflow_editor_options, workflow_assist_available
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_results import authorize_workflow_task_result_read
+from functions_workflow_policy_errors import (
+    WORKFLOW_FAILURE_FIELDS, safe_workflow_failure_summary, workflow_result_availability,
+)
 from functions_workflow_result_reader import WorkflowResultUnavailable, read_workflow_result, workflow_result_error_payload
 from functions_saved_analysis import sanitize_workflow_analysis_history
 from functions_workflow_runtime import (
@@ -233,7 +236,15 @@ def _workflow_task_result_page_response(workflow, run_record, task_id, get_item)
         return jsonify({'error': 'Select an exact execution and attempt for this structured run.'}), 409
     result_ref = summary.get('result_ref')
     if not isinstance(result_ref, dict):
-        return jsonify({'error': 'This task has no durable result. Older runs contain previews only.'}), 409
+        availability = workflow_result_availability(
+            item, legacy=not run_record.get('durable_execution') and not item.get('error_code'),
+        )
+        reason = availability['reason']
+        message = {
+            'legacy_preview_only': 'This older run contains previews only, without a durable result.',
+            'candidate_unverified': 'A generated candidate has not passed verification. No result artifact was committed.',
+        }.get(reason, 'No result artifact was committed for this task attempt. Generated work may still exist.')
+        return jsonify({'error': message, 'code': 'workflow_result_unavailable', 'reason': reason}), 409
     output_name = _normalize_identifier(request.args.get('output') or 'manifest')
     try:
         offset = int(request.args.get('offset', '0'))
@@ -275,6 +286,15 @@ def _workflow_task_result_page_response(workflow, run_record, task_id, get_item)
             level=logging.ERROR,
         )
         return jsonify({'error': 'Unable to read the saved task result.'}), 503
+
+
+def _workflow_run_item_response(item, run_record):
+    result = {key: value for key, value in item.items() if key not in WORKFLOW_FAILURE_FIELDS}
+    result.update(safe_workflow_failure_summary(item))
+    result['result_availability'] = workflow_result_availability(
+        item, legacy=not run_record.get('durable_execution') and not item.get('error_code'),
+    )
+    return result
 
 
 def _request_workflow_run_cancellation(
@@ -579,7 +599,10 @@ def _workflow_execution_history_response(workflow_id, run_id, *, group=False, ki
             )
         return jsonify(response)
     except WorkflowRuntimeConflict as exc:
-        return jsonify({'error': exc.public_message, 'code': exc.code}), 409
+        return jsonify({
+            'error': exc.public_message, 'code': exc.code,
+            **({'reason': exc.reason} if getattr(exc, 'reason', None) in ('not_committed', 'candidate_unverified') else {}),
+        }), 409
     except AnalysisResultUnavailable:
         # Lineage or integrity: a saved record doesn't check out. Sources are never re-checked here.
         return jsonify({'error': 'This saved execution record could not be verified.'}), 409
@@ -2166,9 +2189,9 @@ def register_route_backend_workflows(bp):
         return jsonify({
             'workflow_id': workflow_id,
             'run_id': run_id,
-            'items': sanitize_workflow_analysis_history(
+            'items': [_workflow_run_item_response(item, run_record) for item in sanitize_workflow_analysis_history(
                 workflow, run_record, user_id, items=list_personal_workflow_run_items(run_id, limit=1000),
-            )[1],
+            )[1]],
         })
 
 
@@ -2658,9 +2681,9 @@ def register_route_backend_workflows(bp):
         return jsonify({
             'workflow_id': workflow_id,
             'run_id': run_id,
-            'items': sanitize_workflow_analysis_history(
+            'items': [_workflow_run_item_response(item, run_record) for item in sanitize_workflow_analysis_history(
                 workflow, run_record, user_id, items=list_group_workflow_run_items(run_id, limit=1000),
-            )[1],
+            )[1]],
         })
 
 

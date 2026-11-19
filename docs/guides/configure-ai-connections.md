@@ -197,8 +197,16 @@ a dated API version. A v1 inference endpoint uses `/openai/v1/` without a dated
 query; setting the version field to `v1` alone does not change a legacy route.
 Foundry project discovery keeps its own version field.
 
-To opt into reasoning with function tools on a supported OpenAI/Azure model,
-select **Use Responses API** on its connection. Enter the resource or gateway
+For explicit Custom model routes in **0.261.436**, choose **Request API** on
+each model in either editor. Select **Responses (/v1/responses)** or
+**Responses (/openai/v1/responses)** to match the gateway; **Anthropic
+Messages** is a separate choice. **Preview Route** resolves the URL without
+saving, using credentials, or running inference. **Test Connection** uses the
+saved model and credentials. Existing connection-wide settings are not
+silently converted. Dated Azure Responses is not a supported choice.
+
+On legacy connections that expose the switch, select **Use Responses API**
+to opt in on a supported OpenAI/Azure model. Enter the resource or gateway
 API base; pasting a full operation such as
 `https://<resource>.openai.azure.com/openai/v1/responses` checks the switch and
 saves the base without `/responses`. The API choice is stored separately and
@@ -257,8 +265,16 @@ Use the independent embedding default for document indexing, semantic retrieval,
 fact memory, and the default Embedding Model action. It is global across personal,
 group, and public workspaces; it does not require enabling chat connections.
 
+As of **0.261.436**, publish the model with **Use for embeddings** in AI
+Connections and edit its **Embedding routing** details there. A model without
+an override uses its saved connection's embedding settings or provider defaults.
+Use a model-specific override when only that model needs a different base, API
+version, or gateway header. Credentials stay on the connection. In **Embeddings**,
+see the effective request URL, test the saved default, or jump back to its model
+to edit it. An upgrade does not automatically migrate existing routes or vectors.
+
 For Foundry, keep the project endpoint for deployment discovery and configure an
-explicit **embedding inference endpoint**. A project URL containing
+explicit **embedding inference base URL** on its embedding model. A project URL containing
 `/api/projects/` does not route embeddings. Current Azure-compatible inference uses
 the resource API base ending in `/openai/v1/`.
 

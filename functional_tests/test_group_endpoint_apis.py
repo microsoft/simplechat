@@ -1,7 +1,7 @@
 # test_group_endpoint_apis.py
 """
 Functional test for the immutable-target group model endpoint APIs.
-Version: 0.261.160
+Version: 0.261.436
 Implemented in: 0.261.140
 
 The real policy, access, route, group-document, Key Vault and settings modules run
@@ -219,7 +219,7 @@ def test_list_envelope_carries_only_the_keys_the_manager_needs(seeded):
     body = seeded.client.get(LIST_PATH).get_json()
     assert set(body) == {"endpoints", "multi_endpoint_enabled", "custom_api_types"}
     assert body["multi_endpoint_enabled"] is True
-    assert body["custom_api_types"] == seeded.modules.access.get_model_endpoint_provider_ui_options()
+    assert body["custom_api_types"] == seeded.modules.access.get_model_endpoint_provider_ui_options(routing_schema_version=2)
 
 
 def test_each_endpoint_is_the_sanitized_admin_shape_plus_revision_and_actions(seeded):

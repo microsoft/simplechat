@@ -18,13 +18,14 @@ from collaboration_models import (
 from config import *
 from functions_appinsights import log_event
 from functions_chat_content_checks import CHECK_METADATA, attach_chat_check, check_chat_content, strip_private_chat_checks
-from functions_chat_content_review import patch_chat_message_metadata, record_blocked_chat_attempt
+from functions_chat_content_review import patch_chat_message_metadata, persist_chat_reply, record_blocked_chat_attempt
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_assist_submissions import SubmissionIdError
 from functions_chat_model_catalog import build_chat_model_catalog
 from functions_chat_retry import (
     ChatRetryError, available_retry_attempts, build_replay_request, has_replay_agent_selection, load_owned_retry_message,
-    order_retry_messages, prepare_retry_attempt, reconcile_prepared_retry, retry_source_user, set_retry_attempt_state,
+    order_retry_messages, prepare_retry_attempt, reconcile_chat_attempts, reconcile_prepared_retry,
+    retry_source_user, select_retry_thread_attempt, set_retry_attempt_state,
 )
 from functions_governance import ensure_governance_access
 from functions_model_catalog import ModelCatalogError
@@ -485,6 +486,7 @@ def _message_attempt_payload(question, body, *, edited=False):
         'edited_user_message_id' if edited else 'retry_user_message_id': question['id'],
         'retry_thread_id': thread['thread_id'], 'retry_thread_attempt': thread['thread_attempt'],
         'retry_source_user_message_id': question['metadata']['response_attempt']['source_user_message_id'],
+        'submission_id': question['metadata']['response_attempt'].get('submission_id'),
     })
     return {
         'success': True, 'message': 'Edit initiated' if edited else 'Retry initiated',
@@ -1216,20 +1218,9 @@ def _promote_remaining_thread_attempt(conversation_id, thread_id, deleted_attemp
         return None
 
     promoted_attempt = min(remaining_attempts)
-    for message in remaining_messages:
-        metadata = message.get('metadata')
-        if not isinstance(metadata, dict):
-            metadata = {}
-            message['metadata'] = metadata
-        thread_info = metadata.get('thread_info')
-        if not isinstance(thread_info, dict):
-            thread_info = {}
-            metadata['thread_info'] = thread_info
-        should_be_active = _thread_attempt_number(message) == promoted_attempt
-        if thread_info.get('active_thread') is should_be_active:
-            continue
-        thread_info['active_thread'] = should_be_active
-        patch_chat_message_metadata(cosmos_messages_container, message)
+    select_retry_thread_attempt(
+        cosmos_messages_container, conversation_id, thread_id, promoted_attempt,
+    )
 
     return promoted_attempt
 
@@ -1560,6 +1551,11 @@ def register_route_backend_conversations(bp):
             return jsonify({'error': 'No conversation_id provided'}), 400
         try:
             _authorize_personal_conversation_read(user_id, conversation_id)
+            reconcile_chat_attempts(
+                cosmos_conversation_handoffs_container, cosmos_messages_container,
+                actor_id=user_id, conversation_id=conversation_id,
+                authorize=lambda: _authorize_personal_conversation_read(user_id, conversation_id),
+            )
             # Query all messages in cosmos_messages_container
             # We'll filter for active_thread in Python since Cosmos DB boolean queries can be tricky
             message_query = f"""
@@ -1658,6 +1654,11 @@ def register_route_backend_conversations(bp):
             return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
+        except (AzureError, ChatRetryError, TypeError):
+            return jsonify({
+                'error': 'Saved response state could not be confirmed. Please reload.',
+                'code': 'chat_attempt_storage_unavailable',
+            }), 503
         except LookupError:
             return jsonify({'messages': []})
         except Exception as e:
@@ -3801,27 +3802,9 @@ def register_route_backend_conversations(bp):
             
             target_attempt = available_attempts[target_index]
             
-            # Deactivate all attempts for this thread
-            deactivate_query = f"""
-                SELECT * FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-            """
-            all_thread_messages = list(cosmos_messages_container.query_items(
-                query=deactivate_query,
-                partition_key=conversation_id
-            ))
-            
-            # Update active_thread flags
-            for msg in all_thread_messages:
-                if 'metadata' not in msg:
-                    msg['metadata'] = {}
-                if 'thread_info' not in msg['metadata']:
-                    msg['metadata']['thread_info'] = {}
-                
-                msg_attempt = msg['metadata']['thread_info'].get('thread_attempt', 0)
-                msg['metadata']['thread_info']['active_thread'] = (msg_attempt == target_attempt)
-                patch_chat_message_metadata(cosmos_messages_container, msg)
+            select_retry_thread_attempt(
+                cosmos_messages_container, conversation_id, thread_id, target_attempt,
+            )
 
             _rebuild_authorized_personal_conversation_used_documents(
                 user_id,

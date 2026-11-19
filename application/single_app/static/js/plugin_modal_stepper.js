@@ -37,6 +37,8 @@ const TABLEAU_PLUGIN_TYPE = 'tableau';
 const TABLEAU_AUTH_METHOD_PAT = 'personal_access_token';
 const TABLEAU_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
 const YAMCS_PLUGIN_TYPE = 'yamcs';
+const MICROSOFT_DECISION_PLUGIN_TYPE = 'microsoft_decision';
+const MICROSOFT_DECISION_DEFAULT_API_KEY_HEADER = 'api-key';
 const YAMCS_DEFAULT_PROCESSOR = 'realtime';
 const YAMCS_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
 const YAMCS_AUTH_METHOD_API_KEY = 'api_key';
@@ -50,6 +52,7 @@ const ACTION_IDENTITY_SELECT_IDS = {
   snowflake: 'snowflake-identity-select',
   tableau: 'tableau-identity-select',
   yamcs: 'yamcs-identity-select',
+  microsoftDecision: 'microsoft-decision-identity-select',
   yamcsBasicAuth: 'yamcs-basic-auth-identity-select',
   logAnalytics: 'log-analytics-identity-select',
   generic: 'plugin-auth-identity-select-generic',
@@ -98,7 +101,8 @@ const ACTION_CONNECTION_TEST_CONFIG = {
   logAnalytics: { idPrefix: 'log-analytics', url: '/api/plugins/test-log-analytics-connection', label: 'Log Analytics' },
   mcp: { idPrefix: 'mcp', url: '/api/plugins/test-mcp-connection', label: 'MCP' },
   snowflake: { idPrefix: 'snowflake', url: '/api/plugins/test-snowflake-connection', label: 'Snowflake' },
-  tableau: { idPrefix: 'tableau', url: '/api/plugins/test-tableau-connection', label: 'Tableau' }
+  tableau: { idPrefix: 'tableau', url: '/api/plugins/test-tableau-connection', label: 'Tableau' },
+  microsoftDecision: { idPrefix: 'microsoft-decision', url: '/api/plugins/test-microsoft-decision-connection', label: 'Microsoft Decision' }
 };
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
@@ -581,6 +585,9 @@ export class PluginModalStepper {
     if (kind === 'yamcs') {
       return this.actionIdentities.filter(identity => YAMCS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
+    if (kind === 'microsoftDecision') {
+      return this.actionIdentities.filter(identity => ['api_key', 'managed_identity'].includes(this.getIdentityAuthType(identity)));
+    }
     if (kind === 'yamcsBasicAuth') {
       return this.actionIdentities.filter(identity => YAMCS_BASIC_AUTH_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
@@ -597,6 +604,7 @@ export class PluginModalStepper {
     this.populateActionIdentitySelector('snowflake', 'snowflake-identity-select', 'snowflake-action-identity-group', 'snowflake-identity-status');
     this.populateActionIdentitySelector('tableau', 'tableau-identity-select', 'tableau-action-identity-group', 'tableau-identity-status');
     this.populateActionIdentitySelector('yamcs', 'yamcs-identity-select', 'yamcs-action-identity-group', 'yamcs-identity-status');
+    this.populateActionIdentitySelector('microsoftDecision', 'microsoft-decision-identity-select', 'microsoft-decision-action-identity-group', 'microsoft-decision-identity-status');
     this.populateActionIdentitySelector('yamcsBasicAuth', 'yamcs-basic-auth-identity-select', 'yamcs-basic-auth-identity-group', 'yamcs-basic-auth-identity-status');
     this.populateActionIdentitySelector('logAnalytics', 'log-analytics-identity-select', 'log-analytics-action-identity-group', 'log-analytics-identity-status');
     this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
@@ -714,6 +722,7 @@ export class PluginModalStepper {
       snowflake: 'snowflake-auth-method',
       tableau: 'tableau-auth-method',
       yamcs: 'yamcs-auth-method',
+      microsoftDecision: 'microsoft-decision-auth-method',
       logAnalytics: 'log-analytics-auth-method'
     };
     const authSelect = document.getElementById(authSelectIds[kind] || 'plugin-auth-type-generic');
@@ -732,6 +741,8 @@ export class PluginModalStepper {
       this.toggleTableauAuthFields();
     } else if (kind === 'yamcs') {
       this.toggleYamcsAuthFields();
+    } else if (kind === 'microsoftDecision') {
+      this.toggleMicrosoftDecisionAuthFields();
     } else if (kind === 'logAnalytics') {
       this.toggleLogAnalyticsAuthFields();
     } else {
@@ -845,6 +856,10 @@ export class PluginModalStepper {
     if (testYamcsBtn) {
       testYamcsBtn.addEventListener('click', () => this.testYamcsConnection());
     }
+
+    document.getElementById('microsoft-decision-auth-method')?.addEventListener('change', () => this.toggleMicrosoftDecisionAuthFields());
+    document.getElementById('microsoft-decision-url-mode')?.addEventListener('change', () => this.updateMicrosoftDecisionEndpointHelp());
+    document.getElementById('microsoft-decision-identity-select')?.addEventListener('change', () => this.handleActionIdentityChange('microsoftDecision'));
 
     // Test connection buttons for the remaining configurable action types
     Object.keys(ACTION_CONNECTION_TEST_CONFIG).forEach(testKey => {
@@ -1443,6 +1458,10 @@ export class PluginModalStepper {
 
   isYamcsType(type = this.selectedType) {
     return !!(type && type.toLowerCase() === YAMCS_PLUGIN_TYPE);
+  }
+
+  isMicrosoftDecisionType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === MICROSOFT_DECISION_PLUGIN_TYPE);
   }
 
   isMcpType(type = this.selectedType) {
@@ -3212,6 +3231,88 @@ export class PluginModalStepper {
     };
   }
 
+  updateMicrosoftDecisionEndpointHelp() {
+    const urlMode = document.getElementById('microsoft-decision-url-mode')?.value || 'foundry';
+    const endpoint = document.getElementById('microsoft-decision-endpoint');
+    const help = document.getElementById('microsoft-decision-endpoint-help');
+    if (urlMode === 'exact') {
+      endpoint?.setAttribute('placeholder', 'https://gateway.example.com/providers/microsoft/v1/systemone');
+      if (help) {
+        help.textContent = 'Provide the complete path ending in /providers/microsoft/v1/systemone.';
+      }
+      return;
+    }
+    endpoint?.setAttribute('placeholder', 'https://resource.services.ai.azure.com');
+    if (help) {
+      help.textContent = 'The Decision API path is appended automatically.';
+    }
+  }
+
+  toggleMicrosoftDecisionAuthFields() {
+    const selectedIdentity = this.getSelectedActionIdentity('microsoftDecision');
+    const authMethod = document.getElementById('microsoft-decision-auth-method');
+    const apiKeyFields = document.getElementById('microsoft-decision-api-key-fields');
+    if (authMethod) {
+      authMethod.disabled = Boolean(selectedIdentity);
+    }
+    apiKeyFields?.classList.toggle(
+      'd-none',
+      Boolean(selectedIdentity) || (authMethod?.value || 'key') !== 'key'
+    );
+  }
+
+  populateMicrosoftDecisionForm(plugin) {
+    const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+    const auth = plugin.auth || {};
+    document.getElementById('microsoft-decision-url-mode').value = additionalFields.url_mode || 'foundry';
+    document.getElementById('microsoft-decision-endpoint').value = plugin.endpoint || '';
+    document.getElementById('microsoft-decision-deployment-name').value = additionalFields.deployment_name || '';
+    document.getElementById('microsoft-decision-api-key-header').value = additionalFields.api_key_header || MICROSOFT_DECISION_DEFAULT_API_KEY_HEADER;
+    document.getElementById('microsoft-decision-api-key').value = auth.key || '';
+    document.getElementById('microsoft-decision-timeout').value = additionalFields.timeout_seconds || 60;
+    document.getElementById('microsoft-decision-minimum-confidence').value = additionalFields.minimum_confidence ?? 0.75;
+    document.getElementById('microsoft-decision-auth-method').value = auth.type === 'identity' ? 'identity' : 'key';
+    this.setSelectedActionIdentity('microsoftDecision', plugin.identity_id || '');
+    this.updateMicrosoftDecisionEndpointHelp();
+    this.handleActionIdentityChange('microsoftDecision');
+  }
+
+  getMicrosoftDecisionConfiguration() {
+    const selectedIdentity = this.getSelectedActionIdentity('microsoftDecision');
+    const authMethod = selectedIdentity
+      ? this.getIdentityAuthType(selectedIdentity)
+      : (document.getElementById('microsoft-decision-auth-method')?.value || 'key');
+    const auth = {};
+    let identityId = '';
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+    } else if (authMethod === 'identity') {
+      auth.type = 'identity';
+      auth.identity = 'managed_identity';
+    } else {
+      auth.type = 'key';
+      auth.key = document.getElementById('microsoft-decision-api-key')?.value.trim() || '';
+    }
+    return {
+      endpoint: document.getElementById('microsoft-decision-endpoint')?.value.trim() || '',
+      auth,
+      additionalFields: {
+        url_mode: document.getElementById('microsoft-decision-url-mode')?.value || 'foundry',
+        deployment_name: document.getElementById('microsoft-decision-deployment-name')?.value.trim() || '',
+        api_key_header: document.getElementById('microsoft-decision-api-key-header')?.value.trim() || MICROSOFT_DECISION_DEFAULT_API_KEY_HEADER,
+        timeout_seconds: parseInt(document.getElementById('microsoft-decision-timeout')?.value, 10) || 60,
+        minimum_confidence: (() => {
+          const value = Number.parseFloat(document.getElementById('microsoft-decision-minimum-confidence')?.value);
+          return Number.isFinite(value) ? value : 0.75;
+        })(),
+        identity_auth_type: selectedIdentity ? this.getIdentityAuthType(selectedIdentity) : undefined
+      },
+      identityId
+    };
+  }
+
   initializeDocumentSearchConfiguration() {
     const defaults = {
       'document-search-scope': 'all',
@@ -4097,8 +4198,24 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    if (type === 'bitbucket') return true;
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type) || this.isLogAnalyticsType(type) || this.isAgentType(type);
+    return type === 'bitbucket'
+        || this.isSqlType(type)
+        || this.isCosmosType(type)
+        || this.isRocksDbType(type)
+        || this.isDocumentSearchType(type)
+        || this.isBlobStorageType(type)
+        || this.isDatabricksType(type)
+        || this.isSnowflakeType(type)
+        || this.isTableauType(type)
+        || this.isYamcsType(type)
+        || this.isMicrosoftDecisionType(type)
+        || this.isMcpType(type)
+        || this.isSimpleChatType(type)
+        || this.isMsGraphType(type)
+        || this.isAzureMapsType(type)
+        || this.isChartType(type)
+        || this.isLogAnalyticsType(type)
+        || this.isAgentType(type);
   }
 
   showConfigSectionForType() {
@@ -4115,6 +4232,7 @@ export class PluginModalStepper {
       snowflake: document.getElementById('snowflake-config-section'),
       tableau: document.getElementById('tableau-config-section'),
       yamcs: document.getElementById('yamcs-config-section'),
+      microsoftDecision: document.getElementById('microsoft-decision-config-section'),
       simpleChat: document.getElementById('simplechat-config-section'),
       msGraph: document.getElementById('msgraph-config-section'),
       mcp: document.getElementById('mcp-config-section'),
@@ -4170,6 +4288,10 @@ export class PluginModalStepper {
     } else if (this.isYamcsType()) {
       showOnly('yamcs');
       this.toggleYamcsAuthFields();
+    } else if (this.isMicrosoftDecisionType()) {
+      showOnly('microsoftDecision');
+      this.updateMicrosoftDecisionEndpointHelp();
+      this.toggleMicrosoftDecisionAuthFields();
     } else if (this.isMcpType()) {
       showOnly('mcp');
       this.initializeMcpConfiguration();
@@ -6303,6 +6425,20 @@ export class PluginModalStepper {
       return tableauConfig;
     }
 
+    if (testKey === 'microsoftDecision') {
+      const microsoftDecisionConfig = this.getMicrosoftDecisionConfiguration();
+      if (!microsoftDecisionConfig.endpoint) {
+        throw new Error('Enter the Microsoft Decision endpoint before testing the connection.');
+      }
+      if (!microsoftDecisionConfig.additionalFields.deployment_name) {
+        throw new Error('Enter the Microsoft Decision deployment name before testing the connection.');
+      }
+      if (microsoftDecisionConfig.auth.type === 'key' && !microsoftDecisionConfig.auth.key && !this.isEditMode) {
+        throw new Error('Enter an API key before testing API-key authentication.');
+      }
+      return microsoftDecisionConfig;
+    }
+
     throw new Error('This action type does not support connection testing.');
   }
 
@@ -7000,6 +7136,8 @@ export class PluginModalStepper {
       this.populateTableauForm(plugin);
     } else if (this.isYamcsType(plugin.type)) {
       this.populateYamcsForm(plugin);
+    } else if (this.isMicrosoftDecisionType(plugin.type)) {
+      this.populateMicrosoftDecisionForm(plugin);
     } else if (this.isMcpType()) {
       this.populateMcpForm(plugin);
     } else if (this.isSimpleChatType(plugin.type)) {
@@ -7078,6 +7216,7 @@ export class PluginModalStepper {
     const snowflakeSection = document.getElementById('snowflake-config-section');
     const tableauSection = document.getElementById('tableau-config-section');
     const yamcsSection = document.getElementById('yamcs-config-section');
+    const microsoftDecisionSection = document.getElementById('microsoft-decision-config-section');
     const mcpSection = document.getElementById('mcp-config-section');
     const azureMapsSection = document.getElementById('azure-maps-config-section');
     const logAnalyticsSection = document.getElementById('log-analytics-config-section');
@@ -7091,6 +7230,7 @@ export class PluginModalStepper {
     const isSnowflakeVisible = !snowflakeSection.classList.contains('d-none');
     const isTableauVisible = !tableauSection.classList.contains('d-none');
     const isYamcsVisible = !yamcsSection.classList.contains('d-none');
+    const isMicrosoftDecisionVisible = !!microsoftDecisionSection && !microsoftDecisionSection.classList.contains('d-none');
     const isMcpVisible = !mcpSection.classList.contains('d-none');
     const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
     const isLogAnalyticsVisible = !!logAnalyticsSection && !logAnalyticsSection.classList.contains('d-none');
@@ -7325,6 +7465,12 @@ export class PluginModalStepper {
       auth = yamcsConfig.auth;
       additionalFields = yamcsConfig.additionalFields;
       identityId = yamcsConfig.identityId;
+    } else if (isMicrosoftDecisionVisible) {
+      const microsoftDecisionConfig = this.getMicrosoftDecisionConfiguration();
+      endpoint = microsoftDecisionConfig.endpoint;
+      auth = microsoftDecisionConfig.auth;
+      additionalFields = microsoftDecisionConfig.additionalFields;
+      identityId = microsoftDecisionConfig.identityId;
     } else if (isMcpVisible) {
       const mcpConfig = this.getMcpConfiguration();
       endpoint = mcpConfig.endpoint;
@@ -7648,6 +7794,8 @@ export class PluginModalStepper {
       return this.normalizeTableauServerUrl(document.getElementById('tableau-server-url')?.value || '');
     } else if (this.isYamcsType()) {
       return this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
+    } else if (this.isMicrosoftDecisionType()) {
+      return document.getElementById('microsoft-decision-endpoint')?.value.trim() || '';
     } else if (isMcpType) {
       return document.getElementById('mcp-endpoint').value.trim();
     } else if (isAzureMapsType) {
@@ -7721,6 +7869,11 @@ export class PluginModalStepper {
         return 'Reusable Identity';
       }
       return this.formatYamcsAuthMethod(document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
+    } else if (this.isMicrosoftDecisionType()) {
+      if (this.getSelectedActionIdentity('microsoftDecision')) {
+        return 'Reusable Identity';
+      }
+      return this.formatAuthType(document.getElementById('microsoft-decision-auth-method')?.value || 'key');
     } else if (isMcpType) {
       if (this.getSelectedActionIdentity('mcp')) {
         return 'Reusable Identity';
@@ -8871,6 +9024,17 @@ export class PluginModalStepper {
       tableauUseServerVersion.checked = true;
     }
 
+    // Step 3 fields - Microsoft Decision-1 Plugin
+    safeSetValue('microsoft-decision-url-mode', 'foundry');
+    safeSetValue('microsoft-decision-endpoint');
+    safeSetValue('microsoft-decision-deployment-name');
+    safeSetValue('microsoft-decision-identity-select');
+    safeSetValue('microsoft-decision-auth-method', 'key');
+    safeSetValue('microsoft-decision-api-key-header', MICROSOFT_DECISION_DEFAULT_API_KEY_HEADER);
+    safeSetValue('microsoft-decision-api-key');
+    safeSetValue('microsoft-decision-timeout', '60');
+    safeSetValue('microsoft-decision-minimum-confidence', '0.75');
+
     // Step 3 fields - SQL Plugin
     safeSetValue('sql-connection-method', 'connection_string');
     safeSetValue('sql-connection-string');
@@ -8882,7 +9046,7 @@ export class PluginModalStepper {
     safeSetValue('sql-identity-select');
     safeSetValue('sql-database-type', 'sql_server');
 
-    ['plugin-auth-type', 'plugin-auth-type-generic', 'mcp-auth-method', 'databricks-auth-method', 'tableau-auth-method', 'sql-auth-type'].forEach(id => {
+    ['plugin-auth-type', 'plugin-auth-type-generic', 'mcp-auth-method', 'databricks-auth-method', 'tableau-auth-method', 'microsoft-decision-auth-method', 'sql-auth-type'].forEach(id => {
       const element = document.getElementById(id);
       if (element) {
         element.disabled = false;
@@ -8943,6 +9107,7 @@ export class PluginModalStepper {
       this.toggleMcpAuthFields();
       this.toggleDatabricksAuthFields();
       this.toggleTableauAuthFields();
+      this.toggleMicrosoftDecisionAuthFields();
       this.toggleGenericAuthFields();
       this.handleSqlAuthTypeChange();
       this.handleCosmosAuthTypeChange();

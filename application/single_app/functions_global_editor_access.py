@@ -17,7 +17,6 @@ already update those fields without rewriting stored secret references.
 import json
 import logging
 import re
-from importlib import import_module
 
 from flask import jsonify, request
 from werkzeug.exceptions import HTTPException
@@ -153,9 +152,8 @@ def get_global_agent(agent_id):
 
 def get_global_agent_options():
     settings = get_settings()
-    # Bound lazily so this module does not import the agent route blueprint at load.
-    route_agents = import_module("route_backend_agents")
-    endpoints = route_agents.build_combined_model_endpoints(settings)
+    # Normalize and redact once. An already projected route has no base URL to normalize.
+    endpoints = [{**endpoint, "scope": "global"} for endpoint in settings.get("model_endpoints") or []]
     return build_global_agent_editor_options(settings, endpoints), 200
 
 

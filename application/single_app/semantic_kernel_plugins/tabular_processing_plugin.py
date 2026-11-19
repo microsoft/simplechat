@@ -62,11 +62,23 @@ from config import (
 class TabularSelectionError(ValueError):
     """A user-actionable selection failure, containing no storage error text."""
 
-    def __init__(self, message, *, code='table_selection_required', choices=None):
+    def __init__(
+        self,
+        message,
+        *,
+        code='table_selection_required',
+        choices=None,
+        retryable=True,
+        source_format=None,
+        corrected_arguments=None,
+    ):
         super().__init__(message)
         self.public_message = message
         self.code = code
         self.choices = copy.deepcopy(choices or [])
+        self.retryable = bool(retryable)
+        self.source_format = str(source_format or "")
+        self.corrected_arguments = copy.deepcopy(corrected_arguments or {})
 
 
 class TabularSavedValueError(ValueError):
@@ -719,10 +731,16 @@ class TabularProcessingPlugin:
             extra={'exception_type': type(error).__name__},
         )
         if isinstance(error, TabularSelectionError):
-            return {
+            payload = {
                 'error': error.public_message, 'error_code': error.code,
                 'selection_required': True, 'table_choices': error.choices,
+                'retryable': error.retryable,
             }
+            if error.source_format:
+                payload['source_format'] = error.source_format
+            if error.corrected_arguments:
+                payload['corrected_arguments'] = error.corrected_arguments
+            return payload
         if isinstance(error, TabularSavedValueError):
             return {'error': error.public_message, 'error_code': 'formula_cache_missing'}
         if isinstance(error, (PermissionError, ScreeningError)):
@@ -3468,6 +3486,8 @@ class TabularProcessingPlugin:
             raise TabularSelectionError(
                 "Specify table_id or cell_range, not both.", code='table_selection_invalid',
             )
+        if isinstance(header_row, str) and not header_row.strip():
+            header_row = None
         if header_row is not None:
             if isinstance(header_row, bool) or not str(header_row).isascii() or not str(header_row).isdigit():
                 raise TabularSelectionError(
@@ -3569,13 +3589,31 @@ class TabularProcessingPlugin:
             table_id=table_id,
         )
         sheet_cache_key = resolved_sheet_name or '__default__'
-        if not workbook_metadata.get('is_workbook') and any(
-            value is not None for value in (table_id, cell_range, header_row)
-        ):
-            raise TabularSelectionError(
-                "Table, range, and header selectors apply only to Excel workbooks.",
-                code='table_selection_invalid',
+        if not workbook_metadata.get('is_workbook'):
+            source_format = str(blob_name.rsplit('.', 1)[-1] or 'tabular').lower()
+            has_sheet_selector = bool(str(sheet_name or '').strip()) or (
+                sheet_index is not None and str(sheet_index).strip() != ''
             )
+            has_excel_selector = (
+                table_id is not None or cell_range is not None
+                or header_row not in (None, 0) or has_sheet_selector
+            )
+            if has_excel_selector:
+                raise TabularSelectionError(
+                    "Sheet, table, range, and header selectors apply only to Excel workbooks. "
+                    "Omit those arguments for CSV and TSV files.",
+                    code='tabular_selector_not_applicable',
+                    retryable=False,
+                    source_format=source_format,
+                    corrected_arguments={
+                        "sheet_name": None,
+                        "sheet_index": None,
+                        "table_id": None,
+                        "cell_range": None,
+                        "header_row": None,
+                    },
+                )
+            header_row = None
         cache_key = (
             container_name, blob_name, workbook_metadata.get('blob_etag'),
             sheet_cache_key, table_id, cell_range, header_row,
@@ -4652,9 +4690,9 @@ class TabularProcessingPlugin:
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
-        table_id: Annotated[str, "Optional discovered Excel table ID or name. Omit to discover all tables; 'all' explicitly selects same-schema tables."] = None,
-        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
-        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
+        table_id: Annotated[str, "Excel-only discovered table ID or name. Omit for CSV/TSV; 'all' explicitly selects same-schema Excel tables."] = None,
+        cell_range: Annotated[str, "Excel-only range such as A3:D100. Use instead of table_id and supply header_row; omit for CSV/TSV."] = None,
+        header_row: Annotated[str, "Excel-only worksheet header row; zero means no header. Omit this argument for CSV/TSV."] = None,
     ) -> Annotated[str, "JSON summary of the tabular file"]:
         """Get schema and preview of a tabular file."""
         def _sync_work():
@@ -4739,9 +4777,9 @@ class TabularProcessingPlugin:
         max_rows: Annotated[str, "Maximum matching rows to return"] = "25",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
-        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
-        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
-        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
+        table_id: Annotated[str, "Excel-only discovered table ID or name; 'all' explicitly selects same-schema Excel tables. Omit for CSV/TSV."] = None,
+        cell_range: Annotated[str, "Excel-only range such as A3:D100. Use instead of table_id and supply header_row; omit for CSV/TSV."] = None,
+        header_row: Annotated[str, "Excel-only worksheet header row; zero means no header. Omit this argument for CSV/TSV."] = None,
     ) -> Annotated[str, "JSON result containing matching rows and target-column values"]:
         """Look up values from a target column for matching rows."""
         def _sync_work():
@@ -4886,9 +4924,9 @@ class TabularProcessingPlugin:
         max_values: Annotated[str, "Maximum distinct values to return"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
-        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
-        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
-        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
+        table_id: Annotated[str, "Excel-only discovered table ID or name; 'all' explicitly selects same-schema Excel tables. Omit for CSV/TSV."] = None,
+        cell_range: Annotated[str, "Excel-only range such as A3:D100. Use instead of table_id and supply header_row; omit for CSV/TSV."] = None,
+        header_row: Annotated[str, "Excel-only worksheet header row; zero means no header. Omit this argument for CSV/TSV."] = None,
     ) -> Annotated[str, "JSON result containing deterministic distinct values and counts"]:
         """Return deterministic distinct values from a worksheet or across worksheets."""
         def _sync_work():
@@ -5062,9 +5100,9 @@ class TabularProcessingPlugin:
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
-        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
-        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
-        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
+        table_id: Annotated[str, "Excel-only discovered table ID or name; 'all' explicitly selects same-schema Excel tables. Omit for CSV/TSV."] = None,
+        cell_range: Annotated[str, "Excel-only range such as A3:D100. Use instead of table_id and supply header_row; omit for CSV/TSV."] = None,
+        header_row: Annotated[str, "Excel-only worksheet header row; zero means no header. Omit this argument for CSV/TSV."] = None,
     ) -> Annotated[str, "JSON result containing a deterministic row count"]:
         """Count rows deterministically after optional filters or queries."""
         def _sync_work():
@@ -5184,9 +5222,9 @@ class TabularProcessingPlugin:
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
-        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
-        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
-        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
+        table_id: Annotated[str, "Excel-only discovered table ID or name; 'all' explicitly selects same-schema Excel tables. Omit for CSV/TSV."] = None,
+        cell_range: Annotated[str, "Excel-only range such as A3:D100. Use instead of table_id and supply header_row; omit for CSV/TSV."] = None,
+        header_row: Annotated[str, "Excel-only worksheet header row; zero means no header. Omit this argument for CSV/TSV."] = None,
     ) -> Annotated[str, "JSON result of the aggregation"]:
         """Execute an aggregation operation on a column."""
         def _sync_work():
@@ -5292,9 +5330,9 @@ class TabularProcessingPlugin:
         max_rows: Annotated[str, "Maximum rows to return per page"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
-        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
-        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
-        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
+        table_id: Annotated[str, "Excel-only discovered table ID or name; 'all' explicitly selects same-schema Excel tables. Omit for CSV/TSV."] = None,
+        cell_range: Annotated[str, "Excel-only range such as A3:D100. Use instead of table_id and supply header_row; omit for CSV/TSV."] = None,
+        header_row: Annotated[str, "Excel-only worksheet header row; zero means no header. Omit this argument for CSV/TSV."] = None,
     ) -> Annotated[str, "JSON list of matching rows"]:
         """Filter rows based on a condition."""
         def _sync_work():
@@ -5472,9 +5510,9 @@ class TabularProcessingPlugin:
         max_rows: Annotated[str, "Maximum matching rows to return per page"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
-        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
-        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
-        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
+        table_id: Annotated[str, "Excel-only discovered table ID or name; 'all' explicitly selects same-schema Excel tables. Omit for CSV/TSV."] = None,
+        cell_range: Annotated[str, "Excel-only range such as A3:D100. Use instead of table_id and supply header_row; omit for CSV/TSV."] = None,
+        header_row: Annotated[str, "Excel-only worksheet header row; zero means no header. Omit this argument for CSV/TSV."] = None,
     ) -> Annotated[str, "JSON result containing matching rows, matched columns, and search metadata"]:
         """Search rows across one or more columns while preserving row context."""
         def _sync_work():
@@ -5697,9 +5735,9 @@ class TabularProcessingPlugin:
         max_rows: Annotated[str, "Maximum rows to return per page"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
-        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
-        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
-        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
+        table_id: Annotated[str, "Excel-only discovered table ID or name; 'all' explicitly selects same-schema Excel tables. Omit for CSV/TSV."] = None,
+        cell_range: Annotated[str, "Excel-only range such as A3:D100. Use instead of table_id and supply header_row; omit for CSV/TSV."] = None,
+        header_row: Annotated[str, "Excel-only worksheet header row; zero means no header. Omit this argument for CSV/TSV."] = None,
     ) -> Annotated[str, "JSON result of the query"]:
         """Execute a pandas query expression against a tabular file."""
         def _sync_work():
@@ -6015,9 +6053,9 @@ class TabularProcessingPlugin:
         sort_descending: Annotated[str, "Whether top_results should be sorted descending (true/false)"] = "true",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
-        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
-        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
-        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
+        table_id: Annotated[str, "Excel-only discovered table ID or name; 'all' explicitly selects same-schema Excel tables. Omit for CSV/TSV."] = None,
+        cell_range: Annotated[str, "Excel-only range such as A3:D100. Use instead of table_id and supply header_row; omit for CSV/TSV."] = None,
+        header_row: Annotated[str, "Excel-only worksheet header row; zero means no header. Omit this argument for CSV/TSV."] = None,
     ) -> Annotated[str, "JSON result of the group-by aggregation"]:
         """Group by one column and aggregate another."""
         def _sync_work():
@@ -6123,9 +6161,9 @@ class TabularProcessingPlugin:
         sort_descending: Annotated[str, "Whether top_results should be sorted descending (true/false)"] = "true",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
-        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
-        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
-        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
+        table_id: Annotated[str, "Excel-only discovered table ID or name; 'all' explicitly selects same-schema Excel tables. Omit for CSV/TSV."] = None,
+        cell_range: Annotated[str, "Excel-only range such as A3:D100. Use instead of table_id and supply header_row; omit for CSV/TSV."] = None,
+        header_row: Annotated[str, "Excel-only worksheet header row; zero means no header. Omit this argument for CSV/TSV."] = None,
     ) -> Annotated[str, "JSON result of the datetime component grouping analysis"]:
         """Group data by a datetime component and aggregate a metric."""
         def _sync_work():

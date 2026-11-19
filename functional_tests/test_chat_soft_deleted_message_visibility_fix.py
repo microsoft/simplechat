@@ -2,7 +2,7 @@
 # test_chat_soft_deleted_message_visibility_fix.py
 """
 Functional test for deleted chat messages that came back as masked messages.
-Version: 0.261.257
+Version: 0.261.430
 Implemented in: 0.261.257
 
 With conversation archiving enabled, deleting a chat message keeps its document with
@@ -27,6 +27,11 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from azure.cosmos._cosmos_responses import CosmosDict
+from azure.cosmos.exceptions import (
+    CosmosAccessConditionFailedError, CosmosResourceExistsError, CosmosResourceNotFoundError,
+)
+from test_support.orchestration_revisions import AtomicMemoryContainer
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +69,8 @@ def _path_value(document, path):
 class FakeContainer:
     """Evaluates the small set of query shapes the code under test issues."""
 
-    def __init__(self, items=()):
+    def __init__(self, items=(), *, sdk_responses=True):
+        self.sdk_responses = sdk_responses
         self.items = {}
         self.queries = []
         self.revision = 0
@@ -78,39 +84,62 @@ class FakeContainer:
 
     def _store(self, item):
         self.revision += 1
-        saved = copy.deepcopy(item)
+        saved = copy.deepcopy(dict(item))
         saved["_etag"] = str(self.revision)
         self.items[saved["id"]] = saved
-        return copy.deepcopy(saved)
+        return self._response(saved)
+
+    def _response(self, document):
+        body = copy.deepcopy(dict(document))
+        return CosmosDict(body, response_headers={}) if self.sdk_responses else body
 
     def get(self, item_id):
         return copy.deepcopy(self.items.get(item_id))
 
     def read_item(self, item=None, partition_key=None, **kwargs):
-        from azure.cosmos.exceptions import CosmosResourceNotFoundError
-
         document = self.items.get(item)
         if document is None:
             raise CosmosResourceNotFoundError(status_code=404, message="Not found")
-        return copy.deepcopy(document)
+        if document.get("conversation_id") is not None and partition_key != document["conversation_id"]:
+            raise CosmosResourceNotFoundError(status_code=404, message="Wrong test partition")
+        return self._response(document)
 
     def upsert_item(self, body, **kwargs):
         return self._store(body)
 
-    create_item = upsert_item
+    def create_item(self, body, **kwargs):
+        if body["id"] in self.items:
+            raise CosmosResourceExistsError(status_code=409, message="Test record exists")
+        return self._store(body)
 
     def replace_item(self, item=None, body=None, etag=None, match_condition=None, **kwargs):
-        from azure.cosmos.exceptions import CosmosAccessConditionFailedError
-
         item_id = item if isinstance(item, str) else (item or body)["id"]
         current = self.items.get(item_id)
+        if current is None:
+            raise CosmosResourceNotFoundError(status_code=404, message="Not found")
         if etag is not None and current is not None and current.get("_etag") != etag:
             raise CosmosAccessConditionFailedError(status_code=412, message="Changed")
         return self._store(body)
 
     def delete_item(self, item=None, partition_key=None, **kwargs):
         item_id = item if isinstance(item, str) else item["id"]
+        current = self.read_item(item_id, partition_key)
+        if kwargs.get("etag") is not None and current["_etag"] != kwargs["etag"]:
+            raise CosmosAccessConditionFailedError(status_code=412, message="Changed")
         self.items.pop(item_id, None)
+
+    def execute_item_batch(self, batch_operations, partition_key, **kwargs):
+        """Reuse the installed-SDK formatter/atomic message-partition boundary."""
+        atomic = AtomicMemoryContainer("conversation_id", sdk_responses=self.sdk_responses)
+        atomic.items = {
+            (document.get("conversation_id") or identifier, identifier): copy.deepcopy(document)
+            for identifier, document in self.items.items()
+        }
+        atomic.sequence = self.revision
+        result = atomic.execute_item_batch(batch_operations, partition_key, **kwargs)
+        self.items = {identifier: document for (_partition, identifier), document in atomic.items.items()}
+        self.revision = atomic.sequence
+        return result
 
     def query_items(self, query=None, parameters=None, partition_key=None, **kwargs):
         self.queries.append(query)
@@ -172,6 +201,27 @@ class FakeContainer:
                 row[alias.strip() or path.split(".")[-1]] = _path_value(document, path)
             projected.append(row)
         return projected
+
+
+def test_visibility_container_defaults_to_sdk_points_and_atomic_message_batches():
+    from azure.cosmos.exceptions import CosmosBatchOperationError
+
+    container = FakeContainer([{"id": "question", "conversation_id": CONVERSATION, "metadata": {}}])
+    point = container.read_item("question", CONVERSATION)
+    check(type(point) is CosmosDict and point["_etag"], "Point read lost the installed SDK shape.")
+    before = copy.deepcopy(container.items)
+    try:
+        container.execute_item_batch([
+            ("replace", ("question", {**point, "content": "must roll back"}),
+             {"if_match_etag": point["_etag"]}),
+            ("create", (dict(point),)),
+        ], partition_key=CONVERSATION)
+    except CosmosBatchOperationError:
+        pass
+    else:
+        raise AssertionError("A duplicate create did not fail its transaction.")
+    check(container.items == before, "Failed message batch was not atomic.")
+    check(type(container.query_items("SELECT * FROM c")[0]) is dict, "Query row was not plain JSON.")
 
 
 def soft_deleted(document, timestamp="2026-01-01T09:00:00"):

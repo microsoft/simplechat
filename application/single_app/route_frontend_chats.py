@@ -613,8 +613,13 @@ def _build_initial_chat_model_selection(
             ):
                 return serialize_option(option)
 
-    # Legacy/APIM clients historically use the configured first deployment, not alphabetical order.
-    default_option = valid_options[0] if not any(option.get('scope_type') for option in valid_options) else sorted_options[0]
+    # Legacy/APIM clients historically use the configured first deployment, not
+    # alphabetical order.
+    default_option = (
+        valid_options[0]
+        if not any(option.get('scope_type') for option in valid_options)
+        else sorted_options[0]
+    )
     return serialize_option(default_option)
 
 

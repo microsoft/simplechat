@@ -105,6 +105,8 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route, routing_schema_version
+from functions_model_endpoint_validation import validate_custom_model_endpoint, validate_model_endpoint_routing
 from functions_mixed_source_orchestration import (
     MixedSourceCancellationError,
     MixedSourceFinalizationError,
@@ -204,7 +206,7 @@ from functions_chat_content_review import (
     patch_chat_message_metadata, record_chat_content_incident, retracted_stream_payload, reply_is_retracted,
 )
 from functions_chat_retry import (
-    ChatRetryError, claim_retry_attempt, load_owned_retry_message,
+    ChatAttemptStore, ChatRetryError, claim_retry_attempt, load_owned_retry_message,
     order_retry_messages, retry_history_prefix, set_retry_attempt_state,
 )
 from copy import deepcopy
@@ -373,7 +375,13 @@ from functions_source_review import (
     URL_ACCESS_CONTEXT_CHAT,
 )
 from functions_agents import get_agent_id_by_name
-from functions_group import find_group_by_id, get_group_model_endpoints, get_optional_active_group, get_user_role_in_group
+from functions_group import (
+    assert_group_role,
+    find_group_by_id,
+    get_group_model_endpoints,
+    get_optional_active_group,
+    get_user_role_in_group,
+)
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
 from functions_documents import (
@@ -509,6 +517,8 @@ from functions_debug import debug_print
 from functions_governance import ensure_governance_access
 from functions_notifications import create_chat_response_notification
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
+from model_endpoint_profiles import GenAIMilRequestError
+from model_endpoint_usage import project_completion_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
@@ -2635,6 +2645,7 @@ TABULAR_RELATED_DOCUMENT_MAX_MATCHES_PER_ROW = 3
 TABULAR_RELATED_DOCUMENT_MAX_SUMMARY_ROWS = 8
 TABULAR_RELATED_DOCUMENT_MAX_EXCERPT_CHARS = 500
 TABULAR_SK_ANALYSIS_MAX_CHARS = 100000
+TABULAR_SK_MAX_INVOCATIONS_PER_REQUEST = 24
 TABULAR_COMPUTED_RESULTS_HANDOFF_MAX_CHARS = 100000
 TABULAR_GENERATED_OUTPUT_INTERNAL_ROW_FIELDS = {
     '_matched_columns',
@@ -4274,14 +4285,32 @@ def _merge_m365_conversation_items(conversation_item, assistant_doc):
         )
 
 
-def _persist_screened_assistant(message, user_id, settings=None):
+def _persist_screened_assistant(message, user_id, settings=None, *, attempt_store=None):
     """Persist provenance, and discard an in-flight result if its source changed."""
     assert_current_request_sources_available(user_id)
     prepare_checked_reply(message, user_id=user_id, settings=settings)
     sources = current_request_source_provenance()
     if sources:
         message.setdefault("metadata", {})["screening_sources"] = sources
-    result = persist_chat_reply(cosmos_messages_container, message)
+    metadata = message.setdefault('metadata', {})
+    if metadata.get('incomplete'):
+        stopped_by_user = bool(metadata.get('canceled') and metadata.get('cancel_reason') == 'user_requested')
+        metadata.update({
+            'stream_status': 'stopped' if stopped_by_user else 'interrupted',
+            'complete': False,
+            'stop_reason': 'user_cancelled' if stopped_by_user else metadata.get('cancel_reason') or 'provider_interrupted',
+        })
+    if attempt_store is None:
+        result = persist_chat_reply(cosmos_messages_container, message)
+    else:
+        try:
+            result = attempt_store.commit(message)
+        except ChatRetryError as error:
+            if error.code == 'chat_attempt_canceled':
+                raise MixedSourceCancellationError('terminal_commit') from None
+            raise
+    if result is None:
+        raise ChatRetryError('This response is no longer available.', code='message_not_found', status_code=404)
     if reply_is_retracted(result):
         record_chat_content_incident(result, user_id)
         return result
@@ -8881,6 +8910,10 @@ def _with_prepared_chat_retry(view):
                     'failed', error=input_check.notice, code='retry_input_blocked', expected_states=('prepared',),
                 )
                 raise ChatRetryError(input_check.notice, code='retry_input_blocked', status_code=422)
+            saved_submission = (question.get('metadata') or {}).get('response_attempt', {}).get('submission_id')
+            requested_submission = normalize_submission_id(data.get('submission_id'))
+            if requested_submission and saved_submission and requested_submission != saved_submission:
+                raise ChatRetryError('This submission belongs to a different attempt.', code='submission_conflict')
             claimed = claim_retry_attempt(
                 cosmos_messages_container, cosmos_conversations_container, user_id,
                 question['conversation_id'], question['id'],
@@ -8891,6 +8924,7 @@ def _with_prepared_chat_retry(view):
             body.update({
                 identity_field: claimed['id'], 'retry_thread_id': thread['thread_id'],
                 'retry_thread_attempt': thread['thread_attempt'],
+                'submission_id': claimed['metadata'].get('response_attempt', {}).get('submission_id'),
             })
             # The compatibility handler reads this same cached Flask JSON object.
             data.clear()
@@ -8898,9 +8932,11 @@ def _with_prepared_chat_retry(view):
             g.chat_retry_question = claimed
         except ChatRetryError as error:
             log_event('[CHAT_RETRY] Invocation refused.', extra={'code': error.code, 'user_id': user_id}, level=logging.INFO)
-            if error.code not in ('retry_already_submitted', 'retry_attempt_changed'):
+            if error.code not in ('retry_already_submitted', 'retry_attempt_changed', 'submission_conflict'):
                 fail_unstarted_attempt(error.public_message, error.code)
             return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+        except SubmissionIdError:
+            return jsonify({'error': 'Invalid response submission.', 'code': 'invalid_submission'}), 400
         except ScreeningError as error:
             fail_unstarted_attempt(error.public_message, error.code)
             return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
@@ -9021,13 +9057,19 @@ class ActiveConversationStreamSession:
         session_ttl_seconds=600,
         analysis_message_id=None,
         disconnect_grace_seconds=60,
+        submission_id=None,
+        attempt_store=None,
     ):
         self.user_id = user_id
         self.conversation_id = conversation_id
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self.session_ttl_seconds = session_ttl_seconds
         self.disconnect_grace_seconds = max(0, int(disconnect_grace_seconds if disconnect_grace_seconds is not None else 60))
-        self.cache_key = f'{user_id}:{conversation_id}'
+        self.submission_id = submission_id
+        self.attempt_store = attempt_store
+        self.cache_key = f'{user_id}:{conversation_id}' + (f':{submission_id}' if submission_id else '')
+        self._last_control_check = 0.0
+        self._durable_cancel_reason = None
         self._condition = threading.Condition()
         self._accepting_events = True
         self._analysis_message_id = analysis_message_id
@@ -9041,6 +9083,7 @@ class ActiveConversationStreamSession:
             'active': bool(active),
             'heartbeat_interval_seconds': self.heartbeat_interval_seconds,
             'updated_at': _utcnow_iso(),
+            'submission_id': self.submission_id,
         })
         metadata.setdefault('disconnect_grace_seconds', self.disconnect_grace_seconds)
         metadata.setdefault('status', STREAM_STATUS_STARTED)
@@ -9071,6 +9114,14 @@ class ActiveConversationStreamSession:
             metadata,
             ttl_seconds=self.session_ttl_seconds,
         )
+        if self.submission_id:
+            current = app_settings_cache.get_stream_session_meta(f'{self.user_id}:{self.conversation_id}') or {}
+            if current.get('submission_id') == self.submission_id:
+                # Discovery only. A stale worker never owns the next attempt's replay key.
+                app_settings_cache.set_stream_session_meta(
+                    f'{self.user_id}:{self.conversation_id}', metadata,
+                    ttl_seconds=self.session_ttl_seconds,
+                )
         return metadata
 
     def get_status_snapshot(self):
@@ -9089,6 +9140,11 @@ class ActiveConversationStreamSession:
             initial_metadata,
             ttl_seconds=self.session_ttl_seconds,
         )
+        if self.submission_id:
+            app_settings_cache.set_stream_session_meta(
+                f'{self.user_id}:{self.conversation_id}', initial_metadata,
+                ttl_seconds=self.session_ttl_seconds,
+            )
         log_event(
             '[STREAMING] Stream session started',
             extra={
@@ -9167,6 +9223,11 @@ class ActiveConversationStreamSession:
         return self.get_status_snapshot()
 
     def request_cancel(self, reason='user_requested'):
+        if self.attempt_store:
+            decision = self.attempt_store.cancel(reason)
+            if decision['outcome'] != 'accepted':
+                return {**self.get_status_snapshot(), **decision}
+            self._durable_cancel_reason = reason
         metadata = self._build_metadata(active=self.is_active(), existing=self._get_metadata())
         if metadata.get('status') in TERMINAL_STREAM_STATUSES:
             return self.get_status_snapshot()
@@ -9196,6 +9257,14 @@ class ActiveConversationStreamSession:
         return self.get_status_snapshot()
 
     def is_cancel_requested(self):
+        if self.attempt_store and time.monotonic() - self._last_control_check >= 1.0:
+            record = self.attempt_store.read()
+            self._last_control_check = time.monotonic()
+            self._durable_cancel_reason = (record or {}).get('cancel_reason')
+            if (record or {}).get('state') == 'completed':
+                return False
+        if self._durable_cancel_reason:
+            return True
         metadata = self._get_metadata()
         if not metadata or metadata.get('status') in TERMINAL_STREAM_STATUSES:
             return False
@@ -9207,6 +9276,9 @@ class ActiveConversationStreamSession:
         return False
 
     def get_cancel_reason(self):
+        if self.attempt_store:
+            record = self.attempt_store.read()
+            return (record or {}).get('cancel_reason') or 'provider_interrupted'
         metadata = self._get_metadata()
         return str(metadata.get('cancel_reason') or 'user_requested')
 
@@ -9461,7 +9533,8 @@ class ActiveConversationStreamRegistry:
         for key in expired_keys:
             self._sessions.pop(key, None)
 
-    def start_session(self, user_id, conversation_id, *, analysis_message_id=None, disconnect_grace_seconds=None):
+    def start_session(self, user_id, conversation_id, *, analysis_message_id=None, disconnect_grace_seconds=None,
+                      submission_id=None, attempt_store=None):
         if not user_id or not conversation_id:
             return None
 
@@ -9482,6 +9555,8 @@ class ActiveConversationStreamRegistry:
                     from functions_workflow_result_store import cancel_chat_analysis_results
 
                     cancel_chat_analysis_results(user_id, conversation_id, previous_analysis)
+                if existing_session.attempt_store and existing_session.submission_id != submission_id:
+                    existing_session.request_cancel(reason='replaced')
                 existing_session.close()
 
             session = ActiveConversationStreamSession(
@@ -9491,23 +9566,39 @@ class ActiveConversationStreamRegistry:
                 session_ttl_seconds=self.completed_session_ttl_seconds,
                 analysis_message_id=analysis_message_id,
                 disconnect_grace_seconds=disconnect_grace_seconds,
+                submission_id=submission_id,
+                attempt_store=attempt_store,
             )
             self._sessions[key] = session
+            if submission_id:
+                self._sessions[(user_id, conversation_id, submission_id)] = session
             session.initialize()
             return session
 
-    def get_session(self, user_id, conversation_id, active_only=False):
+    def get_session(self, user_id, conversation_id, active_only=False, submission_id=None):
         if not user_id or not conversation_id:
             return None
 
         with self._lock:
             self._cleanup_locked()
-            key = (user_id, conversation_id)
+            key = (user_id, conversation_id, submission_id) if submission_id else (user_id, conversation_id)
             session = self._sessions.get(key)
             if not session:
-                metadata = app_settings_cache.get_stream_session_meta(f'{user_id}:{conversation_id}')
+                cache_key = f'{user_id}:{conversation_id}' + (f':{submission_id}' if submission_id else '')
+                metadata = app_settings_cache.get_stream_session_meta(cache_key)
                 if not metadata:
                     return None
+                selected_submission = submission_id or metadata.get('submission_id')
+                authorized_destination = (
+                    _authorize_personal_conversation_access(user_id, conversation_id)
+                    if selected_submission else {}
+                )
+                attempt_store = ChatAttemptStore(
+                    cosmos_conversation_handoffs_container, cosmos_messages_container,
+                    actor_id=user_id, conversation_id=conversation_id, submission_id=selected_submission,
+                    destination_id=authorized_destination.get('collaboration_conversation_id') or conversation_id,
+                    authorize=lambda: _authorize_personal_conversation_access(user_id, conversation_id),
+                ) if selected_submission else None
                 session = ActiveConversationStreamSession(
                     user_id=user_id,
                     conversation_id=conversation_id,
@@ -9515,6 +9606,8 @@ class ActiveConversationStreamRegistry:
                         metadata.get('heartbeat_interval_seconds') or self.heartbeat_interval_seconds
                     ),
                     session_ttl_seconds=self.completed_session_ttl_seconds,
+                    submission_id=selected_submission,
+                    attempt_store=attempt_store,
                 )
                 self._sessions[key] = session
             if active_only and not session.is_active():
@@ -10345,6 +10438,51 @@ def get_repeated_tabular_invocation_failures(invocations, minimum_repeats=2):
         })
 
     return repeated_failures
+
+
+def get_remaining_tabular_invocation_budget(invocations):
+    """Bound all auto-tool attempts for one tabular request, not each retry pass."""
+    return max(
+        0,
+        TABULAR_SK_MAX_INVOCATIONS_PER_REQUEST - len(list(invocations or [])),
+    )
+
+
+def append_unique_tabular_invocations(existing, additions):
+    """Dedupe re-read logger rows while retaining distinct retries with new IDs."""
+    unique = list(existing or [])
+    seen_ids = {
+        str(invocation.invocation_id)
+        for invocation in unique
+        if getattr(invocation, "invocation_id", None)
+    }
+    for invocation in additions or []:
+        invocation_id = str(getattr(invocation, "invocation_id", "") or "")
+        if invocation_id and invocation_id in seen_ids:
+            continue
+        if invocation_id:
+            seen_ids.add(invocation_id)
+        unique.append(invocation)
+    return unique
+
+
+def get_non_retryable_tabular_invocation_failures(invocations):
+    """Return format-contract failures that must not be fed into another tool retry."""
+    failures = []
+    for invocation in invocations or []:
+        payload = get_tabular_invocation_result_payload(invocation)
+        if not isinstance(payload, dict) or payload.get('retryable') is not False:
+            continue
+        error_message = get_tabular_invocation_error_message(invocation)
+        if not error_message:
+            continue
+        failures.append({
+            'function_name': str(getattr(invocation, 'function_name', '') or ''),
+            'error_message': error_message,
+            'error_code': payload.get('error_code'),
+            'source_format': payload.get('source_format'),
+        })
+    return failures
 
 
 def summarize_tabular_discovery_invocations(invocations, max_sheet_names=6):
@@ -13407,6 +13545,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         previous_execution_gap_messages = []
         previous_discovery_feedback_messages = []
         analysis_requires_immediate_tool_choice = has_multi_sheet_workbook and not schema_summary_mode
+        request_invocations = []
 
         if tabular_model_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
             if schema_summary_mode:
@@ -13471,6 +13610,15 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             return None
 
         for attempt_number in range(1, 4):
+            remaining_invocation_budget = get_remaining_tabular_invocation_budget(
+                request_invocations,
+            )
+            if remaining_invocation_budget <= 0:
+                return (
+                    "Tabular analysis stopped at the safe tool-invocation limit. "
+                    "No additional source data was changed; narrow the question and retry."
+                )
+            attempt_invocation_limit = min(20, remaining_invocation_budget)
             attempt_started_at = time.monotonic()
             force_tool_use = attempt_number > 1 or (attempt_number == 1 and analysis_requires_immediate_tool_choice)
             if callable(thought_callback) and attempt_number > 1:
@@ -13514,12 +13662,12 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 service_id="tabular-analysis",
                 function_choice_behavior=(
                     FunctionChoiceBehavior.Required(
-                        maximum_auto_invoke_attempts=20,
+                        maximum_auto_invoke_attempts=attempt_invocation_limit,
                         filters=allowed_function_filters,
                     )
                     if force_tool_use else
                     FunctionChoiceBehavior.Auto(
-                        maximum_auto_invoke_attempts=20,
+                        maximum_auto_invoke_attempts=attempt_invocation_limit,
                         filters=allowed_function_filters,
                     )
                 ),
@@ -13561,6 +13709,10 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             )
             new_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
             new_invocation_count = len(new_invocations)
+            request_invocations = append_unique_tabular_invocations(
+                request_invocations,
+                new_invocations,
+            )
             discovery_invocations, analytical_invocations, _ = split_tabular_plugin_invocations(new_invocations)
             successful_analytical_invocations, failed_analytical_invocations = split_tabular_analysis_invocations(new_invocations)
             successful_document_search = tabular_document_search_invocations_succeeded(new_invocations)
@@ -13574,8 +13726,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 else:
                     successful_schema_summary_invocations.append(invocation)
 
-            repeated_failures = get_repeated_tabular_invocation_failures(
-                failed_analytical_invocations + failed_schema_summary_invocations,
+            request_failures = [
+                invocation for invocation in request_invocations
+                if get_tabular_invocation_error_message(invocation)
+            ]
+            repeated_failures = get_repeated_tabular_invocation_failures(request_failures)
+            non_retryable_failures = get_non_retryable_tabular_invocation_failures(
+                request_failures,
             )
             repeated_failure_feedback_messages = []
             if repeated_failures:
@@ -13608,6 +13765,31 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     phase='retry',
                     attempt_number=attempt_number,
                     attempt_count=3,
+                )
+
+            request_successes = [
+                invocation for invocation in request_invocations
+                if not get_tabular_invocation_error_message(invocation)
+                and getattr(invocation, 'function_name', '') not in {'list_tabular_files', 'describe_tabular_file'}
+            ]
+            if (non_retryable_failures or repeated_failures) and not request_successes:
+                terminal_failure = (non_retryable_failures or repeated_failures)[0]
+                safe_error = sanitize_plugin_invocation_value(
+                    terminal_failure['error_message']
+                )
+                log_event(
+                    '[TABULAR_SK_ANALYSIS] Request stopped after a non-recoverable tool contract failure',
+                    extra={
+                        'function_name': terminal_failure['function_name'],
+                        'error_message': safe_error,
+                        'attempt_number': attempt_number,
+                        'invocation_count': len(request_invocations),
+                    },
+                    level=logging.ERROR,
+                )
+                return (
+                    "Tabular analysis could not complete because the selected tool "
+                    f"arguments are not valid for this file format: {safe_error}"
                 )
 
             if synthesis_exception is not None:
@@ -15121,9 +15303,12 @@ def build_streaming_multi_endpoint_client(
     api_type='',
     anthropic_version='',
     allow_private_custom_endpoints=False,
+    allow_insecure_custom_endpoints=False,
+    custom_endpoint_ca_bundle_path='',
     settings=None,
     endpoint_config=None,
     identity_context=None,
+    resolved_route=None,
 ):
     """Create an inference client for a resolved streaming model endpoint."""
     client, _ = build_model_endpoint_sync_chat_client(
@@ -15135,9 +15320,12 @@ def build_streaming_multi_endpoint_client(
         api_type=api_type,
         anthropic_version=anthropic_version,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
+        allow_insecure_custom_endpoints=allow_insecure_custom_endpoints,
+        custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
         settings=settings,
         endpoint_config=endpoint_config,
         identity_context=identity_context,
+        resolved_route=resolved_route,
     )
     return client
 
@@ -15154,11 +15342,25 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
         try:
             ensure_governance_access('governance_user_endpoints', user_id)
             personal_endpoints, _ = normalize_model_endpoints(user_settings.get('personal_model_endpoints', []) or [])
-            endpoints.extend([
-                {**endpoint, '_endpoint_scope': 'user'}
-                for endpoint in personal_endpoints
-                if isinstance(endpoint, dict)
-            ])
+            for endpoint in personal_endpoints:
+                if not isinstance(endpoint, dict):
+                    continue
+                endpoint_id = str(endpoint.get('id') or '').strip()
+                if endpoint_id:
+                    try:
+                        ensure_governance_access(
+                            'governance_user_endpoints',
+                            user_id,
+                            item_entity_type='global_endpoint',
+                            item_id=endpoint_id,
+                        )
+                    except PermissionError:
+                        continue
+                endpoints.append({
+                    **endpoint,
+                    '_endpoint_scope': 'user',
+                    '_endpoint_scope_id': user_id,
+                })
         except PermissionError:
             debug_print('[STREAMING][Model Resolution] User endpoint governance policy denied access to personal endpoints.')
 
@@ -15173,6 +15375,11 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                 seen_group_ids.add(group_key)
 
                 try:
+                    assert_group_role(
+                        user_id,
+                        group_key,
+                        allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                    )
                     group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_key) or [])
                 except Exception as group_error:
                     debug_print(
@@ -15180,11 +15387,25 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                     )
                     continue
 
-                endpoints.extend([
-                    {**endpoint, '_endpoint_scope': 'group'}
-                    for endpoint in group_endpoints
-                    if isinstance(endpoint, dict)
-                ])
+                for endpoint in group_endpoints:
+                    if not isinstance(endpoint, dict):
+                        continue
+                    endpoint_id = str(endpoint.get('id') or '').strip()
+                    if endpoint_id:
+                        try:
+                            ensure_governance_access(
+                                'governance_group_endpoints',
+                                user_id,
+                                item_entity_type='global_endpoint',
+                                item_id=endpoint_id,
+                            )
+                        except PermissionError:
+                            continue
+                    endpoints.append({
+                        **endpoint,
+                        '_endpoint_scope': 'group',
+                        '_endpoint_scope_id': group_key,
+                    })
         except PermissionError:
             debug_print('[STREAMING][Model Resolution] Group endpoint governance policy denied access to group endpoints.')
 
@@ -15205,7 +15426,11 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                     )
                 except PermissionError:
                     continue
-            endpoints.append({**endpoint, '_endpoint_scope': 'global'})
+            endpoints.append({
+                **endpoint,
+                '_endpoint_scope': 'global',
+                '_endpoint_scope_id': 'global',
+            })
     except PermissionError:
         debug_print('[STREAMING][Model Resolution] Global endpoint governance policy denied access to global endpoints.')
 
@@ -15260,6 +15485,21 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         )
         return None
 
+    explicit_routing = routing_schema_version(endpoint_cfg) == 2
+    if explicit_routing and selection_source == 'default' and data.get('agent_info'):
+        return None
+    if explicit_routing and data.get('agent_info'):
+        selected_agent = _resolve_canonical_chat_agent(user_id, settings, data.get('agent_info'))
+        agent_endpoint_id = str((selected_agent or {}).get('model_endpoint_id') or '').strip()
+        agent_model_id = str((selected_agent or {}).get('model_id') or '').strip()
+        if not selected_agent or (
+            agent_endpoint_id != requested_endpoint_id
+            or agent_model_id != requested_model_id
+        ):
+            raise ValueError('Selected model endpoint does not match the agent model binding.')
+    if explicit_routing and not requested_model_id:
+        raise ValueError('Explicit model endpoint requests require a saved model ID.')
+
     if not endpoint_cfg.get('enabled', True):
         if selection_source == 'request' or endpoint_cfg.get('provider') == 'custom':
             raise ValueError('Selected model endpoint is disabled.')
@@ -15269,8 +15509,13 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         return None
 
     endpoint_scope = endpoint_cfg.get('_endpoint_scope', 'global')
+    endpoint_scope_id = str(
+        endpoint_cfg.get('_endpoint_scope_id')
+        or (user_id if endpoint_scope == 'user' else 'global')
+    ).strip()
     resolved_endpoint_cfg = dict(endpoint_cfg)
     resolved_endpoint_cfg.pop('_endpoint_scope', None)
+    resolved_endpoint_cfg.pop('_endpoint_scope_id', None)
     resolved_endpoint_cfg = keyvault_model_endpoint_get_helper(
         resolved_endpoint_cfg,
         resolved_endpoint_cfg.get('id') or requested_endpoint_id,
@@ -15282,7 +15527,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     model_cfg = None
     if requested_model_id:
         model_cfg = next((model for model in models if model.get('id') == requested_model_id), None)
-    if model_cfg is None and requested_deployment:
+    if model_cfg is None and requested_deployment and not explicit_routing:
         model_cfg = next(
             (
                 model for model in models
@@ -15308,6 +15553,20 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         )
         return None
 
+    resolved_route = None
+    if explicit_routing:
+        routes = validate_model_endpoint_routing(
+            resolved_endpoint_cfg,
+            settings,
+            require_resolvable=True,
+        )
+        resolved_route = next(
+            (route for route in routes if route['model_id'] == requested_model_id),
+            None,
+        )
+        if resolved_route is None:
+            raise LookupError('Selected model could not be found on the configured endpoint.')
+
     provider = str(resolved_endpoint_cfg.get('provider') or requested_provider or 'aoai').lower()
     if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
         if selection_source == 'request':
@@ -15319,17 +15578,35 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
 
     connection = resolved_endpoint_cfg.get('connection', {}) or {}
     auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
-    deployment = resolve_model_endpoint_request_model(resolved_endpoint_cfg, model_cfg)
-    endpoint = resolve_model_inference_endpoint(
-        connection.get('endpoint'), use_responses_api=connection.get('use_responses_api'),
-        provider=provider, api_type=get_model_endpoint_api_type(resolved_endpoint_cfg),
-        url_mode=connection.get('url_mode'),
-        model=model_cfg,
+    deployment = (
+        resolved_route['request_model']
+        if explicit_routing
+        else resolve_model_endpoint_request_model(resolved_endpoint_cfg, model_cfg)
     )
-    api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
-    api_type = get_model_endpoint_api_type(resolved_endpoint_cfg)
-    anthropic_version = str(connection.get('anthropic_version') or '').strip()
-    runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment, api_type)
+    endpoint = str(connection.get('endpoint') or '').strip()
+    if explicit_routing:
+        api_version = resolved_route['api_version']
+        api_type = resolved_route['api_type']
+        anthropic_version = resolved_route['anthropic_version']
+        runtime_protocol = resolved_route['protocol']
+        if provider == 'custom':
+            validate_custom_model_endpoint(resolved_endpoint_cfg, settings)
+    else:
+        api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
+        api_type = get_model_endpoint_api_type(resolved_endpoint_cfg)
+        anthropic_version = str(connection.get('anthropic_version') or '').strip()
+        endpoint = resolve_model_inference_endpoint(
+            endpoint,
+            use_responses_api=connection.get('use_responses_api'),
+            provider=provider,
+            api_type=api_type,
+            url_mode=connection.get('url_mode'),
+            model=model_cfg,
+        )
+        runtime_protocol = infer_model_endpoint_protocol(
+            provider, endpoint, deployment, api_type,
+            use_responses_api=connection.get('use_responses_api'),
+        )
     model_icon = _normalize_model_icon_payload(model_cfg.get('icon'))
     model_response_length = normalize_model_response_length_from_model(model_cfg)
     model_behavior_name = _build_model_endpoint_behavior_name(model_cfg, deployment)
@@ -15368,9 +15645,14 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         allow_private_custom_endpoints=bool(
             settings.get('allow_private_custom_model_endpoints', False)
         ),
+        allow_insecure_custom_endpoints=bool(
+            settings.get('allow_insecure_custom_model_endpoints', False)
+        ),
+        custom_endpoint_ca_bundle_path=str(settings.get('custom_model_endpoint_ca_bundle_path') or ''),
         settings=settings,
         endpoint_config=resolved_endpoint_cfg,
         identity_context={'user_id': user_id},
+        resolved_route=resolved_route,
     )
     debug_print(
         f"[STREAMING][Model Resolution] Resolved {selection_source} multi-endpoint model | "
@@ -15393,6 +15675,9 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         model_icon,
         model_response_length,
         model_response_length_parameter,
+        resolved_route,
+        endpoint_scope,
+        endpoint_scope_id,
         str(model_cfg.get('modelName') or '').strip() or deployment,
     )
 
@@ -15557,6 +15842,7 @@ def register_route_backend_chats(bp):
         content_check_settings = get_settings()
         retry_question = getattr(g, 'chat_retry_question', None)
         retry_terminal_seen = False
+        durable_attempt = getattr(stream_session, 'attempt_store', None)
         destination_lease = getattr(g, 'chat_destination_lease', None) if has_request_context() else None
         if has_request_context():
             g.chat_destination_lease = None
@@ -15572,6 +15858,49 @@ def register_route_backend_chats(bp):
 
             payload = _extract_sse_event_payload(event_text)
             if isinstance(payload, dict):
+                if durable_attempt:
+                    payload['submission_id'] = durable_attempt.submission_id
+                    if payload.get('done') or payload.get('error') or payload.get('cancelled') or payload.get('canceled'):
+                        try:
+                            state = (
+                                'interrupted' if payload.get('cancelled') or payload.get('canceled') or payload.get('interrupted')
+                                else 'failed' if payload.get('error') or payload.get('blocked') else 'completed'
+                            )
+                            record = durable_attempt.finish_without_reply(state)
+                            payload.setdefault('user_message_id', (record or {}).get('user_message_id'))
+                            if record and state == 'completed' and record.get('cancel_reason'):
+                                # A terminal frame is publication too; cache state cannot
+                                # turn an accepted cancellation into a successful reply.
+                                for field in ('full_content', 'partial_content', 'content', 'reply'):
+                                    payload.pop(field, None)
+                                payload.update({
+                                    'type': 'cancelled', 'done': True, 'cancelled': True, 'canceled': True,
+                                    'message_id': record.get('message_id'),
+                                    'user_message_id': record['user_message_id'],
+                                    'message_persisted': bool(record.get('message_id')),
+                                    'cancel_reason': record['cancel_reason'],
+                                    'metadata': {
+                                        'incomplete': True, 'canceled': True, 'complete': False,
+                                        'stream_status': 'stopped',
+                                        'stop_reason': 'user_cancelled' if record['cancel_reason'] == 'user_requested'
+                                        else record['cancel_reason'],
+                                    },
+                                })
+                            elif record and state != 'completed' and record['state'] == 'completed' and record.get('message_id'):
+                                saved = durable_attempt.materialize()
+                                for field in ('error', 'error_code', 'cancel_reason', 'interrupted', 'type'):
+                                    payload.pop(field, None)
+                                payload.update({
+                                    'done': True, 'cancelled': False, 'canceled': False,
+                                    'message_id': saved['id'], 'full_content': saved['content'],
+                                    'metadata': saved.get('metadata') or {}, 'message_persisted': True,
+                                })
+                        except (AzureError, ChatRetryError, TypeError):
+                            payload.update({
+                                'done': True, 'cancelled': False, 'canceled': False,
+                                'error': 'Response state could not be confirmed. Reload before retrying.',
+                                'error_code': 'chat_attempt_storage_unavailable', 'outcome': 'unconfirmed',
+                            })
                 if should_withhold_chat_event(payload, content_check_settings):
                     return True
                 payload = public_chat_payload(payload)
@@ -15683,6 +16012,11 @@ def register_route_backend_chats(bp):
                                 'This response was interrupted before it completed. Reload before retrying.',
                                 interrupted=True, error_code='retry_stream_incomplete',
                             ))
+                        if durable_attempt:
+                            try:
+                                durable_attempt.finish_without_reply('interrupted')
+                            except (AzureError, ChatRetryError, TypeError):
+                                log_event('[STREAMING] Response terminal state remains unconfirmed.', level=logging.WARNING)
                         if stream_session:
                             stream_session.close()
                         _release_chat_destination_lease(destination_lease, destination_conversation_id)
@@ -18771,6 +19105,9 @@ def register_route_backend_chats(bp):
             gpt_model_icon = None
             gpt_response_length = None
             gpt_response_length_parameter = None
+            gpt_model_route = None
+            gpt_endpoint_scope = None
+            gpt_endpoint_scope_id = None
             gpt_reasoning_model_name = None
             tabular_model_context = None
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
@@ -18811,6 +19148,9 @@ def register_route_backend_chats(bp):
                         gpt_model_icon,
                         gpt_response_length,
                         gpt_response_length_parameter,
+                        gpt_model_route,
+                        gpt_endpoint_scope,
+                        gpt_endpoint_scope_id,
                         gpt_reasoning_model_name,
                     ) = multi_endpoint_config
                 elif enable_gpt_apim:
@@ -18897,6 +19237,9 @@ def register_route_backend_chats(bp):
                         request_model=gpt_model,
                         user_id=user_id,
                         active_group_ids=active_group_ids,
+                        routing_schema_version=2 if gpt_model_route else None,
+                        scope_type=gpt_endpoint_scope,
+                        scope_id=gpt_endpoint_scope_id,
                     )
 
             except Exception as e:
@@ -22131,31 +22474,32 @@ def register_route_backend_chats(bp):
                         "Please contact your administrator to resolve Semantic Kernel integration."
                     )
                 # Capture token usage for storage in message metadata
-                token_usage_data = {
-                    'prompt_tokens': response.usage.prompt_tokens,
-                    'completion_tokens': response.usage.completion_tokens,
-                    'total_tokens': response.usage.total_tokens,
-                    'captured_at': datetime.utcnow().isoformat()
-                }
-
-                log_event(
-                    f"[TOKENS] GPT completion response received - prompt_tokens: {response.usage.prompt_tokens}, completion_tokens: {response.usage.completion_tokens}, total_tokens: {response.usage.total_tokens}",
-                    extra={
-                        "model": gpt_model,
-                        "completion_tokens": response.usage.completion_tokens,
-                        "prompt_tokens": response.usage.prompt_tokens,
-                        "total_tokens": response.usage.total_tokens,
-                        "user_id": get_current_user_id(),
-                        "active_group_id": active_group_id,
-                        "doc_scope": document_scope
-                    },
-                    level=logging.INFO
-                )
+                token_usage_data = project_completion_token_usage(response.usage, datetime.utcnow().isoformat())
+                if token_usage_data is not None:
+                    log_event(
+                        "[TOKENS] GPT completion usage received.",
+                        extra={
+                            "model": gpt_model, "user_id": get_current_user_id(),
+                            "completion_tokens": response.usage.completion_tokens,
+                            "prompt_tokens": response.usage.prompt_tokens,
+                            "total_tokens": response.usage.total_tokens,
+                            "active_group_id": active_group_id, "doc_scope": document_scope,
+                        },
+                        level=logging.INFO,
+                    )
+                else:
+                    log_event(
+                        "[TOKENS] Provider did not supply completion usage.",
+                        extra={"model": gpt_model, "usage_available": False},
+                        level=logging.INFO,
+                    )
                 return (msg, gpt_model, None, notice, token_usage_data)
             def gpt_success(result):
                 return result
             def gpt_error(e):
                 debug_print(f"Error during final GPT completion: {str(e)}")
+                if isinstance(e, GenAIMilRequestError):
+                    return (e.public_message, gpt_model, None, None, None)
                 if "context length" in str(e).lower():
                     return ("Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message.", gpt_model, None, None, None)
                 else:
@@ -22760,15 +23104,78 @@ def register_route_backend_chats(bp):
             data.get('agent_info'),
             is_retry=is_retry,
         )
-        stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, finalized_conversation_id)
-
         request_message = (data.get('message') or '').strip()
         try:
             destination_lease = _acquire_chat_destination_lease(user_id, finalized_conversation_id)
         except (ConversationHandoffError, ConversationReferenceError) as error:
-            stream_session.publish(build_stream_error_event(error.public_message, code=error.code))
-            stream_session.close()
             return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+        attempt_store = None
+        attempt_record = None
+        # Existing analysis/document owners have their own publication guards. Bind the
+        # ordinary chat/Responses path here, using the same submission identity as retry.
+        if not compatibility_mode and not (
+            data.get('analysis_result_context') is not None or data.get('workflow_result_context') is not None
+        ):
+            try:
+                if is_new_stream_conversation:
+                    g.m365_initial_conversation = _create_personal_conversation(user_id, finalized_conversation_id)
+                submission_id = normalize_submission_id(data.get('submission_id')) or str(uuid.uuid4())
+                data['submission_id'] = submission_id
+                question = getattr(g, 'chat_retry_question', None) if is_retry else None
+                if question is None:
+                    prior_messages = list(cosmos_messages_container.query_items(
+                        query=(
+                            "SELECT TOP 1 * FROM c WHERE c.conversation_id = @conversation_id "
+                            "AND c.role IN ('user', 'assistant') ORDER BY c.timestamp DESC"
+                        ),
+                        parameters=[{'name': '@conversation_id', 'value': finalized_conversation_id}],
+                        partition_key=finalized_conversation_id,
+                    ))
+                    prior_thread_id = (
+                        ((prior_messages[0].get('metadata') or {}).get('thread_info') or {}).get('thread_id')
+                        if prior_messages else None
+                    )
+                    question = {
+                        'id': f"{finalized_conversation_id}_user_{uuid.uuid4().hex}",
+                        'conversation_id': finalized_conversation_id, 'role': 'user',
+                        'content': data.get('message', ''), 'timestamp': _utcnow_iso(),
+                        'metadata': {
+                            'thread_info': {
+                                'thread_id': str(uuid.uuid4()), 'thread_attempt': 1, 'active_thread': True,
+                                'previous_thread_id': prior_thread_id,
+                            },
+                            'user_info': {'user_id': user_id},
+                        },
+                    }
+                    attach_chat_check(question, input_check)
+                attempt_store = ChatAttemptStore(
+                    cosmos_conversation_handoffs_container, cosmos_messages_container,
+                    actor_id=user_id, conversation_id=finalized_conversation_id,
+                    submission_id=submission_id,
+                    destination_id=request.environ.get('simplechat.chat_control_destination_id') or finalized_conversation_id,
+                    authorize=lambda: _authorize_personal_conversation_access(user_id, finalized_conversation_id),
+                )
+                attempt_record = attempt_store.begin(
+                    data, question,
+                    assistant_message_id=f"{finalized_conversation_id}_assistant_{uuid.uuid4().hex}",
+                )
+            except (ChatRetryError, SubmissionIdError) as error:
+                _release_chat_destination_lease(destination_lease, finalized_conversation_id)
+                return jsonify({
+                    'error': error.public_message if isinstance(error, ChatRetryError) else 'Invalid response submission.',
+                    'code': error.code if isinstance(error, ChatRetryError) else 'invalid_submission',
+                }), error.status_code if isinstance(error, ChatRetryError) else 400
+            except (AzureError, TypeError):
+                _release_chat_destination_lease(destination_lease, finalized_conversation_id)
+                return jsonify({
+                    'error': 'Response state could not be confirmed. Reload before retrying.',
+                    'code': 'chat_attempt_storage_unavailable',
+                }), 503
+        stream_session = CHAT_STREAM_REGISTRY.start_session(
+            user_id, finalized_conversation_id,
+            submission_id=data.get('submission_id') if attempt_store else None,
+            attempt_store=attempt_store,
+        )
         try:
             stream_conversation_reference_resolution = _resolve_chat_conversation_references(
                 user_id,
@@ -22975,6 +23382,24 @@ def register_route_backend_chats(bp):
 
                 def stream_cancel_requested():
                     return bool(stream_session and stream_session.is_cancel_requested())
+
+                if attempt_store:
+                    yield build_user_message_persisted_stream_event(
+                        finalized_conversation_id, attempt_record['user_message_id'],
+                    )
+                    if not attempt_store.dispatch():
+                        yield _build_stream_cancel_event(
+                            finalized_conversation_id, user_message_id=attempt_record['user_message_id'],
+                            reason='user_requested', extra_payload={
+                                'submission_id': attempt_store.submission_id,
+                                'metadata': {
+                                    'incomplete': True, 'canceled': True,
+                                    'stream_status': 'stopped', 'complete': False,
+                                    'stop_reason': 'user_cancelled',
+                                },
+                            },
+                        )
+                        return
 
                 if not user_id:
                     yield f"data: {json.dumps({'error': 'User not authenticated'})}\n\n"
@@ -23487,6 +23912,9 @@ def register_route_backend_chats(bp):
                 gpt_model_icon = None
                 gpt_response_length = None
                 gpt_response_length_parameter = None
+                gpt_model_route = None
+                gpt_endpoint_scope = None
+                gpt_endpoint_scope_id = None
                 gpt_reasoning_model_name = None
                 tabular_model_context = None
                 enable_gpt_apim = settings.get('enable_gpt_apim', False)
@@ -23525,6 +23953,9 @@ def register_route_backend_chats(bp):
                             gpt_model_icon,
                             gpt_response_length,
                             gpt_response_length_parameter,
+                            gpt_model_route,
+                            gpt_endpoint_scope,
+                            gpt_endpoint_scope_id,
                             gpt_reasoning_model_name,
                         ) = streaming_multi_endpoint_config
                     elif enable_gpt_apim:
@@ -23592,6 +24023,9 @@ def register_route_backend_chats(bp):
                         request_model=gpt_model,
                         user_id=user_id,
                         active_group_ids=active_group_ids,
+                        routing_schema_version=2 if gpt_model_route else None,
+                        scope_type=gpt_endpoint_scope,
+                        scope_id=gpt_endpoint_scope_id,
                     )
 
                     debug_print(
@@ -23973,7 +24407,10 @@ def register_route_backend_chats(bp):
                     yield build_user_message_persisted_stream_event(conversation_id, user_message_id)
                 else:
                     # Save user message
-                    user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                    user_message_id = (
+                        attempt_record['user_message_id'] if attempt_record
+                        else f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                    )
 
                     user_metadata = {}
                     prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), user_message)
@@ -24132,23 +24569,28 @@ def register_route_backend_chats(bp):
                     }
 
                     previous_thread_id = None
-                    try:
-                        last_msg_query = f"""
-                            SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
-                            FROM c
-                            WHERE c.conversation_id = '{conversation_id}'
-                            ORDER BY c.timestamp DESC
-                        """
-                        last_msgs = list(cosmos_messages_container.query_items(
-                            query=last_msg_query,
-                            partition_key=conversation_id
-                        ))
-                        if last_msgs:
-                            previous_thread_id = last_msgs[0].get('thread_id')
-                    except Exception as e:
-                        debug_print(f"Error fetching last message for threading: {e}")
+                    if attempt_record:
+                        previous_thread_id = attempt_record['thread_info'].get('previous_thread_id')
+                    else:
+                        try:
+                            last_msg_query = f"""
+                                SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
+                                FROM c
+                                WHERE c.conversation_id = '{conversation_id}'
+                                ORDER BY c.timestamp DESC
+                            """
+                            last_msgs = list(cosmos_messages_container.query_items(
+                                query=last_msg_query,
+                                partition_key=conversation_id
+                            ))
+                            if last_msgs:
+                                previous_thread_id = last_msgs[0].get('thread_id')
+                        except Exception as e:
+                            debug_print(f"Error fetching last message for threading: {e}")
 
-                    current_user_thread_id = str(uuid.uuid4())
+                    current_user_thread_id = (
+                        attempt_record['thread_info']['thread_id'] if attempt_record else str(uuid.uuid4())
+                    )
                     latest_thread_id = current_user_thread_id
                     user_metadata['thread_info'] = {
                         'thread_id': current_user_thread_id,
@@ -24172,7 +24614,11 @@ def register_route_backend_chats(bp):
                     }
 
                     attach_chat_check(user_message_doc, input_check)
-                    cosmos_messages_container.upsert_item(user_message_doc)
+                    if attempt_store:
+                        user_message_doc = _save_chat_user_metadata(user_message_doc, True)
+                        user_metadata = user_message_doc['metadata']
+                    else:
+                        cosmos_messages_container.upsert_item(user_message_doc)
                     yield build_user_message_persisted_stream_event(
                         conversation_id,
                         user_message_id,
@@ -24214,6 +24660,7 @@ def register_route_backend_chats(bp):
                     retry_thread_attempt=effective_retry_thread_attempt,
                     is_retry=is_retry,
                     user_id=user_id,
+                    assistant_message_id=attempt_record.get('assistant_message_id') if attempt_record else None,
                     settings=settings,
                 )
                 user_info_for_assistant = response_message_context.get('user_info')
@@ -25984,7 +26431,10 @@ def register_route_backend_chats(bp):
                             assistant_doc, partial_agent_citations, user_id, conversation_id,
                             include_invocations=not (mixed_source_manifest or suppress_streamed_file_payload),
                         )
-                        assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
+                        assistant_doc = _persist_screened_assistant(
+                            attach_m365_message_provenance(assistant_doc), user_id,
+                            settings=settings, attempt_store=attempt_store,
+                        )
                         if token_usage_data and token_usage_data.get('total_tokens') is not None:
                             try:
                                 log_token_usage(
@@ -26874,7 +27324,10 @@ def register_route_backend_chats(bp):
                         }
                     })
                     assistant_doc = _attach_m365_citations(assistant_doc, agent_citations_list, user_id, conversation_id)
-                    assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
+                    assistant_doc = _persist_screened_assistant(
+                        attach_m365_message_provenance(assistant_doc), user_id,
+                        settings=settings, attempt_store=attempt_store,
+                    )
                     accumulated_content = assistant_doc["content"]
                     raise_if_mixed_source_cancelled(
                         stream_cancel_requested,
@@ -27167,7 +27620,10 @@ def register_route_backend_chats(bp):
                             assistant_doc = _attach_m365_citations(
                                 assistant_doc, agent_citations_list, user_id, conversation_id,
                             )
-                            assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
+                            assistant_doc = _persist_screened_assistant(
+                                attach_m365_message_provenance(assistant_doc), user_id,
+                                settings=settings, attempt_store=attempt_store,
+                            )
                             safe_partial_content = assistant_doc["content"]
                             interrupted_message_persisted = True
                             conversation_item['last_updated'] = assistant_timestamp
@@ -27289,11 +27745,59 @@ def register_route_backend_chats(bp):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
+        try:
+            _authorize_personal_conversation_access(user_id, conversation_id)
+        except PermissionError:
+            return jsonify({'error': 'This conversation is unavailable.', 'outcome': 'unconfirmed'}), 403
+        except (LookupError, CosmosResourceNotFoundError):
+            return jsonify({'error': 'Conversation not found.', 'outcome': 'unconfirmed'}), 404
+        except AzureError:
+            return jsonify({'error': 'Stopping could not be confirmed.', 'outcome': 'unconfirmed'}), 503
         data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({'error': 'Invalid stop request.', 'outcome': 'unconfirmed'}), 400
+        if data.get('submission_id'):
+            try:
+                # Identity and destination access are checked before intent reads/writes.
+                attempt_store = ChatAttemptStore(
+                    cosmos_conversation_handoffs_container, cosmos_messages_container,
+                    actor_id=user_id, conversation_id=conversation_id,
+                    submission_id=data.get('submission_id'),
+                    authorize=lambda: _authorize_personal_conversation_access(user_id, conversation_id),
+                )
+                result = attempt_store.cancel()
+                try:
+                    stream_session = CHAT_STREAM_REGISTRY.get_session(
+                        user_id, conversation_id, active_only=True, submission_id=attempt_store.submission_id,
+                    )
+                    if stream_session:
+                        stream_session.request_cancel(reason='user_requested')
+                except (AzureError, RuntimeError, TypeError):
+                    # Durable acceptance is independent of best-effort worker notification.
+                    log_event('[STREAMING] Stop accepted; worker notification was unavailable.', level=logging.WARNING)
+                return jsonify({'success': True, 'conversation_id': conversation_id, **result})
+            except PermissionError:
+                return jsonify({'error': 'This conversation is unavailable.', 'outcome': 'unconfirmed'}), 403
+            except (LookupError, CosmosResourceNotFoundError):
+                return jsonify({'error': 'Conversation not found.', 'outcome': 'unconfirmed'}), 404
+            except (ChatRetryError, SubmissionIdError) as error:
+                return jsonify({
+                    'error': error.public_message if isinstance(error, ChatRetryError) else 'Invalid response submission.',
+                    'code': error.code if isinstance(error, ChatRetryError) else 'invalid_submission',
+                    'outcome': 'unconfirmed',
+                }), error.status_code if isinstance(error, ChatRetryError) else 400
+            except (AzureError, TypeError):
+                log_event('[STREAMING] Durable cancellation could not be confirmed.', level=logging.WARNING)
+                return jsonify({'error': 'Stopping could not be confirmed. Please retry.', 'outcome': 'unconfirmed'}), 503
         cancel_reason = str(data.get('reason') or 'user_requested').strip() or 'user_requested'
         stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=True)
         if not stream_session:
             return jsonify({'error': 'No active stream is available for this conversation'}), 404
+        if getattr(stream_session, 'submission_id', None):
+            return jsonify({
+                'error': 'The response submission identity is required. Reload before stopping.',
+                'outcome': 'unconfirmed',
+            }), 400
 
         stream_status = stream_session.request_cancel(reason=cancel_reason) or {}
         analysis_message_id = stream_session.get_analysis_message_id()
@@ -27330,8 +27834,45 @@ def register_route_backend_chats(bp):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=False)
+        try:
+            authorized_conversation = _authorize_personal_conversation_access(user_id, conversation_id)
+        except PermissionError:
+            return jsonify({'error': 'This conversation is unavailable.'}), 403
+        except (LookupError, CosmosResourceNotFoundError):
+            return jsonify({'error': 'Conversation not found.'}), 404
+        except AzureError:
+            return jsonify({'error': 'Response state is unavailable.'}), 503
+        try:
+            requested_submission = normalize_submission_id(request.args.get('submission_id'))
+        except SubmissionIdError:
+            return jsonify({'error': 'Invalid response submission.'}), 400
+        stream_session = CHAT_STREAM_REGISTRY.get_session(
+            user_id, conversation_id, active_only=False, submission_id=requested_submission,
+        )
         stream_status = stream_session.get_status_snapshot() if stream_session else _build_stream_status_payload(None)
+        try:
+            submission_id = requested_submission or getattr(stream_session, 'submission_id', None)
+            if submission_id:
+                attempt_store = getattr(stream_session, 'attempt_store', None) or ChatAttemptStore(
+                    cosmos_conversation_handoffs_container, cosmos_messages_container,
+                    actor_id=user_id, conversation_id=conversation_id, submission_id=submission_id,
+                    destination_id=authorized_conversation.get('collaboration_conversation_id') or conversation_id,
+                    authorize=lambda: _authorize_personal_conversation_access(user_id, conversation_id),
+                )
+                record = attempt_store.read()
+                if record:
+                    stream_status.update({
+                        'submission_id': submission_id, 'user_message_id': record.get('user_message_id'),
+                        'attempt_state': record['state'],
+                    })
+                    if record['state'] in ChatAttemptStore.TERMINAL:
+                        stream_status.update({
+                            'active': False, 'pending': False, 'reattachable': False,
+                            'status': 'completed' if record['state'] == 'completed'
+                            else 'canceled' if record.get('cancel_reason') else 'error',
+                        })
+        except (AzureError, ChatRetryError, TypeError):
+            return jsonify({'error': 'Response state could not be confirmed.', 'outcome': 'unconfirmed'}), 503
         stream_status['conversation_id'] = conversation_id
         return jsonify(stream_status)
 
@@ -27396,7 +27937,31 @@ def register_route_backend_chats(bp):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=True)
+        try:
+            _authorize_personal_conversation_access(user_id, conversation_id)
+        except PermissionError:
+            return jsonify({'error': 'This conversation is unavailable.'}), 403
+        except (LookupError, CosmosResourceNotFoundError):
+            return jsonify({'error': 'Conversation not found.'}), 404
+        except AzureError:
+            return jsonify({'error': 'Response state is unavailable.'}), 503
+        try:
+            requested_submission = normalize_submission_id(request.args.get('submission_id'))
+        except SubmissionIdError:
+            return jsonify({'error': 'Invalid response submission.'}), 400
+        stream_session = CHAT_STREAM_REGISTRY.get_session(
+            user_id, conversation_id, active_only=True, submission_id=requested_submission,
+        )
+        if stream_session and stream_session.attempt_store:
+            try:
+                record = stream_session.attempt_store.read()
+                if record and record['state'] in ChatAttemptStore.TERMINAL:
+                    return jsonify({
+                        'error': 'This response already finished. Reload its saved state.',
+                        'code': 'chat_attempt_terminal', 'attempt_state': record['state'],
+                    }), 409
+            except (AzureError, ChatRetryError, TypeError):
+                return jsonify({'error': 'Response state could not be confirmed.', 'outcome': 'unconfirmed'}), 503
         if not stream_session:
             return jsonify({'error': 'No active stream is available for this conversation'}), 404
 

@@ -1,9 +1,11 @@
 # test_model_capability_catalog_resolution.py
 """
 Functional tests for the catalog-backed model capability resolver and schema.
-Version: 0.261.126
-Implemented in: 0.261.035
+Version: 0.261.433
+Implemented in: 0.261.433
 React V2 catalog integration: 0.261.122
+
+Chat model library projections added in: 0.261.042
 
 The qualitative resolver first shipped in 0.261.014. These tests preserve its
 override, family-isolation, prefix, and fallback behavior while validating the
@@ -103,6 +105,33 @@ class TestModelCapabilityCatalog(unittest.TestCase):
                 matched = capabilities.find_model_catalog_record(family)
                 self.assertIsNone(matched, f"Bare family {family!r} matched a model.")
 
+    def test_editor_library_is_isolated_and_registry_backed(self):
+        document = capabilities.load_model_capability_catalog()
+        self.assertIsInstance(document, dict)
+        original = json.dumps(document, sort_keys=True)
+        records = capabilities.get_model_capability_catalog_records()
+        records[0]["capabilities"]["processesImages"] = "mutated"
+        self.assertEqual(json.dumps(document, sort_keys=True), original)
+        options = capabilities.get_model_endpoint_library_options()
+        self.assertTrue(options)
+        for option in options:
+            descriptor = capabilities.get_model_endpoint_provider(option["api_type"])
+            self.assertIsNotNone(descriptor)
+            self.assertEqual(option["url_mode"], "auto")
+            self.assertEqual(option["catalogSchemaVersion"], 4)
+            self.assertTrue(option["sourceIds"])
+            self.assertNotIn("capabilities", option)
+            self.assertNotIn("api_path", option)
+            record = next(
+                record
+                for record in capabilities.get_model_capability_catalog_records()
+                if record["id"] == option["id"]
+            )
+            self.assertTrue(record["capabilities"]["processesText"])
+            self.assertTrue(record["capabilities"]["generatesText"])
+        options[0]["sourceIds"].clear()
+        self.assertEqual(json.dumps(document, sort_keys=True), original)
+
     def test_longest_prefix_wins(self):
         """Legacy capability matching still accepts exact deployment suffixes."""
         record = capabilities.find_model_catalog_record("gpt-5.1-chat-v2")
@@ -169,6 +198,31 @@ class TestModelCapabilityCatalog(unittest.TestCase):
     def test_version_bumped(self):
         """The original capability resolver remains in supported releases."""
         assert_app_version_at_least("0.261.014")
+
+    def test_gpt6_staging_models_have_verified_workflow_budgets(self):
+        expected = {
+            "gpt-6-luna": "2026-09-22",
+            "gpt-6.1-terra": "2026-10-26",
+        }
+        for model_id, model_version in expected.items():
+            with self.subTest(model=model_id):
+                model = {"modelName": model_id, "modelVersion": model_version}
+                budget = capabilities.resolve_model_token_budget(
+                    model, provider="azure", protocol="chat_completions"
+                )
+                resolved = capabilities.get_model_catalog_capabilities(model)
+                self.assertEqual(budget.context_window, 1050000)
+                self.assertEqual(budget.input_limit, 922000)
+                self.assertEqual(budget.output_limit, 128000)
+                self.assertEqual(budget.output_accounting, "total_generation")
+                self.assertTrue(resolved["toolCalling"])
+                self.assertTrue(resolved["supportsStreaming"])
+                self.assertTrue(resolved["structuredOutput"])
+                if model_id == "gpt-6-luna":
+                    self.assertEqual(
+                        budget.tool_reasoning_efforts,
+                        ("none",),
+                    )
 
 
 if __name__ == "__main__":

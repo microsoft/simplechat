@@ -7,6 +7,10 @@ from model_tool_chat_completion import (
     AzureToolChatCompletion as AzureChatCompletion,
     OpenAIToolChatCompletion as OpenAIChatCompletion,
 )
+import copy
+import hashlib
+import json
+from urllib.parse import quote
 
 from config import cognitive_services_scope
 from foundry_agent_runtime import resolve_authority
@@ -17,10 +21,18 @@ from functions_ai_connections import (
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_capabilities import resolve_model_token_budget
-from functions_model_endpoint_auth import resolve_client_certificate, resolve_custom_endpoint_credentials
-from functions_model_endpoint_providers import get_model_endpoint_provider
+from functions_model_endpoint_auth import (
+    normalize_custom_endpoint_auth_type,
+    resolve_client_certificate,
+    resolve_custom_endpoint_credentials,
+)
+from functions_model_endpoint_providers import (
+    get_model_endpoint_provider,
+    normalize_custom_endpoint_url_mode,
+)
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
+    MODEL_ENDPOINT_PROVIDER_CUSTOM,
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
@@ -31,10 +43,18 @@ from functions_model_endpoint_validation import (
     endpoint_uses_mai_chat_completions,
     validate_custom_model_endpoint_url,
     validate_model_endpoint_api_version,
+    validate_model_endpoint_routing,
     model_endpoint_inference_api,
+)
+from functions_model_endpoint_urls import (
+    build_model_endpoint_routing_context,
+    model_endpoint_route_cache_key,
+    routing_schema_version,
 )
 from functions_settings import resolve_model_endpoint_foundry_scope
 from functions_tabular_model_diagnostics import build_tabular_model_http_options
+from model_endpoint_ca_bundles import normalize_ca_bundle_reference
+from model_endpoint_profiles import GENAI_MIL_PROFILE, get_custom_endpoint_profile
 from model_endpoint_clients import (
     AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS,
     DEFAULT_DOCUMENT_ACTION_TIMEOUT_SECONDS,
@@ -47,7 +67,9 @@ from model_endpoint_clients import (
     AnthropicSemanticKernelChatCompletion,
     CustomAnthropicChatCompletionClient,
     OpenAIStyleChatCompletionClient,
+    SanitizedCustomChatCompletionClient,
     bind_callable_with_timeout,
+    bind_model_endpoint_request_policy,
     build_anthropic_chat_client,
     build_openai_client_timeout,
     build_openai_client_timeout_options,
@@ -132,8 +154,23 @@ def build_model_endpoint_context(
     request_model=None,
     user_id=None,
     active_group_ids=None,
+    routing_schema_version=None,
+    scope_type=None,
+    scope_id=None,
 ):
     """Build non-secret model endpoint metadata for downstream helper calls."""
+    normalized_user_id = str(user_id or '').strip()
+    if routing_schema_version == 2:
+        context = build_model_endpoint_routing_context(
+            endpoint_id=endpoint_id,
+            model_id=model_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+        if normalized_user_id:
+            context['user_id'] = normalized_user_id
+        return context
+
     context = {
         'provider': str(provider or '').strip().lower(),
         'endpoint': str(endpoint or '').strip(),
@@ -146,7 +183,6 @@ def build_model_endpoint_context(
         'request_model': str(request_model or model_deployment or '').strip(),
     }
 
-    normalized_user_id = str(user_id or '').strip()
     if normalized_user_id:
         context['user_id'] = normalized_user_id
 
@@ -186,6 +222,20 @@ def resolve_credential_for_model_endpoint_auth(auth_settings):
     return DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
 
 
+def _azure_endpoint_from_resolved_route(route):
+    """Return the endpoint prefix consumed by Azure OpenAI's deployment builder."""
+    if not isinstance(route, dict):
+        raise ValueError("A resolved Azure deployment route is required.")
+    request_model = str(route.get("request_model") or "").strip()
+    api_base = str(route.get("api_base") or "").rstrip("/")
+    if not request_model or not api_base:
+        raise ValueError("Resolved Azure deployment route is incomplete.")
+    deployment_suffix = f"/openai/deployments/{quote(request_model, safe='-._~')}"
+    if not api_base.endswith(deployment_suffix):
+        raise ValueError("Resolved Azure deployment route is invalid.")
+    return api_base[:-len(deployment_suffix)]
+
+
 def _require_chat_model_for_endpoint(endpoint_config, deployment_name='', model_id=''):
     """Validate stored model metadata before considering a legacy deployment alias."""
     if isinstance(endpoint_config, dict):
@@ -221,18 +271,31 @@ def _require_chat_model_for_endpoint(endpoint_config, deployment_name='', model_
     return None
 
 
-def _resolve_custom_endpoint_runtime_options(endpoint_config, settings):
+def _resolve_custom_endpoint_runtime_options(
+    endpoint_config, settings, *, resolved_route=None
+):
     if not isinstance(endpoint_config, dict) or endpoint_config.get('provider') != 'custom':
         raise ModelEndpointValidationError('A configured Custom endpoint is required.')
-    descriptor = get_model_endpoint_provider(get_model_endpoint_api_type(endpoint_config))
+    descriptor = get_model_endpoint_provider(
+        (resolved_route or {}).get("api_type")
+        or get_model_endpoint_api_type(endpoint_config)
+    )
     if descriptor is None:
         raise ModelEndpointValidationError('Custom endpoint API type is not supported.')
     settings = settings or {}
     connection = endpoint_config.get('connection') or {}
+    # Deferred because the settings owner is also a runtime consumer of this module.
+    from functions_settings import resolve_model_endpoint_ca_trust
+
+    ca_bundle_path = resolve_model_endpoint_ca_trust(
+        endpoint_config,
+        settings,
+        str(settings.get('custom_model_endpoint_ca_bundle_path') or '').strip(),
+    )
     transport_options = {
         'allow_private': custom_endpoint_setting_enabled(settings, 'allow_private_custom_model_endpoints'),
         'allow_insecure': custom_endpoint_setting_enabled(settings, 'allow_insecure_custom_model_endpoints'),
-        'ca_bundle_path': str(settings.get('custom_model_endpoint_ca_bundle_path') or '').strip(),
+        'ca_bundle_path': ca_bundle_path,
         'client_cert': resolve_client_certificate(connection),
     }
     endpoint = validate_custom_model_endpoint_url(
@@ -241,7 +304,11 @@ def _resolve_custom_endpoint_runtime_options(endpoint_config, settings):
         allow_insecure=transport_options['allow_insecure'],
     )
     if descriptor.version_field:
-        version = connection.get(descriptor.version_field) or descriptor.default_version
+        version = (
+            (resolved_route or {}).get(descriptor.version_field)
+            or connection.get(descriptor.version_field)
+            or descriptor.default_version
+        )
         if descriptor.requires_api_version or version:
             if not CUSTOM_ENDPOINT_VERSION_PATTERN.fullmatch(str(version or '')):
                 raise ModelEndpointValidationError('The configured Custom API version is invalid.')
@@ -255,7 +322,8 @@ def _resolve_custom_endpoint_runtime_options(endpoint_config, settings):
 
 
 def build_custom_openai_client_kwargs(
-    endpoint_config, settings, *, request_model='', asynchronous=False, default_headers=None,
+    endpoint_config, settings, *, request_model='', asynchronous=False,
+    default_headers=None, resolved_route=None,
 ):
     """Build guarded SDK options reusable by chat, Images, and Responses adapters.
 
@@ -264,10 +332,16 @@ def build_custom_openai_client_kwargs(
     support based on an OpenAI-compatible protocol.
     """
     descriptor, endpoint, credential, headers, transport_options = _resolve_custom_endpoint_runtime_options(
-        endpoint_config, settings,
+        endpoint_config, settings, resolved_route=resolved_route,
     )
     connection = endpoint_config.get('connection') or {}
-    if descriptor.protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
+    if resolved_route is not None:
+        base_url = resolved_route.get('api_base')
+        if not isinstance(base_url, str) or not base_url.strip():
+            raise ModelEndpointValidationError(
+                'The resolved Custom endpoint API base is unavailable.'
+            )
+    elif descriptor.protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
         base_url = resolve_custom_azure_openai_base_url(endpoint, request_model, connection.get('url_mode'))
     elif descriptor.protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
         base_url = resolve_custom_openai_base_url(endpoint, descriptor.api_type, connection.get('url_mode'))
@@ -288,21 +362,35 @@ def build_custom_openai_client_kwargs(
         **build_openai_client_timeout_options(settings),
     }
     if descriptor.protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
-        kwargs['default_query'] = {'api-version': connection['api_version']}
+        kwargs['default_query'] = {
+            'api-version': (
+                (resolved_route or {}).get('api_version')
+                or connection.get('api_version')
+            )
+        }
+    if get_custom_endpoint_profile(endpoint_config) == GENAI_MIL_PROFILE:
+        kwargs['max_retries'] = 0
     return kwargs
 
 
-def _build_custom_anthropic_client(endpoint_config, settings, extra_headers):
+def _build_custom_anthropic_client(
+    endpoint_config, settings, extra_headers, *, resolved_route=None
+):
     descriptor, endpoint, _, headers, transport_options = _resolve_custom_endpoint_runtime_options(
-        endpoint_config, settings,
+        endpoint_config, settings, resolved_route=resolved_route,
     )
     connection = endpoint_config.get('connection') or {}
     merged_headers = {name.lower(): value for name, value in (extra_headers or {}).items()}
     merged_headers.update({name.lower(): value for name, value in headers.items()})
     return CustomAnthropicChatCompletionClient(
         endpoint=endpoint, auth_headers=merged_headers,
-        anthropic_version=connection.get('anthropic_version') or descriptor.default_version,
-        url_mode=connection.get('url_mode') or 'auto',
+        anthropic_version=(
+            (resolved_route or {}).get('anthropic_version')
+            or connection.get('anthropic_version')
+            or descriptor.default_version
+        ),
+        url_mode='exact' if resolved_route is not None else (connection.get('url_mode') or 'auto'),
+        operation_url=(resolved_route or {}).get('operation_url'),
         timeout=resolve_model_stream_read_timeout_seconds(settings),
         **transport_options,
     )
@@ -326,6 +414,7 @@ def build_model_endpoint_sync_chat_client(
     endpoint_config=None,
     identity_context=None,
     use_responses_api=None,
+    resolved_route=None,
 ):
     """Create a synchronous client using canonical metadata for its wire protocol.
 
@@ -333,7 +422,19 @@ def build_model_endpoint_sync_chat_client(
     caller's deployment name remains the provider request target; name-only
     legacy calls retain deployment-based inference.
     """
+    if resolved_route is not None and (
+        not isinstance(resolved_route, dict)
+        or resolved_route.get("routing_schema_version") != 2
+    ):
+        raise ValueError("A resolved schema-v2 model route is required.")
     model = _require_chat_model_for_endpoint(endpoint_config, deployment_name, model_id) or {}
+    if resolved_route is not None:
+        api_type = resolved_route.get("api_type") or ""
+        deployment_name = resolved_route.get("request_model") or ""
+        api_version = resolved_route.get("api_version") or ""
+        anthropic_version = (
+            resolved_route.get("anthropic_version") or anthropic_version
+        )
     auth_settings = auth_settings or {}
     extra_headers = build_model_endpoint_identity_headers(
         settings,
@@ -341,22 +442,47 @@ def build_model_endpoint_sync_chat_client(
         identity_context=identity_context,
     )
     normalized_provider = str(provider or 'aoai').strip().lower()
-    api_type = get_model_endpoint_api_type(endpoint_config) or api_type
+    api_type = (
+        resolved_route.get("api_type")
+        if resolved_route is not None
+        else get_model_endpoint_api_type(endpoint_config) or api_type
+    )
     model_name = model.get('catalogModelId') or model.get('modelName') or model.get('behavior_name') or deployment_name
     request_policy_model = model.get('catalogModelId') or model_name
     connection = (endpoint_config or {}).get('connection') or {}
     if use_responses_api is None:
-        use_responses_api = connection.get('use_responses_api')
-    validate_model_endpoint_api_version(
-        normalized_provider, endpoint, api_version, api_type, use_responses_api=use_responses_api,
-        model=model or deployment_name,
+        use_responses_api = (
+            resolved_route.get("inference_api") == "responses"
+            if resolved_route is not None
+            else connection.get('use_responses_api')
+        )
+    if resolved_route is None:
+        validate_model_endpoint_api_version(
+            normalized_provider, endpoint, api_version, api_type,
+            use_responses_api=use_responses_api,
+            model=model or deployment_name,
+        )
+        endpoint = resolve_model_inference_endpoint(
+            endpoint, use_responses_api=use_responses_api,
+            provider=normalized_provider, api_type=api_type,
+            url_mode=connection.get('url_mode'),
+            model=model or deployment_name,
+        )
+    runtime_protocol = (
+        resolved_route.get("protocol")
+        if resolved_route is not None
+        else infer_model_endpoint_protocol(
+            normalized_provider, endpoint, model_name, api_type
+        )
     )
-    endpoint = resolve_model_inference_endpoint(
-        endpoint, use_responses_api=use_responses_api, provider=normalized_provider, api_type=api_type,
-        url_mode=connection.get('url_mode'),
-        model=model or deployment_name,
+    inference_endpoint = (
+        resolved_route.get("operation_url")
+        if resolved_route is not None
+        else endpoint
     )
-    runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, model_name, api_type)
+
+    def finalize(client):
+        return bind_model_endpoint_request_policy(client, resolved_route), runtime_protocol
     if normalized_provider == 'custom':
         connection = dict((endpoint_config or {}).get('connection') or {})
         connection.update(endpoint=connection.get('endpoint') or endpoint, api_version=connection.get('api_version') or api_version)
@@ -376,15 +502,32 @@ def build_model_endpoint_sync_chat_client(
             'connection': connection, 'auth': auth_settings,
         }
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-            return _build_custom_anthropic_client(custom_config, custom_settings, extra_headers), runtime_protocol
+            return finalize(_build_custom_anthropic_client(
+                custom_config,
+                custom_settings,
+                extra_headers,
+                resolved_route=resolved_route,
+            ))
         kwargs = build_custom_openai_client_kwargs(
-            custom_config, custom_settings, request_model=deployment_name, default_headers=extra_headers,
+            custom_config,
+            custom_settings,
+            request_model=deployment_name,
+            default_headers=extra_headers,
+            resolved_route=resolved_route,
         )
-        return OpenAIStyleChatCompletionClient(
-            OpenAI(**kwargs), sanitize_errors=True, api_type=api_type, request_url=kwargs['base_url'],
-            inference_api=model_endpoint_inference_api(endpoint),
+        return finalize(OpenAIStyleChatCompletionClient(
+            OpenAI(**kwargs),
+            sanitize_errors=True,
+            api_type=api_type,
+            request_url=inference_endpoint,
+            inference_api=(
+                resolved_route.get("inference_api")
+                if resolved_route is not None
+                else model_endpoint_inference_api(endpoint, use_responses_api, provider=normalized_provider, model=model or deployment_name)
+            ),
             model_name=request_policy_model,
-        ), runtime_protocol
+            custom_profile=get_custom_endpoint_profile(custom_config),
+        ))
     auth_type = str(auth_settings.get('type') or 'managed_identity').strip().lower()
     timeout_options = globals().get('build_openai_client_timeout_options', lambda *_a, **_k: {})(settings)
 
@@ -393,31 +536,35 @@ def build_model_endpoint_sync_chat_client(
         if not api_key:
             raise ValueError('Selected model endpoint is missing an API key.')
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-            return build_anthropic_chat_client(
-                endpoint=endpoint,
+            return finalize(build_anthropic_chat_client(
+                endpoint=inference_endpoint,
                 api_key=api_key,
                 extra_headers=extra_headers,
-            ), runtime_protocol
+            ))
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
             if auth_settings.get('api_key_header') or endpoint_uses_mai_chat_completions(endpoint):
                 api_key, auth_headers = resolve_custom_endpoint_credentials(
                     auth_settings, default_api_key_header='api-key', default_api_key_prefix='',
                 )
                 extra_headers = {**extra_headers, **auth_headers}
-            return build_openai_style_chat_client(
+            return finalize(build_openai_style_chat_client(
                 api_key,
-                endpoint,
+                inference_endpoint,
                 api_version,
                 default_headers=extra_headers,
                 model_name=request_policy_model,
-            ), runtime_protocol
-        return AzureOpenAI(
+            ))
+        return finalize(AzureOpenAI(
             api_version=api_version,
-            azure_endpoint=endpoint,
+            azure_endpoint=(
+                _azure_endpoint_from_resolved_route(resolved_route)
+                if resolved_route is not None
+                else endpoint
+            ),
             api_key=api_key,
             default_headers=extra_headers or None,
             **timeout_options,
-        ), runtime_protocol
+        ))
 
 
     credential = resolve_credential_for_model_endpoint_auth(auth_settings)
@@ -427,30 +574,34 @@ def build_model_endpoint_sync_chat_client(
 
     if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
         token = credential.get_token(scope).token
-        return build_anthropic_chat_client(
-            endpoint=endpoint,
+        return finalize(build_anthropic_chat_client(
+            endpoint=inference_endpoint,
             bearer_token=token,
             extra_headers=extra_headers,
-        ), runtime_protocol
+        ))
 
     if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
         token = credential.get_token(scope).token
-        return build_openai_style_chat_client(
+        return finalize(build_openai_style_chat_client(
             token,
-            endpoint,
+            inference_endpoint,
             api_version,
             default_headers=extra_headers,
             model_name=request_policy_model,
-        ), runtime_protocol
+        ))
 
     token_provider = get_bearer_token_provider(credential, scope)
-    return AzureOpenAI(
+    return finalize(AzureOpenAI(
         api_version=api_version,
-        azure_endpoint=endpoint,
+        azure_endpoint=(
+            _azure_endpoint_from_resolved_route(resolved_route)
+            if resolved_route is not None
+            else endpoint
+        ),
         azure_ad_token_provider=token_provider,
         default_headers=extra_headers or None,
         **timeout_options,
-    ), runtime_protocol
+    ))
 
 
 def build_legacy_chat_client(
@@ -516,13 +667,32 @@ def build_chat_connection_client(binding, settings, *, strict_credentials=False)
             'model_configuration_unavailable',
         ) from None
     connection = endpoint_config.get('connection') or {}
+    resolved_route = None
+    if routing_schema_version(endpoint_config) == 2:
+        resolved_route = next(
+            (
+                route for route in validate_model_endpoint_routing(
+                    endpoint_config, settings, require_resolvable=True
+                )
+                if route["model_id"] == model_id
+            ),
+            None,
+        )
+        if resolved_route is None:
+            raise AIConnectionError(
+                "The selected chat model route is unavailable."
+            )
     client, _ = build_model_endpoint_sync_chat_client(
         endpoint_config.get('auth') or {},
         provider,
         connection.get('endpoint'),
         connection.get('openai_api_version') or connection.get('api_version'),
         deployment_name=deployment_name,
-        api_type=get_model_endpoint_api_type(endpoint_config),
+        api_type=(
+            resolved_route.get("api_type")
+            if resolved_route
+            else get_model_endpoint_api_type(endpoint_config)
+        ),
         url_mode=connection.get('url_mode', ''),
         anthropic_version=connection.get('anthropic_version') or DEFAULT_ANTHROPIC_VERSION,
         allow_private_custom_endpoints=bool(settings.get('allow_private_custom_model_endpoints', False)),
@@ -531,6 +701,7 @@ def build_chat_connection_client(binding, settings, *, strict_credentials=False)
         settings=settings,
         endpoint_config=endpoint_config,
         model_id=model_id,
+        resolved_route=resolved_route,
     )
     return client
 
@@ -541,6 +712,199 @@ register_capability_client_factory('chat', build_chat_connection_client)
 def _append_model_endpoint_candidate(endpoints, scope, endpoint):
     if isinstance(endpoint, dict):
         endpoints.append({**endpoint, '_endpoint_scope': scope})
+
+
+def resolve_authorized_model_endpoint_route(
+    model_context, *, authorize_scope, load_endpoint, settings
+):
+    """Resolve a fresh, authorized schema-v2 route without hydrating secrets."""
+    if not isinstance(model_context, dict) or routing_schema_version(model_context) != 2:
+        raise ValueError("Explicit model routing context is required.")
+    context = build_model_endpoint_routing_context(**{
+        field: model_context.get(field)
+        for field in ("endpoint_id", "model_id", "scope_type", "scope_id")
+    })
+    scope_type = context["scope_type"]
+    policy = settings or {}
+    allowed = policy.get("enable_multi_model_endpoints") is True
+    if scope_type == "user":
+        allowed = allowed and policy.get("allow_user_custom_endpoints") is True
+    elif scope_type == "group":
+        allowed = allowed and policy.get("allow_group_custom_endpoints") is True
+    if not allowed or authorize_scope(scope_type, context["scope_id"]) is not True:
+        raise PermissionError("Model endpoint access is not permitted.")
+
+    endpoint, revision = load_endpoint(
+        scope_type, context["scope_id"], context["endpoint_id"]
+    )
+    if (
+        not isinstance(endpoint, dict)
+        or endpoint.get("id") != context["endpoint_id"]
+        or endpoint.get("enabled", True) is not True
+    ):
+        raise ValueError("The selected endpoint is unavailable.")
+    if routing_schema_version(endpoint) != 2:
+        raise ValueError("The selected endpoint no longer uses explicit routing.")
+    matches = [
+        model for model in endpoint.get("models", [])
+        if isinstance(model, dict) and model.get("id") == context["model_id"]
+    ]
+    if len(matches) != 1 or matches[0].get("enabled", True) is not True:
+        raise ValueError("The selected model is unavailable.")
+
+    routes = validate_model_endpoint_routing(
+        endpoint, policy, require_resolvable=True
+    )
+    route = next(
+        route for route in routes if route["model_id"] == context["model_id"]
+    )
+    _, bundle_id = normalize_ca_bundle_reference(
+        endpoint.get("connection") or {}
+    )
+    if bundle_id:
+        # Only managed-CA routes need the settings storage registry.
+        from functions_settings import get_model_endpoint_ca_bundle_registry
+
+        route["ca_bundle"] = get_model_endpoint_ca_bundle_registry(
+            policy
+        ).revision_token(bundle_id)
+    cache_key = model_endpoint_route_cache_key(
+        route,
+        scope_type=scope_type,
+        scope_id=context["scope_id"],
+        configuration_revision=str(revision or "missing"),
+    )
+    return {"context": context, "route": route, "cache_key": cache_key}
+
+
+def _resolve_schema_v2_model_endpoint_context(settings, model_context):
+    """Reload and authorize a schema-v2 selection before hydrating its secrets."""
+    from functions_group import assert_group_role, get_group_model_endpoints
+    from functions_governance import ensure_governance_access
+    from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+    from functions_settings import get_user_settings, normalize_model_endpoints
+
+    settings = settings if isinstance(settings, dict) else {}
+    user_id = str(model_context.get("user_id") or "").strip()
+    if not user_id:
+        raise PermissionError("The endpoint owner could not be authorized.")
+    context = build_model_endpoint_routing_context(**{
+        field: model_context.get(field)
+        for field in ("endpoint_id", "model_id", "scope_type", "scope_id")
+    })
+    scope_type = context["scope_type"]
+    scope_id = context["scope_id"]
+    if scope_type == "user" and scope_id != user_id:
+        raise PermissionError("The user endpoint scope is not authorized.")
+    if scope_type == "global" and scope_id != "global":
+        raise ValueError("Invalid global model endpoint scope.")
+
+    scope_flag = {
+        "user": "allow_user_custom_endpoints",
+        "group": "allow_group_custom_endpoints",
+    }.get(scope_type)
+    if settings.get("enable_multi_model_endpoints") is not True or (
+        scope_flag and settings.get(scope_flag) is not True
+    ):
+        raise PermissionError("Model endpoints are disabled for this scope.")
+
+    loaded_endpoint = {}
+
+    def authorize_scope(requested_scope, requested_scope_id):
+        if requested_scope != scope_type or requested_scope_id != scope_id:
+            return False
+        if requested_scope == "group":
+            assert_group_role(
+                user_id,
+                requested_scope_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+        ensure_governance_access(
+            f"governance_{requested_scope}_endpoints", user_id
+        )
+        return True
+
+    def load_endpoint(requested_scope, requested_scope_id, endpoint_id):
+        ensure_governance_access(
+            f"governance_{requested_scope}_endpoints",
+            user_id,
+            item_entity_type="global_endpoint",
+            item_id=endpoint_id,
+        )
+        source_revision = ""
+        if requested_scope == "global":
+            candidates = settings.get("model_endpoints", []) or []
+            source_revision = str(settings.get("_etag") or "")
+        elif requested_scope == "user":
+            user_document = get_user_settings(user_id)
+            user_settings = (
+                user_document.get("settings", {})
+                if isinstance(user_document, dict)
+                else {}
+            )
+            candidates = user_settings.get("personal_model_endpoints", []) or []
+            source_revision = (
+                str(user_document.get("_etag") or "")
+                if isinstance(user_document, dict)
+                else ""
+            )
+        else:
+            assert_group_role(
+                user_id,
+                requested_scope_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
+            candidates = get_group_model_endpoints(requested_scope_id) or []
+
+        normalized, _ = normalize_model_endpoints(candidates)
+        matches = [
+            endpoint for endpoint in normalized
+            if (
+                isinstance(endpoint, dict)
+                and str(endpoint.get("id") or "").strip() == endpoint_id
+            )
+        ]
+        if len(matches) != 1:
+            return None, source_revision or "missing"
+        endpoint = matches[0]
+        if not source_revision:
+            revision_payload = copy.deepcopy(endpoint)
+            auth = revision_payload.get("auth")
+            if isinstance(auth, dict):
+                for secret_field in (
+                    "api_key",
+                    "bearer_token",
+                    "client_secret",
+                    "access_token",
+                    "refresh_token",
+                ):
+                    auth.pop(secret_field, None)
+            source_revision = hashlib.sha256(
+                json.dumps(
+                    revision_payload, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+        loaded_endpoint["value"] = copy.deepcopy(endpoint)
+        return endpoint, source_revision
+
+    resolved = resolve_authorized_model_endpoint_route(
+        context,
+        authorize_scope=authorize_scope,
+        load_endpoint=load_endpoint,
+        settings=settings,
+    )
+    endpoint = loaded_endpoint.get("value")
+    if not isinstance(endpoint, dict):
+        raise LookupError("The selected model endpoint could not be found.")
+    endpoint = keyvault_model_endpoint_get_helper(
+        endpoint,
+        context["endpoint_id"],
+        scope=scope_type,
+        return_type=SecretReturnType.VALUE,
+    )
+    endpoint["_resolved_route"] = resolved["route"]
+    endpoint["_route_cache_key"] = resolved["cache_key"]
+    return endpoint
 
 
 def resolve_model_endpoint_from_context(settings, model_context, *, authorize=False):
@@ -557,6 +921,12 @@ def resolve_model_endpoint_from_context(settings, model_context, *, authorize=Fa
 
     settings = settings or {}
     model_context = model_context if isinstance(model_context, dict) else {}
+    if routing_schema_version(model_context) == 2:
+        if not authorize:
+            raise PermissionError(
+                "Explicit model routing requires an authorized execution context."
+            )
+        return _resolve_schema_v2_model_endpoint_context(settings, model_context)
     requested_endpoint_id = str(model_context.get('endpoint_id') or '').strip()
     requested_model_id = str(model_context.get('model_id') or '').strip()
     requested_deployment = str(model_context.get('request_model') or model_context.get('model_deployment') or '').strip()
@@ -630,6 +1000,10 @@ def resolve_model_endpoint_from_context(settings, model_context, *, authorize=Fa
                 break
         if not matched_model:
             continue
+        if routing_schema_version(endpoint_cfg) == 2:
+            raise ValueError(
+                "An explicit schema-v2 model endpoint context is required."
+            )
         effective_model = apply_model_profile(matched_model, endpoint_cfg, settings)
         endpoint_cfg['models'] = [
             effective_model if item is matched_model else item for item in models
@@ -662,13 +1036,35 @@ def build_semantic_kernel_chat_service_for_model(
     settings = settings or {}
     model_context = model_context if isinstance(model_context, dict) else {}
     resolved_model_endpoint = resolved_model_endpoint if isinstance(resolved_model_endpoint, dict) else None
+    resolved_route = None
 
     if resolved_model_endpoint is None and (
         model_context.get('endpoint_id') or model_context.get('model_id')
     ):
-        resolved_model_endpoint = resolve_model_endpoint_from_context(settings, model_context)
+        resolved_model_endpoint = resolve_model_endpoint_from_context(
+            settings,
+            model_context,
+            authorize=routing_schema_version(model_context) == 2,
+        )
         if resolved_model_endpoint is None:
             raise AIConnectionError('The selected chat connection or model is unavailable.')
+    if resolved_model_endpoint:
+        resolved_route = resolved_model_endpoint.get('_resolved_route')
+        if (
+            routing_schema_version(resolved_model_endpoint) == 2
+            and not isinstance(resolved_route, dict)
+        ):
+            raise ValueError(
+                "Explicit model routing must be re-resolved before dispatch."
+            )
+
+    def finalize_service(service, protocol):
+        if resolved_route is not None:
+            if isinstance(service, AnthropicSemanticKernelChatCompletion):
+                service.resolved_route = copy.deepcopy(resolved_route)
+            else:
+                bind_model_endpoint_request_policy(service.client, resolved_route)
+        return service, protocol
 
     provider = str(model_context.get('provider') or '').strip().lower()
     endpoint = str(model_context.get('endpoint') or '').strip()
@@ -682,17 +1078,25 @@ def build_semantic_kernel_chat_service_for_model(
         connection = resolved_model_endpoint.get('connection', {}) or {}
         endpoint = str(connection.get('endpoint') or endpoint).strip()
         api_version = str(
-            connection.get('openai_api_version')
-            or connection.get('api_version')
-            or api_version
+            (
+                resolved_route.get('api_version')
+                if resolved_route
+                else connection.get('openai_api_version')
+                or connection.get('api_version')
+                or api_version
+            )
         ).strip()
         auth_settings = resolved_model_endpoint.get('auth', {}) or auth_settings
         requested_model_id = str(model_context.get('model_id') or '').strip()
         matched_model = _require_chat_model_for_endpoint(
             resolved_model_endpoint, deployment_name, requested_model_id,
         )
-        if matched_model:
+        if matched_model and resolved_route is None:
             deployment_name = resolve_model_endpoint_request_model(resolved_model_endpoint, matched_model)
+        if resolved_route is not None:
+            deployment_name = str(
+                resolved_route.get('request_model') or ''
+            ).strip()
     elif deployment_name:
         require_model_capability(deployment_name, provider=provider or 'aoai')
         configured_endpoint = endpoint or settings.get('azure_openai_gpt_endpoint')
@@ -726,24 +1130,55 @@ def build_semantic_kernel_chat_service_for_model(
                 )
                 auth_settings['api_key_header'] = 'api-key'
 
-    api_type = get_model_endpoint_api_type(resolved_model_endpoint)
+    api_type = (
+        resolved_route.get("api_type")
+        if resolved_route
+        else get_model_endpoint_api_type(resolved_model_endpoint)
+    )
     use_responses_api = (
-        ((resolved_model_endpoint or {}).get('connection') or {}).get('use_responses_api')
+        (
+            resolved_route.get("inference_api") == "responses"
+            if resolved_route
+            else (
+                (resolved_model_endpoint or {}).get('connection') or {}
+            ).get('use_responses_api')
+        )
         if resolved_model_endpoint else settings.get(
             'azure_apim_gpt_use_responses_api' if settings.get('enable_gpt_apim') else 'azure_openai_gpt_use_responses_api',
         )
     )
-    endpoint = resolve_model_inference_endpoint(
-        endpoint, use_responses_api=use_responses_api, provider=provider or 'aoai', api_type=api_type,
-        url_mode=((resolved_model_endpoint or {}).get('connection') or {}).get('url_mode'),
+    if resolved_route is None:
+        endpoint = resolve_model_inference_endpoint(
+            endpoint, use_responses_api=use_responses_api,
+            provider=provider or 'aoai', api_type=api_type,
+            url_mode=((resolved_model_endpoint or {}).get('connection') or {}).get('url_mode'),
+            model=matched_model or deployment_name,
+        )
+    dispatch_endpoint = (
+        resolved_route.get("operation_url") if resolved_route else endpoint
+    )
+    validate_model_endpoint_api_version(
+        provider or 'aoai',
+        endpoint,
+        api_version,
+        api_type,
+        use_responses_api=use_responses_api,
         model=matched_model or deployment_name,
     )
-    validate_model_endpoint_api_version(provider or 'aoai', endpoint, api_version, api_type)
     model_token_budget = resolve_model_token_budget(
         matched_model or {'deploymentName': deployment_name},
         resolved_model_endpoint,
         provider='azure' if api_type == 'azure_openai' else provider or 'aoai',
-        protocol=model_endpoint_inference_api(endpoint),
+        protocol=(
+            resolved_route.get("inference_api")
+            if resolved_route
+            else model_endpoint_inference_api(
+                endpoint,
+                use_responses_api,
+                provider=provider or "aoai",
+                model=matched_model or deployment_name,
+            )
+        ),
     )
 
     if provider == 'custom' and (not resolved_model_endpoint or not endpoint or not deployment_name):
@@ -752,29 +1187,58 @@ def build_semantic_kernel_chat_service_for_model(
         if provider == 'custom':
             if resolved_model_endpoint is None:
                 raise AIConnectionError('The selected Custom connection must be resolved from saved settings.')
-            api_type = get_model_endpoint_api_type(resolved_model_endpoint)
-            runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name, api_type)
+            runtime_protocol = (
+                resolved_route.get("protocol")
+                if resolved_route
+                else infer_model_endpoint_protocol(
+                    provider, endpoint, deployment_name, api_type
+                )
+            )
             extra_headers = build_model_endpoint_identity_headers(
                 settings, endpoint_config=resolved_model_endpoint, identity_context=model_context,
             )
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-                return AnthropicSemanticKernelChatCompletion(
+                return finalize_service(AnthropicSemanticKernelChatCompletion(
                     service_id=service_id, deployment_name=deployment_name, endpoint=endpoint,
-                    custom_client=_build_custom_anthropic_client(resolved_model_endpoint, settings, extra_headers),
-                ), runtime_protocol
+                    custom_client=_build_custom_anthropic_client(
+                        resolved_model_endpoint,
+                        settings,
+                        extra_headers,
+                        resolved_route=resolved_route,
+                    ),
+                ), runtime_protocol)
             kwargs = build_custom_openai_client_kwargs(
                 resolved_model_endpoint, settings, request_model=deployment_name,
                 asynchronous=True, default_headers=extra_headers,
+                resolved_route=resolved_route,
             )
             async_client = sanitize_custom_async_openai_client(
-                AsyncOpenAI(**kwargs), api_type=api_type, request_url=kwargs['base_url'],
+                AsyncOpenAI(**kwargs),
+                api_type=api_type,
+                request_url=dispatch_endpoint or kwargs['base_url'],
+                custom_profile=get_custom_endpoint_profile(resolved_model_endpoint),
             )
-            return OpenAIChatCompletion(
+            return finalize_service(OpenAIChatCompletion(
                 service_id=service_id, ai_model_id=deployment_name, async_client=async_client,
                 model_token_budget=model_token_budget,
-                inference_api=model_endpoint_inference_api(endpoint),
-            ), runtime_protocol
-        runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
+                inference_api=(
+                    resolved_route.get("inference_api")
+                    if resolved_route
+                    else model_endpoint_inference_api(
+                        endpoint,
+                        use_responses_api,
+                        provider=provider,
+                        model=matched_model or deployment_name,
+                    )
+                ),
+            ), runtime_protocol)
+        runtime_protocol = (
+            resolved_route.get("protocol")
+            if resolved_route
+            else infer_model_endpoint_protocol(
+                provider, endpoint, deployment_name
+            )
+        )
         auth_type = str(auth_settings.get('type') or 'managed_identity').lower()
         extra_headers = build_model_endpoint_identity_headers(
             settings,
@@ -786,13 +1250,13 @@ def build_semantic_kernel_chat_service_for_model(
             if not api_key:
                 raise ValueError('Selected model endpoint is missing an API key.')
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-                return AnthropicSemanticKernelChatCompletion(
+                return finalize_service(AnthropicSemanticKernelChatCompletion(
                     service_id=service_id,
                     deployment_name=deployment_name,
-                    endpoint=endpoint,
+                    endpoint=dispatch_endpoint,
                     api_key=api_key,
                     extra_headers=extra_headers,
-                ), runtime_protocol
+                ), runtime_protocol)
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
                 request_api_version = resolve_openai_style_request_api_version(api_version)
                 if auth_settings.get('api_key_header') or endpoint_uses_mai_chat_completions(endpoint):
@@ -802,29 +1266,42 @@ def build_semantic_kernel_chat_service_for_model(
                     extra_headers = {**extra_headers, **auth_headers}
                 client_kwargs = {
                     'api_key': api_key,
-                    'base_url': normalize_openai_style_base_url(endpoint),
+                    'base_url': normalize_openai_style_base_url(dispatch_endpoint),
                     **globals().get('build_openai_client_timeout_options', lambda *_a, **_k: {})(settings),
                 }
                 if extra_headers:
                     client_kwargs['default_headers'] = extra_headers
                 if request_api_version:
                     client_kwargs['default_query'] = {'api-version': request_api_version}
-                return OpenAIChatCompletion(
+                return finalize_service(OpenAIChatCompletion(
                     service_id=service_id,
                     ai_model_id=deployment_name,
                     async_client=AsyncOpenAI(**client_kwargs),
                     model_token_budget=model_token_budget,
-                    inference_api=model_endpoint_inference_api(endpoint),
-                ), runtime_protocol
-            return _build_azure_chat_completion(
+                    inference_api=(
+                        resolved_route.get("inference_api")
+                        if resolved_route
+                        else model_endpoint_inference_api(
+                            endpoint,
+                            use_responses_api,
+                            provider=provider,
+                            model=matched_model or deployment_name,
+                        )
+                    ),
+                ), runtime_protocol)
+            return finalize_service(_build_azure_chat_completion(
                 service_id=service_id,
                 deployment_name=deployment_name,
-                endpoint=endpoint,
+                endpoint=(
+                    _azure_endpoint_from_resolved_route(resolved_route)
+                    if resolved_route
+                    else endpoint
+                ),
                 api_key=api_key,
                 api_version=api_version,
                 default_headers=extra_headers,
                 model_token_budget=model_token_budget,
-            ), runtime_protocol
+            ), runtime_protocol)
 
         credential = resolve_credential_for_model_endpoint_auth(auth_settings)
         scope = cognitive_services_scope
@@ -833,55 +1310,72 @@ def build_semantic_kernel_chat_service_for_model(
 
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
             token = credential.get_token(scope).token
-            return AnthropicSemanticKernelChatCompletion(
+            return finalize_service(AnthropicSemanticKernelChatCompletion(
                 service_id=service_id,
                 deployment_name=deployment_name,
-                endpoint=endpoint,
+                endpoint=dispatch_endpoint,
                 bearer_token=token,
                 extra_headers=extra_headers,
-            ), runtime_protocol
+            ), runtime_protocol)
 
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
             token = credential.get_token(scope).token
             request_api_version = resolve_openai_style_request_api_version(api_version)
             client_kwargs = {
                 'api_key': token,
-                'base_url': normalize_openai_style_base_url(endpoint),
+                'base_url': normalize_openai_style_base_url(dispatch_endpoint),
                 **globals().get('build_openai_client_timeout_options', lambda *_a, **_k: {})(settings),
             }
             if extra_headers:
                 client_kwargs['default_headers'] = extra_headers
             if request_api_version:
                 client_kwargs['default_query'] = {'api-version': request_api_version}
-            return OpenAIChatCompletion(
+            return finalize_service(OpenAIChatCompletion(
                 service_id=service_id,
                 ai_model_id=deployment_name,
                 async_client=AsyncOpenAI(**client_kwargs),
                 model_token_budget=model_token_budget,
-                inference_api=model_endpoint_inference_api(endpoint),
-            ), runtime_protocol
+                inference_api=(
+                    resolved_route.get("inference_api")
+                    if resolved_route
+                    else model_endpoint_inference_api(
+                        endpoint,
+                        use_responses_api,
+                        provider=provider,
+                        model=matched_model or deployment_name,
+                    )
+                ),
+            ), runtime_protocol)
 
         token_provider = get_bearer_token_provider(credential, scope)
         try:
-            return _build_azure_chat_completion(
+            return finalize_service(_build_azure_chat_completion(
                 service_id=service_id,
                 deployment_name=deployment_name,
-                endpoint=endpoint,
+                endpoint=(
+                    _azure_endpoint_from_resolved_route(resolved_route)
+                    if resolved_route
+                    else endpoint
+                ),
                 api_version=api_version,
                 azure_ad_token_provider=token_provider,
                 default_headers=extra_headers,
                 model_token_budget=model_token_budget,
-            ), runtime_protocol
+            ), runtime_protocol)
         except TypeError:
-            return _build_azure_chat_completion(
+            return finalize_service(_build_azure_chat_completion(
                 service_id=service_id,
                 deployment_name=deployment_name,
-                endpoint=endpoint,
+                endpoint=(
+                    _azure_endpoint_from_resolved_route(resolved_route)
+                    if resolved_route
+                    else endpoint
+                ),
                 api_version=api_version,
                 ad_token_provider=token_provider,
                 default_headers=extra_headers,
                 model_token_budget=model_token_budget,
-            ), runtime_protocol
+            ), runtime_protocol)
 
     extra_headers = build_model_endpoint_identity_headers(settings, identity_context=model_context)
     enable_gpt_apim = settings.get('enable_gpt_apim', False)

@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.435
+Version: 0.261.460
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,
@@ -148,7 +148,10 @@ def _install_conditional_cosmos(services):
 @pytest.fixture
 def environment(monkeypatch):
     monkeypatch.syspath_prepend(str(APP_ROOT))
-    with delegation_environment() as (delegation, services), ExitStack() as stack:
+    with ExitStack() as stack:
+        # Load the SDK-backed validation dependency before the delegation fixture stubs Azure.
+        _load_module(stack, "model_endpoint_ca_bundles")
+        delegation, services = stack.enter_context(delegation_environment())
         services.settings.update({
             "per_user_semantic_kernel": True, "enable_user_workspace": True,
             "allow_personal_ai_foundry_agents": True, "allow_personal_new_foundry_agents": True,
@@ -252,7 +255,7 @@ def environment(monkeypatch):
         for name in (
             "functions_mcp_operations", "functions_mcp_tool_pinning", "functions_snowflake_operations", "functions_yamcs_operations",
             "functions_databricks_operations", "functions_tableau_operations", "functions_blob_storage_operations",
-            "functions_chart_operations", "functions_msgraph_operations",
+            "functions_chart_operations", "functions_microsoft_decision_operations", "functions_msgraph_operations",
             "functions_azure_endpoint_validation", "functions_icon_utils",
         ):
             modules.append(_load_module(stack, name))
@@ -345,7 +348,7 @@ def environment(monkeypatch):
         for module in modules:
             namespace.update({key: value for key, value in vars(module).items() if not key.startswith("_")})
         namespace.update({"log_event": services.appinsights.log_event, "logging": logging})
-        namespace["build_combined_model_endpoints"] = Mock(return_value=[])
+        namespace["collect_agent_model_endpoints"] = Mock(return_value=[])
         namespace["get_global_agent_settings"] = Mock(return_value="classic settings")
         namespace["get_plugin_types"] = lambda allowed_type_filter: jsonify([
             {"type": name, "display": name.replace("_", " ").title(), "description": f"Configure {name}"}
@@ -852,7 +855,7 @@ def test_editor_settings_are_allowlisted_and_global_endpoint_governance_applies(
         "key_vault_secret_expiration_default_contact_email": "owner@example.test",
     })
     env.services.denied_endpoints.add("blocked")
-    env.namespace["build_combined_model_endpoints"].return_value = [
+    env.namespace["collect_agent_model_endpoints"].return_value = [
         {"id": "allowed", "scope": "global", "models": [{"id": "model"}]},
         {"id": "blocked", "scope": "global", "models": [{"id": "private"}]},
         {"id": "personal", "scope": "user", "models": []},
@@ -1166,7 +1169,7 @@ def test_action_only_authors_can_read_reminder_defaults_without_agent_access(env
     env.services.settings["key_vault_secret_expiration_default_lead_days"] = 45
     env.services.settings["semantic_kernel_agents"] = [{"instructions": "private-global-agent"}]
     env.services.settings["gpt_model"] = {"selected": [{"deploymentName": "private-agent-model"}]}
-    env.namespace["build_combined_model_endpoints"].side_effect = AssertionError("Do not load an unavailable agent catalogue.")
+    env.namespace["collect_agent_model_endpoints"].side_effect = AssertionError("Do not load an unavailable agent catalogue.")
     response = env.client.get("/api/user/agent/settings?view=editor")
     assert response.status_code == 200, response.get_json()
     options = response.get_json()
@@ -1176,7 +1179,7 @@ def test_action_only_authors_can_read_reminder_defaults_without_agent_access(env
     assert options["model_endpoints"] == options["builtin_actions"] == []
     assert "private-agent" not in json.dumps(options)
     assert "private-global-agent" not in json.dumps(options)
-    env.namespace["build_combined_model_endpoints"].assert_not_called()
+    env.namespace["collect_agent_model_endpoints"].assert_not_called()
     for method, path in (
         ("get", "/api/user/agents"),
         ("get", f"/api/user/agents/{stored_agent['id']}"),

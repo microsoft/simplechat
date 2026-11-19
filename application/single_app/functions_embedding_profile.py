@@ -20,8 +20,12 @@ from functions_embedding_policy import (
     normalize_embedding_config,
     resolve_embedding_policy,
 )
-from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
-from functions_model_endpoint_urls import resolve_custom_azure_openai_base_url, resolve_custom_openai_base_url
+from functions_model_endpoint_types import (
+    get_model_endpoint_api_type, resolve_model_endpoint_request_model, routing_schema_version,
+)
+from functions_model_endpoint_urls import (
+    resolve_custom_azure_openai_base_url, resolve_custom_openai_base_url, resolve_model_endpoint_route,
+)
 
 
 EMBEDDING_VECTOR_PROFILE_KEY = "embedding_vector_profile"
@@ -94,6 +98,13 @@ def _validated_endpoint(value, *, custom=False):
     return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", ""))
 
 
+def normalize_model_embedding_operation(value):
+    operation = normalize_embedding_operation(value)
+    if operation.get("endpoint"):
+        _validated_endpoint(operation["endpoint"])
+    return operation
+
+
 def embedding_transport(binding):
     operation = normalize_embedding_operation(binding.operation_settings)
     connection = binding.endpoint.get("connection") or {}
@@ -107,7 +118,7 @@ def embedding_transport(binding):
         else "azure_openai"
     )
     if provider == "custom":
-        api_type = get_model_endpoint_api_type(binding.endpoint)
+        api_type = get_model_endpoint_api_type(binding.endpoint, binding.model)
         auth_type = str((binding.endpoint.get("auth") or {}).get("type") or "api_key").strip().lower()
         if api_type not in ("openai", "azure_openai") or auth_type not in ("api_key", "key", "bearer"):
             raise AIConnectionError(
@@ -115,21 +126,37 @@ def embedding_transport(binding):
                 "embedding_api_unsupported",
             )
         if operation.get("api") and operation["api"] != api_type:
-            raise AIConnectionError("The embedding operation must match the Custom connection API type.")
+            raise AIConnectionError("The embedding operation must match the Custom model's API type.")
         deployment = resolve_model_endpoint_request_model(binding.endpoint, binding.model)
         if not deployment:
             raise AIConnectionError("The embedding model must name a request model or deployment.")
+        route = {}
+        if routing_schema_version(binding.endpoint) == 2:
+            try:
+                route = resolve_model_endpoint_route(binding.endpoint, binding.model)
+            except ValueError as exc:
+                raise AIConnectionError("The embedding model's API routing is invalid.") from exc
+        # A saved override is its own base. Otherwise, new explicit connections
+        # inherit the composed model base, not the chat operation's URL.
+        use_model_base = route and not operation.get("endpoint") and binding.endpoint.get("api_type") != api_type
         if api_type == "openai":
             version = operation.get("api_version") or ""
             if version not in ("", "v1"):
                 raise AIConnectionError("OpenAI-compatible embeddings do not use a dated API version.")
-            return "openai", resolve_custom_openai_base_url(endpoint, api_type, connection.get("url_mode")), "", deployment
-        version = operation.get("api_version") or connection.get("api_version") or ""
+            base_url = route["api_base"] if use_model_base else resolve_custom_openai_base_url(
+                endpoint, api_type, connection.get("url_mode")
+            )
+            return "openai", base_url, "", deployment
+        version = operation.get("api_version") or (
+            route.get("api_version") if use_model_base else connection.get("api_version") or route.get("api_version")
+        ) or ""
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:-preview)?", version):
             raise AIConnectionError("The Custom Azure embedding API version must be a dated version.")
         return (
             "azure_openai",
-            resolve_custom_azure_openai_base_url(endpoint, deployment, connection.get("url_mode")),
+            route["api_base"] if use_model_base else resolve_custom_azure_openai_base_url(
+                endpoint, deployment, connection.get("url_mode")
+            ),
             version, deployment,
         )
     if provider == "openai_compatible" and api != "openai":

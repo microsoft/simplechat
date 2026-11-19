@@ -5,6 +5,7 @@ import hashlib
 import json
 import threading
 import time
+from contextlib import nullcontext
 from typing import Any
 
 import httpx
@@ -22,6 +23,7 @@ from functions_model_endpoint_validation import (
     validate_custom_api_key_header,
     validate_custom_model_endpoint_url,
 )
+from model_endpoint_ca_bundles import ManagedCABundle
 
 
 CUSTOM_ENDPOINT_AUTH_TYPES = DEFAULT_CUSTOM_AUTH_TYPES
@@ -38,7 +40,9 @@ def resolve_api_key_header(auth: dict, default_header: str = "", default_prefix:
     override = str(auth.get("api_key_header") or "").strip()
     if override:
         return override, str(auth.get("api_key_prefix") or "").strip()
-    prefix = auth.get("api_key_prefix") if "api_key_prefix" in auth else default_prefix
+    prefix = auth.get("api_key_prefix")
+    if prefix is None or str(prefix).strip() == "":
+        prefix = default_prefix
     return str(default_header or "").strip(), str(prefix or "").strip()
 
 
@@ -66,6 +70,26 @@ def clear_oauth2_token_cache() -> None:
         _TOKEN_CACHE.clear()
 
 
+def _token_cache_identity(value: Any):
+    if isinstance(value, ManagedCABundle):
+        return {
+            "kind": "managed_ca",
+            "bundle_id": value.bundle_id,
+            "revision": value.revision,
+            "sha256": value.sha256,
+        }
+    if isinstance(value, tuple):
+        return [_token_cache_identity(item) for item in value]
+    if isinstance(value, list):
+        return [_token_cache_identity(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _token_cache_identity(item)
+            for key, item in sorted(value.items())
+        }
+    return value
+
+
 def fetch_oauth2_client_credentials_token(
     auth: dict,
     *,
@@ -84,9 +108,14 @@ def fetch_oauth2_client_credentials_token(
     )
     cache_material = (
         token_url, str(auth["client_id"]), str(auth["client_secret"]), str(auth.get("scope") or ""),
-        allow_private, allow_insecure, ca_bundle_path, client_cert,
+        allow_private,
+        allow_insecure,
+        _token_cache_identity(ca_bundle_path),
+        _token_cache_identity(client_cert),
     )
-    cache_key = hashlib.sha256(json.dumps(cache_material).encode("utf-8")).hexdigest()
+    cache_key = hashlib.sha256(
+        json.dumps(cache_material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     with _TOKEN_CACHE_LOCK:
         cached = _TOKEN_CACHE.get(cache_key)
         if cached and cached[1] > time.monotonic():
@@ -107,11 +136,21 @@ def fetch_oauth2_client_credentials_token(
     if auth.get("scope"):
         payload["scope"] = str(auth["scope"]).strip()
     try:
-        with client:
-            response = client.post(
-                token_url, data=payload, timeout=OAUTH2_REQUEST_TIMEOUT_SECONDS, follow_redirects=False,
-            )
-            response.raise_for_status()
+        with (client if hasattr(client, "__enter__") else nullcontext(client)):
+            post_kwargs = {"data": payload}
+            if http_client_factory is None:
+                post_kwargs.update(
+                    timeout=OAUTH2_REQUEST_TIMEOUT_SECONDS,
+                    follow_redirects=False,
+                )
+            response = client.post(token_url, **post_kwargs)
+            raise_for_status = getattr(response, "raise_for_status", None)
+            if callable(raise_for_status):
+                raise_for_status()
+            elif getattr(response, "status_code", 200) >= 400:
+                raise ModelEndpointValidationError(
+                    "Custom endpoint token request was rejected."
+                )
             token_payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:
         raise build_sanitized_model_endpoint_error(
@@ -146,7 +185,7 @@ def resolve_custom_endpoint_credentials(
     auth: dict,
     *,
     default_api_key_header: str = "Authorization",
-    default_api_key_prefix: str = "Bearer",
+    default_api_key_prefix: str = "",
     allow_private: bool = False,
     allow_insecure: bool = False,
     ca_bundle_path: str = "",
@@ -161,14 +200,29 @@ def resolve_custom_endpoint_credentials(
     auth = auth or {}
     auth_type = normalize_custom_endpoint_auth_type(auth.get("type") or AUTH_TYPE_API_KEY)
     if auth_type == AUTH_TYPE_API_KEY:
-        headers = build_api_key_headers(auth, default_api_key_header, default_api_key_prefix)
-        authorization = next((value for name, value in headers.items() if name.lower() == "authorization"), None)
-        if authorization is not None:
-            return str(auth["api_key"]).strip(), {"Authorization": authorization}
-        return "custom-header-auth", {"Authorization": "", **headers}
+        header_name, prefix = resolve_api_key_header(
+            auth, default_api_key_header, default_api_key_prefix
+        )
+        explicit_header = bool(
+            str(auth.get("api_key_header") or "").strip()
+        )
+        if header_name and (
+            header_name.lower() != "authorization"
+            or explicit_header
+            or prefix != "Bearer"
+        ):
+            headers = build_api_key_headers(
+                auth, default_api_key_header, default_api_key_prefix
+            )
+            return str(auth.get("api_key") or "").strip(), headers
+        if not str(auth.get("api_key") or "").strip():
+            raise ModelEndpointValidationError(
+                "Selected Custom endpoint is missing an API key."
+            )
+        return str(auth["api_key"]).strip(), {}
     if auth_type == AUTH_TYPE_BEARER:
-        headers = build_bearer_headers(auth)
-        return str(auth["bearer_token"]).strip(), headers
+        build_bearer_headers(auth)
+        return str(auth["bearer_token"]).strip(), {}
     if auth_type == AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS:
         token = fetch_oauth2_client_credentials_token(
             auth, allow_private=allow_private, allow_insecure=allow_insecure,

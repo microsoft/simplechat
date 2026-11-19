@@ -1,8 +1,10 @@
 # test_task_completeness_runtime.py
 """Real-module verification, correction, result eligibility and durable storage.
 
-Version: 0.261.445
+Version: 0.261.460
 Implemented in: 0.261.382; 0.261.384; 0.261.416; 0.261.418
+Same-route capability-aware JSON verification added in: 0.261.430
+Responses transport timeout regression added in: 0.261.434
 Incomplete-correction retention coverage added in: 0.261.445
 """
 
@@ -39,6 +41,136 @@ def report(status, quote="Evaluation", refs=None):
 
 def stored_steps(harness):
     return harness.run_store.list_run_steps(harness.run_id, "owner", "conversation-1")
+
+
+@pytest.mark.parametrize("native_json", [True, False])
+@pytest.mark.parametrize("malformed", [True, False])
+def test_real_workflow_verifier_selects_supported_json_without_replaying_producer(
+    initialized_application, monkeypatch, native_json, malformed,
+):
+    from model_endpoint_clients import bind_model_endpoint_request_policy
+
+    runner = importlib.import_module("functions_workflow_runner")
+    results = importlib.import_module("functions_workflow_results")
+    calls = []
+
+    def completion(**kwargs):
+        calls.append(kwargs)
+        content = '{"requirements":[],"unexpected":true}' if malformed else report("satisfied")
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))], usage=None)
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=completion)))
+    route = {
+        "request_model": "claude",
+        "operation_url": "https://offline.invalid/shared-foundry;rev=2/anthropic",
+        "capabilities": {"processesText": True, "generatesText": True, "structuredOutput": native_json},
+    }
+    bind_model_endpoint_request_policy(client, route)
+    monkeypatch.setattr(runner, "_resolve_model_workflow_client", lambda *args: (client, "claude", "anthropic"))
+    monkeypatch.setattr(runner, "_raise_if_workflow_run_cancelled", lambda *args: None)
+    monkeypatch.setattr(runner, "_execute_workflow_dispatch", lambda *args, **kwargs: pytest.fail("Do not replay the producer"))
+    workflow = {"id": "wf", "user_id": "owner", "definition_version": 2}
+    task = {"id": "task", "type": "instructions", "instructions": "Include the evaluation facts.", "output_contract": {"kind": "text"}}
+    result = {"reply": "Evaluation: proposal deadline and response days retained."}
+    envelope = results.build_workflow_task_result(result, workflow=workflow, run_id="run", task=task)
+    updated, checked = runner._check_workflow_completeness(
+        result, envelope, workflow=workflow, task=task, settings={},
+        run_id="run", durable=None, unit_key="task",
+    )
+    assert updated["reply"] == result["reply"]
+    if malformed:
+        assert checked["task_completeness"]["status"] in ("incomplete", "verification_unavailable")
+        assert 1 <= len(calls) <= 2
+    else:
+        assert checked["task_completeness"]["status"] == "complete"
+        assert len(calls) == 1
+    assert all(call["model"] == "claude" and "tools" not in call for call in calls)
+    assert all(("response_format" in call) is native_json for call in calls)
+    assert client._simplechat_route_policy["operation_url"] == route["operation_url"]
+
+
+@pytest.mark.parametrize("valid_report", [True, False])
+def test_workflow_responses_review_preserves_route_timeout_and_closed_schema(
+    initialized_application, monkeypatch, valid_report,
+):
+    runner = importlib.import_module("functions_workflow_runner")
+    runtime = importlib.import_module("functions_model_endpoint_runtime")
+    urls = importlib.import_module("functions_model_endpoint_urls")
+    results = importlib.import_module("functions_workflow_results")
+    model = {
+        "id": "model", "modelName": "gpt-6.1-terra", "catalogModelId": "gpt-6.1-terra",
+        "api_type": "azure_openai_v1", "inference_api": "responses",
+    }
+    endpoint = {
+        "id": "gateway", "name": "Fixture Gateway", "provider": "custom", "routing_schema_version": 2,
+        "connection": {"endpoint": "https://offline.invalid/shared-foundry;rev=2"},
+        "auth": {"type": "api_key", "api_key": "offline", "api_key_header": "Ocp-Apim-Subscription-Key"},
+        "models": [model],
+    }
+    route = urls.resolve_model_endpoint_route(endpoint, model)
+    workflow = {"id": "wf", "user_id": "owner", "model_endpoint_id": "gateway", "model_id": "model"}
+    task = {
+        "id": "task", "type": "instructions", "instructions": "Include the evaluation facts.",
+        "output_contract": {"kind": "text"},
+    }
+    answer = "Evaluation: proposal deadline and response days retained."
+    requests = []
+
+    def handle(request):
+        body = json.loads(request.content)
+        requests.append((request, body))
+        content = answer if len(requests) == 1 else (
+            report("satisfied") if valid_report else '{"requirements":[],"unexpected":true}'
+        )
+        return httpx.Response(200, json={
+            "id": f"response-{len(requests)}", "object": "response", "created_at": 1,
+            "model": model["modelName"], "status": "completed", "usage": None,
+            "output": [{
+                "type": "message", "id": "answer", "role": "assistant", "status": "completed",
+                "content": [{"type": "output_text", "text": content, "annotations": []}],
+            }],
+        })
+
+    def read_authorized_route(settings, selection, *, authorize):
+        assert authorize is True
+        assert (selection["endpoint_id"], selection["model_id"], selection["user_id"]) == ("gateway", "model", "owner")
+        return {**endpoint, "_resolved_route": route}
+
+    monkeypatch.setattr(runner, "ensure_governance_access", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "resolve_model_endpoint_from_context", read_authorized_route)
+    monkeypatch.setattr(runner, "_raise_if_workflow_run_cancelled", lambda *args: None)
+    monkeypatch.setattr(runner, "_execute_workflow_dispatch", lambda *args, **kwargs: pytest.fail("Do not replay the producer"))
+    monkeypatch.setattr(runtime, "validate_custom_model_endpoint_url", lambda value, **kwargs: value)
+    settings = {"model_endpoints": [endpoint]}
+    with httpx.Client(transport=httpx.MockTransport(handle)) as transport:
+        monkeypatch.setattr(runtime, "build_custom_openai_sync_http_client", lambda **kwargs: transport)
+        with runner.workflow_context_budget_scope(workflow):
+            client, deployment, _ = runner._resolve_model_workflow_client(workflow, settings)
+            produced = client.chat.completions.create(
+                model=deployment, messages=[{"role": "user", "content": task["instructions"]}],
+            )
+        result = {"reply": produced.choices[0].message.content}
+        envelope = results.build_workflow_task_result(result, workflow=workflow, run_id="run", task=task)
+        updated, checked = runner._check_workflow_completeness(
+            result, envelope, workflow=workflow, task=task, settings=settings,
+            run_id="run", durable=None, unit_key="task",
+        )
+
+    assert updated["reply"] == answer
+    expected_status = "complete" if valid_report else "verification_unavailable"
+    assert checked["task_completeness"]["status"] == expected_status
+    assert len(requests) == (2 if valid_report else 3)
+    assert all(
+        req.url.path == "/shared-foundry;rev=2/openai/v1/responses"
+        and not req.url.query and body["model"] == model["modelName"]
+        and body["store"] is False and "tools" not in body and "timeout" not in body
+        for req, body in requests
+    )
+    for request, body in requests[1:]:
+        assert request.extensions["timeout"]["read"] == 120
+        assert body["text"]["format"]["type"] == "json_schema"
+        assert body["text"]["format"]["strict"] is True
+    assert workflow["context_budget"]["model_protocol"] == "responses"
 
 
 def model_response(content, finish_reason):

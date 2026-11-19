@@ -2,8 +2,9 @@
 # test_tabular_document_actions_workflow.py
 """
 Functional test for tabular document-action workflow support.
-Version: 0.261.266
+Version: 0.261.428
 Implemented in: 0.241.038; mixed-source manifest coverage added in 0.250.062; generated-output Analyze durable routing added in 0.250.184; model endpoint context added in 0.250.185; shadow manifest retired in 0.261.266
+Scoped model context fixture updated in: 0.261.045
 
 This test ensures tabular document actions reuse the shared tabular analysis
 path for Analyze and comparison workflows instead of relying only on the
@@ -19,6 +20,7 @@ from pathlib import Path
 import sys
 import traceback
 import types
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -156,11 +158,16 @@ def test_mixed_sources_preserve_valid_tabular_partition() -> None:
         },
     }
     resolver = lambda **kwargs: source_records.get(kwargs["document_id"])
-    manifest = orchestration.resolve_authorized_source_manifest(
-        ["narrative-doc", "tabular-doc"],
-        user_id="user-1",
-        context_resolver=resolver,
-    )
+    with patch.object(
+        orchestration,
+        "assert_document_available",
+        side_effect=lambda document, **_kwargs: document,
+    ):
+        manifest = orchestration.resolve_authorized_source_manifest(
+            ["narrative-doc", "tabular-doc"],
+            user_id="user-1",
+            context_resolver=resolver,
+        )
     partitions = orchestration.partition_source_manifest(manifest)
 
     assert [entry["document_id"] for entry in manifest] == [
@@ -252,7 +259,7 @@ def test_generated_output_tabular_analyze_queues_direct_output_before_foreground
                 "public_workspace_id": None,
             }],
             "_resolve_tabular_document_action_model_name": lambda workflow, settings: "gpt-4o",
-            "_build_workflow_model_context": lambda workflow, deployment_name, provider: {
+            "_build_workflow_model_context": lambda workflow, deployment_name, provider, *, settings=None: {
                 "endpoint_id": workflow.get("model_endpoint_id"),
                 "model_id": workflow.get("model_id"),
                 "model_deployment": deployment_name,

@@ -1,7 +1,7 @@
 # group_agent_harness.py
 """Shared, isolated harness for the native group agent endpoint tests (M4C).
 
-Version: 0.261.161
+Version: 0.261.437
 Implemented in: 0.261.138
 
 Extracted verbatim from ``test_group_agent_apis.py`` so the API suite and the
@@ -304,7 +304,7 @@ def environment(monkeypatch):
         # --- lazily-imported group option/knowledge service seams ---------
         scoped.setitem(sys.modules, "route_backend_agents", module_stub(
             "route_backend_agents",
-            build_combined_model_endpoints=lambda settings, user_id, group_id=None: [
+            collect_agent_model_endpoints=lambda settings, user_id, group_id=None: [
                 {"id": "global-1", "scope": "global", "models": ["gpt"], "azure_openai_gpt_key": "sk"},
                 {"id": "group-1", "scope": "group", "models": ["gpt"], "azure_openai_gpt_key": "sk"},
                 {"id": "user-1", "scope": "user", "models": ["gpt"], "azure_openai_gpt_key": "sk"},

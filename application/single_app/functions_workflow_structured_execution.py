@@ -10,7 +10,12 @@ from functions_m365_approvals import M365ApprovalRequired
 from m365_interaction import M365SignInRequired
 from functions_workflow_identity import workflow_execution_id
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
-from functions_workflow_policy_errors import workflow_policy_failure
+from functions_workflow_policy_errors import (
+    WorkflowTaskPolicyError,
+    workflow_failure_diagnostics,
+    workflow_policy_failure,
+    safe_workflow_failure_summary,
+)
 from functions_workflow_result_store import load_workflow_node_result, save_workflow_node_result
 
 
@@ -94,6 +99,14 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         row = self.store.journal_read("unit", self._key(key))
         return deepcopy(row["payload"]) if row else {}
 
+    def note_unit_effect(self, key):
+        self.check()
+        row = self.store.journal_read("unit", key)
+        if row and row["payload"].get("state") == "running":
+            self.store.journal_commit(
+                self.lease.token, "unit", key, {**row["payload"], "effect_certainty": "possible"},
+            )
+
     def selectors(self, *, attempt=None):
         task_id = self.node.get("task_id") if self.node else None
         unit = self.unit(f"task:{task_id}") if task_id else {}
@@ -146,7 +159,7 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         })
         raise WorkflowSuspended("paused")
 
-    def _gate(self, key, digest, attempt, kind, reason, inputs=None):
+    def _gate(self, key, digest, attempt, kind, reason, inputs=None, failure=None):
         gate_id = execution_fingerprint([self.execution_id(), key, digest, attempt, kind])
         row = self.store.journal_read("decision", ["gate", gate_id])
         choice = "approve" if kind == "approval" else "retry"
@@ -160,9 +173,11 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
                 state=state, attempt=attempt,
                 consumed_inputs=(inputs or {}).get("consumed_inputs") or [],
                 reference_sources=(inputs or {}).get("references") or [],
+                **safe_workflow_failure_summary(failure),
             )
-            self._attempt(attempt, state=state)
+            self._attempt(attempt, state=state, **safe_workflow_failure_summary(failure))
         self.store.wait(self.lease.token, state=state, gate={
+            **safe_workflow_failure_summary(failure),
             "id": gate_id, "kind": kind, "unit_id": key, "input_digest": digest,
             **self.selectors(attempt=attempt), "reason": reason,
             "definition_revision": self.workflow.get("definition_revision"),
@@ -204,9 +219,19 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         if unit and unit.get("input_digest") != digest:
             self._pause(key, digest)
         if unit.get("state") == "completed":
+            self.note_parent_effect(self._key(key), replay_safe=bool(unit.get("replay_safe")))
             result = self._saved(unit, key)
             self.check()
             return result
+        if unit.get("state") == "failed" and unit.get("terminal_failure"):
+            raise WorkflowTaskPolicyError(
+                unit.get("error_code") or "workflow_terminal_failure",
+                unit.get("error") or "This workflow task failed with a non-retryable error.",
+                **{
+                    name: value for name, value in safe_workflow_failure_summary(unit).items()
+                    if name not in ("error", "error_code")
+                },
+            )
         execution_row = self.store.journal_read("execution", self.execution_id()) if self.node else None
         if execution_row and execution_row["payload"].get("state") == "paused" and unit.get("state") != "completed":
             self.record_execution(state="queued", reason_code="")
@@ -250,7 +275,7 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         self.store.journal_commit(self.lease.token, "unit", self._key(key), unit)
         self.authorize_iteration()
         try:
-            result = operation()
+            result = self.invoke_unit_operation(self._key(key), operation, replay_safe=replay_safe)
         except (M365ApprovalRequired, M365SignInRequired):
             self.check()
             self.store.journal_commit(self.lease.token, "unit", self._key(key), {**unit, "state": "waiting_m365"})
@@ -261,15 +286,39 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         except Exception as exc:
             self.check()
             self.authorize_iteration()
+            effect = self.unit(key).get("effect_certainty")
+            if effect in ("possible", "committed"):
+                exc.operation_effect_certainty = effect
             failure = workflow_policy_failure(exc)
+            diagnostics = workflow_failure_diagnostics(exc)
+            resolved_failure = {**(failure or {}), **diagnostics}
             self.store.journal_commit(self.lease.token, "unit", self._key(key), {
-                **unit, "state": "failed", **(failure or {}),
+                **unit,
+                "state": "failed",
+                **resolved_failure,
+                "replay_safe": bool(
+                    replay_safe
+                    or (
+                        resolved_failure.get("terminal_failure") is False
+                        and resolved_failure.get("effect_certainty") == "none"
+                    )
+                ),
             })
             if task_operation:
-                self.record_execution(state="failed", attempt=attempt, **(failure or {}))
-                self._attempt(attempt, state="failed", **(failure or {}))
-            if not replay_safe and failure is None:
-                self._gate(key, digest, attempt, "recovery", "Review any external effects before retrying this failed attempt.", inputs)
+                self.record_execution(
+                    state="failed", attempt=attempt, **resolved_failure,
+                )
+                self._attempt(
+                    attempt, state="failed", **resolved_failure,
+                )
+            if not replay_safe and (
+                failure is None or resolved_failure.get("effect_certainty") in ("possible", "committed")
+            ):
+                self._gate(
+                    key, digest, attempt, "recovery",
+                    "Review any external effects before retrying this failed attempt.",
+                    inputs, failure=resolved_failure,
+                )
             raise
         self.check()
         reference = self._save_payload(key, {

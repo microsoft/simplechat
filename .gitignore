@@ -27,6 +27,9 @@ priv-*
 
 # Visual Studio Code
 .vscode
+!/.vscode/
+/.vscode/*
+!/.vscode/tasks.json
 
 # temporary files
 flask_session

@@ -8,6 +8,7 @@ from config import *
 import functions_authentication
 import functions_settings
 from typing import Iterable
+from azure.core import MatchConditions
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_appinsights import log_event
@@ -493,7 +494,14 @@ def get_group_model_endpoints(group_id: str):
     return []
 
 
-def update_group_model_endpoints(group_id: str, endpoints, *, user_id=None, outcome=None):
+def update_group_model_endpoints(
+    group_id: str,
+    endpoints,
+    *,
+    user_id=None,
+    outcome=None,
+    expected_etag=None,
+):
     """Replace the model endpoint list on the group document.
 
     This is the collection writer behind the legacy ``POST /api/group/model-endpoints``.
@@ -511,6 +519,13 @@ def update_group_model_endpoints(group_id: str, endpoints, *, user_id=None, outc
         raise ValueError("model_endpoints must be a list")
 
     def apply(group_doc):
+        if (
+            expected_etag is not None
+            and str(group_doc.get("_etag") or "") != str(expected_etag)
+        ):
+            raise GroupDocumentWriteConflict(
+                "The group model endpoint catalog changed. Reload and try again."
+            )
         if user_id is not None:
             role = get_user_role_in_group(group_doc, user_id)
             if not role:

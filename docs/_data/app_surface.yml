@@ -5,7 +5,7 @@ counts:
   admin_groups: 15
   admin_tabs: 49
   admin_sections: 109
-  actions: 35
+  actions: 36
   chat_controls: 47
   sub_elements: 3
   app_pages: 34
@@ -184,7 +184,7 @@ capabilities:
 - key: enable_multi_agent_orchestration
   default: false
 - key: enable_multi_model_endpoints
-  default: false
+  default: true
 - key: enable_multimodal_vision
   default: false
 - key: enable_no_auth_external_healthcheck
@@ -1026,6 +1026,10 @@ actions:
   module: mcp_plugin.py
   class_name: McpPlugin
   summary: Model Context Protocol action descriptor.
+- slug: microsoft-decision
+  module: microsoft_decision_plugin.py
+  class_name: MicrosoftDecisionPlugin
+  summary: Invoke Microsoft Decision-1 for bounded, typed decisions only.
 - slug: msgraph
   module: msgraph_plugin.py
   class_name: MSGraphPlugin

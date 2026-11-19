@@ -1,8 +1,11 @@
+# test_custom_model_endpoint_auth.py
 #!/usr/bin/env python3
 """
 Functional test for Custom model endpoint authentication schemes.
-Version: 0.261.020
+Version: 0.261.057
 Implemented in: 0.261.020
+Endpoint API-key editor and explicit-header regressions added in: 0.261.054
+Shared editor control integration verified in: 0.261.057
 
 Custom endpoints supported one authentication scheme: an API key sent in whichever
 header the built-in providers happened to use. That covers OpenAI and Anthropic
@@ -26,6 +29,8 @@ import socket
 import sys
 from unittest.mock import patch
 
+import httpx
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(
     os.path.join(
@@ -48,11 +53,20 @@ from functions_model_endpoint_auth import (
 from functions_model_endpoint_providers import (
     MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
     MODEL_ENDPOINT_API_TYPE_OPENAI,
+    MODEL_ENDPOINT_PROVIDERS,
     get_model_endpoint_provider,
 )
 from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
     validate_custom_model_endpoint,
+)
+from model_endpoint_clients import (
+    build_anthropic_chat_client,
+    build_openai_style_chat_client,
+)
+from test_model_endpoint_normalization_backend import (
+    _load_functions_settings_module,
+    _restore_modules,
 )
 
 
@@ -186,6 +200,162 @@ def test_bearer_and_api_key_credentials_resolve():
 
         traceback.print_exc()
         return False
+
+
+def test_endpoint_api_key_override_is_shared_across_api_types():
+    """An endpoint header policy must not depend on the selected model API."""
+    for provider in MODEL_ENDPOINT_PROVIDERS:
+        auth = {
+            "type": "api_key",
+            "api_key": "synthetic-endpoint-key",
+            "api_key_header": "Ocp-Apim-Subscription-Key",
+            "api_key_prefix": "",
+        }
+        headers = build_api_key_headers(
+            auth, provider.default_api_key_header, provider.default_api_key_prefix,
+        )
+        assert headers == {"Ocp-Apim-Subscription-Key": "synthetic-endpoint-key"}
+        auth.update({"api_key_header": "", "api_key_prefix": ""})
+        restored = build_api_key_headers(
+            auth, provider.default_api_key_header, provider.default_api_key_prefix,
+        )
+        expected_value = (
+            f"{provider.default_api_key_prefix} synthetic-endpoint-key".strip()
+        )
+        assert restored == {provider.default_api_key_header: expected_value}
+    return True
+
+
+def test_explicit_authorization_header_preserves_the_api_key_prefix():
+    """The SDK must not replace an explicit API-key Authorization value."""
+    for prefix in ("", "Token", "Bearer"):
+        credential, headers = resolve_custom_endpoint_credentials(
+            {
+                "type": "api_key", "api_key": "synthetic-endpoint-key",
+                "api_key_header": "Authorization", "api_key_prefix": prefix,
+            },
+            default_api_key_header="Authorization",
+            default_api_key_prefix="Bearer",
+        )
+        assert credential == "synthetic-endpoint-key"
+        expected_value = f"{prefix} synthetic-endpoint-key".strip()
+        assert headers == {"Authorization": expected_value}
+    return True
+
+
+def test_api_key_header_overrides_reach_both_protocols():
+    """Capture real adapter requests without contacting a model provider."""
+    failures = []
+    for api_type in ("openai", "anthropic"):
+        provider = get_model_endpoint_provider(api_type)
+        for header, prefix in (
+            ("Ocp-Apim-Subscription-Key", ""),
+            ("X-Corp-Key", "Token"),
+            ("Authorization", ""),
+            ("authorization", "Token"),
+            ("X-API-Key", "Token"),
+            ("", "Token"),
+        ):
+            captured = []
+
+            def respond(request):
+                captured.append(request)
+                if api_type == "anthropic":
+                    payload = {
+                        "id": "message-one", "type": "message", "role": "assistant",
+                        "model": "synthetic-model",
+                        "content": [{"type": "text", "text": "ok"}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
+                    }
+                else:
+                    payload = {
+                        "id": "completion-one", "object": "chat.completion", "created": 1,
+                        "model": "synthetic-model", "choices": [{
+                            "index": 0, "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }],
+                    }
+                return httpx.Response(200, json=payload)
+
+            credential, headers = resolve_custom_endpoint_credentials(
+                {
+                    "type": "api_key", "api_key": "synthetic-endpoint-key",
+                    "api_key_header": header, "api_key_prefix": prefix,
+                },
+                default_api_key_header=provider.default_api_key_header,
+                default_api_key_prefix=provider.default_api_key_prefix,
+            )
+            with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+                with patch(
+                    "model_endpoint_clients.build_custom_openai_sync_http_client",
+                    return_value=http_client,
+                ):
+                    if api_type == "anthropic":
+                        client = build_anthropic_chat_client(
+                            endpoint="https://gateway.example/team/v1",
+                            api_key=credential, direct_custom=True, extra_headers=headers,
+                        )
+                    else:
+                        client = build_openai_style_chat_client(
+                            credential, "https://gateway.example/team/v1",
+                            api_type="openai", direct_custom=True, default_headers=headers,
+                        )
+                    client.chat.completions.create(
+                        model="synthetic-model",
+                        messages=[{"role": "user", "content": "synthetic"}],
+                        max_tokens=8,
+                    )
+            assert len(captured) == 1
+            expected_value = f"{prefix} synthetic-endpoint-key".strip()
+            effective_header = header or provider.default_api_key_header
+            if captured[0].headers.get_list(effective_header) != [expected_value]:
+                failures.append((api_type, effective_header))
+    assert not failures, f"Endpoint header overrides were not honored: {failures}"
+    return True
+
+
+def test_native_and_bearer_authentication_headers_keep_precedence():
+    """Custom API-key overrides must not change other authentication paths."""
+    native = build_anthropic_chat_client(
+        endpoint="https://gateway.example/team/v1", api_key="synthetic-endpoint-key",
+        extra_headers={"X-API-Key": "Token different-key", "anthropic-version": "different-version"},
+    )
+    native_headers = native._build_headers()
+    assert native_headers["x-api-key"] == "synthetic-endpoint-key"
+    assert native_headers["api-key"] == "synthetic-endpoint-key"
+    assert native_headers["anthropic-version"] == "2023-06-01"
+    bearer = build_anthropic_chat_client(
+        endpoint="https://gateway.example/team/v1", bearer_token="synthetic-bearer",
+        direct_custom=True, extra_headers={"authorization": "Token different-key"},
+    )
+    bearer_headers = bearer._build_headers()
+    assert bearer_headers["Authorization"] == "Bearer synthetic-bearer"
+    assert "authorization" not in bearer_headers
+    return True
+
+
+def test_clearing_header_overrides_preserves_the_stored_api_key():
+    """Cleared metadata and a blank secret must have different merge behavior."""
+    settings, original_modules = _load_functions_settings_module()
+    try:
+        existing = {
+            "type": "api_key", "api_key": "synthetic-stored-key",
+            "api_key_header": "X-Corp-Key", "api_key_prefix": "Token",
+        }
+        incoming = {
+            "type": "api_key", "api_key": "",
+            "api_key_header": "", "api_key_prefix": "",
+        }
+        merged = settings.merge_model_endpoint_auth(existing, incoming)
+        assert merged["api_key"] == "synthetic-stored-key"
+        assert merged["api_key_header"] == ""
+        assert merged["api_key_prefix"] == ""
+        assert existing["api_key_header"] == "X-Corp-Key"
+        assert existing["api_key_prefix"] == "Token"
+    finally:
+        _restore_modules(original_modules)
+    return True
 
 
 def test_oauth2_tokens_are_fetched_and_cached():
@@ -470,6 +640,11 @@ if __name__ == "__main__":
     tests = [
         test_api_key_header_is_configurable,
         test_bearer_and_api_key_credentials_resolve,
+        test_endpoint_api_key_override_is_shared_across_api_types,
+        test_explicit_authorization_header_preserves_the_api_key_prefix,
+        test_api_key_header_overrides_reach_both_protocols,
+        test_native_and_bearer_authentication_headers_keep_precedence,
+        test_clearing_header_overrides_preserves_the_stored_api_key,
         test_oauth2_tokens_are_fetched_and_cached,
         test_oauth2_failures_are_sanitized,
         test_token_endpoint_is_revalidated_at_request_time,

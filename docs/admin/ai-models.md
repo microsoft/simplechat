@@ -5,7 +5,7 @@ description: "Configure shared chat, image, and embedding connections, independe
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.410"
+version: "0.261.428"
 ---
 
 
@@ -212,13 +212,104 @@ as a fabricated available deployment or a blanket ban.
 | Header name | Rejected if it collides with a header the model call already sets, such as `authorization`. | x-simplechat-identity-key | `model_endpoint_identity_header_name` |
 | Identity sent in the header | Object id is stable across a rename; UPN is readable in gateway logs. Tenant variants qualify the value for a multi-tenant gateway. | Object id and tenant id | `model_endpoint_identity_header_value_type` |
 
+### Per-model routing and live tests
+
+Live-test wiring introduced in **0.261.044**, with workflow and adapter handoff
+repairs in **0.261.045** and capability, cancellation, and activation support in
+**0.261.046**, tracked in
+`application/single_app/config.py`.
+
+New endpoints use per-model routing so one gateway can host different API
+contracts and paths. **Preview Route** shows the server-computed POST URL without
+contacting the provider. **Test Connection** sends a live request using the saved
+endpoint and model route after existing feature, scope, and governance checks;
+unsaved route changes must be saved first. The test prompt can incur provider
+usage charges. New endpoints start disabled. After saving and testing a
+nonproduction endpoint, use **Enable** to make its enabled models available;
+**Disable** removes that endpoint from normal model selection. Global changes
+must also be persisted with the main settings save. Existing legacy endpoints
+are not migrated. Live beta acceptance remains separate from local validation.
+
+In **0.261.053**, the chat page's initial model list and global, personal, and
+group model catalogs explicitly support per-model routing. This fixes a chat-page
+HTTP 500 when an enabled schema-v2 endpoint is present. Legacy endpoints retain
+their existing identifiers, and disabled endpoints remain excluded. On older
+builds, temporarily disable the affected endpoint and save settings to restore
+chat access while retaining other enabled endpoints.
+
+| Control | Purpose |
+| --- | --- |
+| Model Library | Associates the row with a published catalogue ID. A new Custom row can take a visible protocol suggestion; an existing explicit choice is preserved. This does not grant gateway capabilities. |
+| API Type | Selects the model's API using a request-path template, such as `/openai/deployments/{deploymentid}/chat/completions?api-version={api-version}`. The template describes the protocol default; Preview Route shows the composed URL. Stored API type identifiers do not change. |
+| URL Handling | Auto applies that API's route convention. Exact API base preserves the composed base and appends only the operation, not an arbitrary full request URL. |
+| API Path | Inserts a relative path immediately after the origin and before the endpoint's existing path. Available on non-Custom rows too. It accepts the documented APIM `<api-id>;rev=<positive integer>` selector for an explicit API revision. |
+| API Version / Anthropic Version | Supplies the selected Custom API's applicable protocol version, separately from the published model version. |
+| Preview Route | Displays the server-computed POST URL without resolving credentials or contacting the provider. |
+| Certificate trust | Keeps existing application trust, selects public roots, or uses an admin-managed shared CA bundle without disabling hostname verification. |
+| Custom profile | Selects Generic Custom or the documented text-only GenAI.mil contract; a profile is separate from its wire API type. |
+| Custom authentication header | Overrides the API-key header for every model on a Generic Custom endpoint. For APIM, use `Ocp-Apim-Subscription-Key`, not a model-specific setting. Blank uses each model API's default. |
+| API key prefix | Adds a required value prefix before the key, such as `Token`. With a custom header, blank sends the raw key. Leave both overrides blank to restore model API defaults. |
+
+For example, an endpoint `https://gateway.example/shared/v1`, an API Path of
+`team-a`, and Messages in Auto mode preview as
+`https://gateway.example/team-a/shared/v1/messages`. Paths must not contain an
+origin, query, fragment, or traversal segments. Preview is structural validation,
+not proof of authentication, availability, or network policy approval.
+
+### APIM revision path selectors
+
+Fixed/Implemented in version: **0.261.056**, tracked in
+`application/single_app/config.py`.
+
+Use APIM's documented revision selector in **API Path** when testing a
+non-current API revision without promoting it. For example,
+`shared-foundry;rev=2` with Chat Completions (Azure/Foundry) in Auto mode
+resolves to
+`/shared-foundry;rev=2/openai/v1/chat/completions`.
+
+The selector must be one path segment in the form
+`<api-id>;rev=<positive integer>`. SimpleChat preserves the literal `;rev=`
+syntax required by APIM. Arbitrary semicolon parameters, encoded substitutes,
+revision zero, malformed selectors, and multiple revision selectors remain
+invalid.
+
+Persist multi-endpoint and applicable personal/group enablement before previewing
+or testing.
+Configure two rows, compare their previews against the gateway contract, then
+save/reopen to verify independent routing. Invalid or duplicate routes block the
+save; changing the form while validation runs requires saving again. Global
+**Save Endpoint** updates the form until the main settings save. Personal/group
+editors use their existing scoped save APIs and role restrictions. The server
+rejects live tests if the submitted route differs from the saved route. Use a
+nonproduction endpoint for testing; schema-v1 records keep
+their compatibility behavior. See the [identity and scope requirements]({{ '/guides/model-endpoint-identity-setup/' | relative_url }}).
+
+### Endpoint API-key header overrides
+
+Fixed/Implemented in version: **0.261.054**, tracked in
+`application/single_app/config.py` and issue #1518.
+
+Use the endpoint's **Custom authentication header** when an API gateway reads
+its subscription key from a different header than the model provider. A gateway
+hosting both Messages and Chat Completions can use
+`Ocp-Apim-Subscription-Key` with a blank **API key prefix** for both models.
+Enter the secret only in **API Key**; leaving that secret blank while editing
+preserves the stored key.
+
+These controls are shared by admin, personal, and group endpoint editors.
+Clearing both overrides restores the selected model API's defaults. Invalid
+header names, reserved transport/cookie headers, and invalid prefixes keep the
+editor open and focus the invalid field. GenAI.mil keeps its fixed
+`Authorization` header and `Bearer` prefix, so its override controls are hidden.
+OAuth2 and static bearer-token editor support remain deferred.
+
 ### Verified model capacity
 
 Capacity overrides implemented in version: **0.261.035** (application version in
 `application/single_app/config.py`).
 
-Use **Advanced endpoint capacity** for verified defaults shared by the models on
-an endpoint. Use **Advanced model capacity** in an individual model row when a
+Use the collapsed **Default model limits** for verified defaults shared by models
+on an endpoint. Use the initially expanded **Model limits** in an individual row when a
 deployment has different limits or an arbitrary deployment name needs an exact
 catalog identity. These controls are also available in authorized personal and
 group workspace endpoint editors.
@@ -239,6 +330,30 @@ exact catalog model**. Leave a field blank to inherit; clearing an existing
 override saves `null`. A missing or unknown maximum does not mean unlimited
 capacity. Only enter positive whole numbers up to `9007199254740991`; fractions,
 scientific notation, negative values, and zero are rejected.
+
+In **0.261.052**, schema-v2 rows have one optional Model Library selector rather
+than two editable catalog identities. Library suggestions never fill an Azure
+deployment alias or replace an entered request identifier. **Preview Route**
+also displays effective capacities and their model/endpoint/catalog sources,
+using the runtime resolver. Unknown limits remain explicitly unverified.
+
+### Shared certificates and GenAI.mil
+
+Under **Advanced network and certificate trust**, administrators can expand
+**Manage shared CA bundles** to upload certificate-only PEM bundles, inspect
+fingerprints/expiry/history/references, replace certificates under a stable ID,
+and delete unused bundles with server-side reference checks. The private Blob
+container and Cosmos metadata are shared across workers; Enhanced Citations
+need not be enabled. Legacy filesystem paths continue to work. See
+[shared CA bundle operations]({{ '/explanation/features/CUSTOM_ENDPOINT_CA_BUNDLES/' | relative_url }}).
+
+For GenAI.mil, choose **Custom profile -> GenAI.mil**, enter the scoped key, and
+use **Fetch Models** or manual model entry. Only documented text Chat
+Completions fields are sent. Tools, vision, structured output, Messages, and
+Responses remain unsupported. Stored keys are not silently reused after an API
+origin change. Local implementation does not establish live acceptance or data
+authorization. See the
+[GenAI.mil profile contract]({{ '/explanation/features/GENAI_MIL_MODEL_PROFILE/' | relative_url }}).
 
 Server-side validation also rejects invalid overrides before saving the submitted
 endpoint configuration or credentials. Personal/group saves return HTTP 400 with
@@ -286,6 +401,13 @@ The classic single endpoint is configured on the server-rendered admin page. Its
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
+| Enable multi-endpoint model management | Provides the endpoint or route SimpleChat uses for this service. | On for new instances; existing settings remain unchanged | `enable_multi_model_endpoints`; capability toggle |
+| Search Agents | Defines behavior for the related admin workflow; verify the affected feature after saving. | N/A (runtime control) | Runtime UI control |
+| Filter | Defines behavior for the related admin workflow; verify the affected feature after saving. | N/A (runtime control) | Runtime UI control |
+| Enable header | Provides the endpoint or route SimpleChat uses for this service. | Off | `model_endpoint_identity_header_enabled` |
+| Header Name | Provides the endpoint or route SimpleChat uses for this service. | Not specified in defaults | `model_endpoint_identity_header_name` |
+| Identity Value | The selected identity is HMAC-hashed before leaving SimpleChat. Missing identity values omit the header. | Not specified in defaults | `model_endpoint_identity_header_value_type` |
+| Default model for fallbacks | Used for tasks such as conversation summarization, fallback, and other operations when an agent is selected. | Not specified in defaults | Runtime UI control |
 | Default model | The model chat uses when nothing else has chosen one. Cleared automatically if the connection or model it names is deleted or disabled. | Not specified in defaults | `default_model_selection`; connections mode only |
 | Apply to new chats | Starts new non-agent conversations with the admin default model instead of each user's last selected chat model. | Off | `enable_default_model_for_new_conversations`; capability toggle |
 | Default reasoning effort | Sets the reasoning effort sent with new non-agent conversations when the admin default is enabled. | Model default | `default_reasoning_effort` |

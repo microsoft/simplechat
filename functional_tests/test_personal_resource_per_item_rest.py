@@ -2,7 +2,7 @@
 """
 Functional test for per-item REST on personal agents, actions and model endpoints.
 
-Version: 0.261.042
+Version: 0.261.428
 Implemented in: 0.261.042
 
 Before this, saving or removing one of these meant POSTing the entire collection. That is
@@ -159,10 +159,11 @@ def test_post_still_accepts_the_legacy_collection_body():
         "The endpoints POST must distinguish a single endpoint from the legacy "
         "{'endpoints': [...]} collection body"
     )
-    assert "merge_model_endpoints_with_existing" in endpoints, (
-        "The collection path must keep its merge, which preserves endpoints the frontend "
-        "cannot see"
+    assert "_normalize_personal_endpoints(incoming, existing)" in endpoints, (
+        "The collection path must keep the shared merge, which preserves endpoints the "
+        "frontend cannot see"
     )
+    assert "revision" in endpoints, "The legacy whole-list path must require a revision"
 
     print("Bulk compatibility test passed!")
     return True
@@ -191,9 +192,13 @@ def test_endpoint_delete_cleans_up_secrets():
 
     # The update path must merge server-side, since the client's copy has no secrets in it.
     patch_route = _function_body(models, "update_user_model_endpoint")
-    assert "merge_model_endpoint_payload" in patch_route, (
-        "PATCH must merge onto the stored endpoint; the values the client holds are "
-        "sanitized, so replacing wholesale would blank the credentials"
+    normalize_route = _function_body(models, "_normalize_personal_endpoints")
+    assert "_normalize_personal_endpoints(replaced, existing)" in patch_route, (
+        "PATCH must route the replacement through the shared stored-endpoint merge"
+    )
+    assert "merge_model_endpoints_with_existing" in normalize_route, (
+        "The shared normalizer must merge onto the stored endpoint; the values the "
+        "client holds are sanitized, so replacing wholesale would blank the credentials"
     )
 
     print("Endpoint secret cleanup test passed!")

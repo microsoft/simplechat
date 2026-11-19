@@ -71,6 +71,14 @@ Set **Custom endpoint CA bundle path** to a PEM file readable by the application
 /etc/ssl/certs/internal-ca.pem
 ```
 
+Since **0.261.052**, administrators can instead use **Manage shared CA bundles**
+and select a stable bundle ID in each endpoint's **Certificate trust** control.
+Certificates survive worker/container replacement in the existing private Blob
+account; metadata and references use Cosmos DB. This does not require Enhanced
+Citations. Existing paths retain their original behavior unless explicitly
+changed. Both mechanisms replace public roots without disabling hostname
+verification. See [shared CA bundle operations](./CUSTOM_ENDPOINT_CA_BUNDLES.md).
+
 Two properties are deliberate:
 
 - **Ambient environment variables are still ignored.** Setting `SSL_CERT_FILE` in

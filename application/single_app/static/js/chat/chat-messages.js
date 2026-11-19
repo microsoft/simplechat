@@ -55,6 +55,8 @@ import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
 import { getCitedHybridCitations, getCitedWebCitations } from './chat-citation-tracking.js';
+import { parseMath, restoreMathSource } from './chat-math-segments.js';
+import { getMathAwareSelection, hydrateMath, injectMathPlaceholders } from './chat-math.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -2874,7 +2876,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
   export function renderAiMessageContent(messageContent, options = {}) {
     const followUpRenderModel = buildFollowUpRenderModel(messageContent);
-    let cleaned = stripInlineAzureMapsBlocks(followUpRenderModel.visibleMarkdown).trim().replace(/\n{3,}/g, "\n\n");
+    const parsedMath = parseMath(followUpRenderModel.visibleMarkdown);
+    let cleaned = stripInlineAzureMapsBlocks(parsedMath.text).trim().replace(/\n{3,}/g, "\n\n");
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
 
     const chartExtraction = extractInlineChartBlocks(cleaned);
@@ -2901,7 +2904,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
     const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
     const sanitizedHtml = renderMarkdownSafely(withASCIITables);
-    const htmlWithCharts = injectInlineChartHtml(sanitizedHtml, chartExtraction.blocks);
+    const htmlWithMath = injectMathPlaceholders(sanitizedHtml, parsedMath);
+    const htmlWithCharts = injectInlineChartHtml(htmlWithMath, chartExtraction.blocks);
     const htmlWithDiagrams = injectInlineDiagramHtml(htmlWithCharts, diagramExtraction.blocks);
     const htmlWithImageProposals = injectInlineImageProposalHtml(htmlWithDiagrams, imageProposalExtraction.blocks);
     const copyMarkdown = restoreInlineChartTokens(
@@ -2914,8 +2918,10 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     return {
       htmlContent: addTargetBlankToExternalLinks(htmlWithImageProposals),
-      copyMarkdown,
-      previewMarkdown: stripInlineRenderTokens(imageProposalExtraction.markdown),
+      copyMarkdown: restoreMathSource(copyMarkdown, parsedMath),
+      previewMarkdown: stripInlineRenderTokens(
+        restoreMathSource(imageProposalExtraction.markdown, parsedMath)
+      ),
       followUpSuggestions: followUpRenderModel.suggestions,
     };
   }
@@ -5938,6 +5944,24 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     });
   }
 
+function renderMessageInterruptionStatus(messageElement, message, isUser = false) {
+  const metadata = message?.metadata || {};
+  const interrupted = isUser
+    ? metadata.response_attempt?.state === 'interrupted'
+    : metadata.incomplete || metadata.canceled || metadata.complete === false
+      || ['stopped', 'interrupted', 'stop_unconfirmed'].includes(metadata.stream_status);
+  if (!interrupted || messageElement.querySelector('.stream-stopped-banner, .message-interruption-status')) return;
+  const notice = document.createElement('p');
+  notice.className = isUser ? 'message-interruption-status small text-muted' : 'stream-stopped-banner alert alert-info mt-2 mb-0';
+  notice.setAttribute('role', 'status');
+  const userCanceled = metadata.stop_reason === 'user_cancelled' || metadata.cancel_reason === 'user_requested';
+  notice.textContent = metadata.stream_status === 'stop_unconfirmed'
+    ? 'Stopping is not confirmed. Refresh to check saved work.'
+    : userCanceled ? 'Stopped by you. Response may be incomplete.'
+      : 'This response was interrupted. Response may be incomplete.';
+  (messageElement.querySelector('.message-text') || messageElement).appendChild(notice);
+}
+
 export function appendMessage(
   sender,
   messageContent,
@@ -6201,6 +6225,7 @@ export function appendMessage(
       messageDiv.dataset.messageComplete = 'false';
     }
     chatbox.appendChild(messageDiv); // Append AI message
+    renderMessageInterruptionStatus(messageDiv, fullMessageObject);
     window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     renderMessageReasoningAdjustments(messageDiv, getMessageReasoningAdjustments(fullMessageObject));
     renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
@@ -6261,6 +6286,7 @@ export function appendMessage(
       hydrateInlineCharts(messageDiv);
       hydrateInlineDiagrams(messageDiv);
       hydrateInlineImageProposals(messageDiv);
+      void hydrateMath(messageDiv);
     }
 
     // --- Attach Event Listeners specifically for AI message ---
@@ -6709,6 +6735,7 @@ export function appendMessage(
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
+    renderMessageInterruptionStatus(messageDiv, fullMessageObject, sender === 'You' || sender === 'Collaborator');
     window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     hydrateChatWorkspaceAttachmentProgress(messageDiv);
 
@@ -9270,7 +9297,7 @@ export function applySearchHighlight(searchTerm) {
     const textNodes = [];
     let node;
     while (node = walker.nextNode()) {
-      if (node.nodeValue.trim() !== '') {
+      if (node.nodeValue.trim() !== '' && !node.parentElement?.closest('.sc-math')) {
         textNodes.push(node);
       }
     }
@@ -9570,6 +9597,7 @@ function applyMaskedState(messageDiv, metadata = {}) {
   hydrateInlineCharts(messageDiv);
   hydrateInlineDiagrams(messageDiv);
   hydrateInlineImageProposals(messageDiv);
+  void hydrateMath(messageDiv);
   updateMaskControls(messageDiv, nextMetadata);
 }
 
@@ -9585,16 +9613,9 @@ function getSelectionInfoForMessage(messageDiv) {
     return null;
   }
 
-  const preSelectionRange = range.cloneRange();
-  preSelectionRange.selectNodeContents(messageText);
-  preSelectionRange.setEnd(range.startContainer, range.startOffset);
-  const selectedText = selection.toString();
-  const start = preSelectionRange.toString().length;
   return {
     selection,
-    start,
-    end: start + selectedText.length,
-    text: selectedText,
+    ...getMathAwareSelection(messageText, range),
   };
 }
 
@@ -9625,7 +9646,7 @@ function buildMaskPayload(messageDiv, action, selectionInfo = null) {
     payload.selection = {
       start: selectionInfo.start,
       end: selectionInfo.end,
-      text: selectionInfo.text,
+      text: selectionInfo.sourceText ?? selectionInfo.text,
       display_start: selectionInfo.start,
       display_end: selectionInfo.end,
       display_text: selectionInfo.text,

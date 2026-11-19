@@ -8,6 +8,7 @@ from copy import deepcopy
 from azure.cosmos import exceptions as cosmos_exceptions
 
 from functions_workflow_identity import canonical_digest, workflow_execution_id
+from functions_workflow_policy_errors import safe_workflow_failure_summary, workflow_result_availability
 
 
 JOURNAL_TYPE = "workflow_runtime_journal"
@@ -51,6 +52,9 @@ def public_workflow_journal_entry(row, kind):
         name: _public_journal_value(value)
         for name, value in {**row["payload"], "sequence": row["sequence"]}.items() if name in fields
     }
+    if kind in ("execution", "attempt"):
+        entry.update(safe_workflow_failure_summary(row["payload"]))
+        entry["result_availability"] = workflow_result_availability(row["payload"])
     decision = entry.get("decision")
     if isinstance(decision, dict):
         decision = {name: value for name, value in decision.items() if name in {"choice", "target"}}

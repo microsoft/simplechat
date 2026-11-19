@@ -141,10 +141,11 @@ export interface ChatStreamStatus {
 /** Ask whether a conversation still has a live stream that could be reattached. */
 export async function fetchStreamStatus(
     conversationId: string,
+    submissionId?: string,
 ): Promise<ChatStreamStatus | null> {
     try {
         const response = await v2ApiFetch(
-            apiUrl(`/api/chat/stream/status/${encodeURIComponent(conversationId)}`),
+            apiUrl(`/api/chat/stream/status/${encodeURIComponent(conversationId)}${submissionId ? `?submission_id=${encodeURIComponent(submissionId)}` : ''}`),
             { credentials: CREDENTIALS_MODE, headers: { Accept: 'application/json' } },
         );
         if (!response.ok) {
@@ -418,12 +419,13 @@ async function attachToLiveStream(
     handlers: ChatStreamHandlers,
     result: ChatStreamResult,
     signal: AbortSignal | undefined,
+    submissionId?: string,
 ): Promise<boolean> {
     // Announced before the status check, because that round trip plus opening the stream is
     // exactly the window where the user is looking at a response that has stopped moving.
     handlers.onReconnecting?.();
 
-    const status = await fetchStreamStatus(conversationId);
+    const status = await fetchStreamStatus(conversationId, submissionId);
     if (!status?.pending) {
         return false;
     }
@@ -431,7 +433,7 @@ async function attachToLiveStream(
     let response: Response;
     try {
         response = await v2ApiFetch(
-            apiUrl(`/api/chat/stream/reattach/${encodeURIComponent(conversationId)}`),
+            apiUrl(`/api/chat/stream/reattach/${encodeURIComponent(conversationId)}${submissionId ? `?submission_id=${encodeURIComponent(submissionId)}` : ''}`),
             {
                 method: 'GET',
                 credentials: CREDENTIALS_MODE,
@@ -479,6 +481,7 @@ export async function reattachChatStream(
     conversationId: string,
     handlers: ChatStreamHandlers,
     signal?: AbortSignal,
+    submissionId?: string,
 ): Promise<ChatStreamResult | null> {
     const result: ChatStreamResult = {
         accumulated: '',
@@ -487,7 +490,7 @@ export async function reattachChatStream(
         errored: false,
         reconnected: false,
     };
-    const attached = await attachToLiveStream(conversationId, handlers, result, signal);
+    const attached = await attachToLiveStream(conversationId, handlers, result, signal, submissionId);
     return attached ? result : null;
 }
 
@@ -642,6 +645,7 @@ export async function streamChat(
             trackingHandlers,
             result,
             signal,
+            body.submission_id,
         );
         if (attached) {
             pendingError = null;
@@ -662,16 +666,29 @@ export async function streamChat(
  * `url` overrides the endpoint for a shared conversation, whose cancel route resolves the
  * hidden source conversation before reaching the same stream registry.
  */
-export async function cancelStream(conversationId: string, url?: string): Promise<void> {
-    await v2ApiFetch(
+export interface StreamCancellation {
+    outcome: 'accepted' | 'already_completed';
+    dispatch_prevented?: boolean;
+    user_message_id?: string;
+    message_id?: string;
+}
+
+export async function cancelStream(conversationId: string, url?: string, submissionId?: string): Promise<StreamCancellation> {
+    const response = await v2ApiFetch(
         url ?? apiUrl(`/api/chat/stream/cancel/${encodeURIComponent(conversationId)}`),
         {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reason: 'user_requested' }),
+            body: JSON.stringify({ reason: 'user_requested', submission_id: submissionId }),
         },
-    ).catch(() => {
-        /* Best effort: the stream is torn down client-side regardless. */
-    });
+    );
+    const payload = await response.json() as Partial<StreamCancellation> & { error?: string; cancel_requested?: boolean };
+    if (response.ok && !submissionId && payload.cancel_requested === true && !payload.outcome) {
+        return { outcome: 'accepted' }; // Existing analysis owners confirm via cancel_requested.
+    }
+    if (!response.ok || !['accepted', 'already_completed'].includes(payload.outcome ?? '')) {
+        throw new Error(payload.error || 'Stopping could not be confirmed. Refresh to check saved work.');
+    }
+    return payload as StreamCancellation;
 }

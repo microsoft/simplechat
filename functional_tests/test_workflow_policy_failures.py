@@ -1,7 +1,7 @@
 # test_workflow_policy_failures.py
 """
 Functional regressions for deterministic workflow policy failures.
-Version: 0.261.454
+Version: 0.261.460
 Implemented in: 0.261.362
 
 Real request budgets, durable controllers, task sequence bodies and runtime projections
@@ -18,6 +18,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import httpx
+from openai import (
+    AuthenticationError, BadRequestError, InternalServerError, NotFoundError,
+    PermissionDeniedError, RateLimitError,
+)
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
@@ -28,10 +33,13 @@ from test_workflow_runtime_integration import integration
 from test_workflow_context_budget import ToolCallingCompletion
 import functions_workflow_runtime as runtime
 from functions_model_capabilities import ModelTokenBudgetError
+from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
 from functions_workflow_context import WorkflowModelClient, wrap_workflow_chat_service, workflow_context_budget_scope
 from functions_workflow_policy_errors import workflow_policy_failure
 from functions_workflow_result_store import WorkflowResultStore
+from functions_workflow_execution import workflow_unit
 from functions_workflow_results import persist_workflow_task_result, authorize_workflow_task_result_read
+from model_endpoint_profiles import GenAIMilRequestError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -137,7 +145,7 @@ def test_refused_first_request_is_a_terminal_diagnosable_failure(integration, mo
     run_id, record = run_once(workflow, services)
     control = make_store(workflow, run_id).read()
     assert calls == []
-    assert record["status"] == control["state"] == "failed"
+    assert record["status"] == control["state"] == "failed", control
     assert record["error_code"] == "workflow_context_budget_exceeded"
     assert len(usage) == 1
     assert usage[0]["outcome"] == "failed"
@@ -249,6 +257,259 @@ def test_arbitrary_operation_errors_still_require_explicit_recovery(integration,
 
 
 @pytest.mark.parametrize("structured", [False, True])
+def test_http_provider_rejection_finishes_without_nonreplayable_recovery(
+    integration, monkeypatch, structured,
+):
+    workflow, runner, services, make_store = prepare(
+        integration, monkeypatch, structured=structured, retries=3,
+    )
+    calls = []
+
+    def rejected(*args, **kwargs):
+        calls.append("provider")
+        raise SanitizedModelEndpointError(
+            "Custom model request failed. (reference abc12345)",
+            correlation_reference="abc12345",
+            status_code=400,
+            api_type="anthropic",
+            protocol="messages",
+        )
+
+    runner["_execute_workflow_dispatch"] = rejected
+    run_id, record = run_once(workflow, services)
+    control = make_store(workflow, run_id).read()
+
+    assert calls == ["provider"]
+    assert record["status"] == control["state"] == "failed", control
+    assert record["error_code"] == "model_provider_request_failed"
+    assert record["error"] == "Custom model request failed. (reference abc12345)"
+    assert record["correlation_reference"] == "abc12345"
+    assert record["effect_certainty"] == "none"
+    assert (control.get("gate") or {}).get("kind") != "recovery"
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("status,error_type", [
+    (400, BadRequestError), (401, AuthenticationError), (403, PermissionDeniedError),
+    (404, NotFoundError), (429, RateLimitError), (503, InternalServerError),
+])
+def test_real_native_sdk_invocation_retains_safe_reason_and_bounded_retry(
+    integration, monkeypatch, structured, status, error_type,
+):
+    workflow, runner, services, make_store = prepare(integration, monkeypatch, structured=structured, retries=2)
+    calls = []
+
+    def provider(**kwargs):
+        calls.append(kwargs)
+        if status in (429, 503) and len(calls) == 3:
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Recovered."))])
+        raise error_type(
+            "PRIVATE provider URL and credentials must never reach task history",
+            response=httpx.Response(status, request=httpx.Request("POST", "https://offline.invalid")),
+            body={"error": {"message": "PRIVATE", "type": "private_provider_type"}},
+        )
+
+    def dispatch(*args, **kwargs):
+        client = WorkflowModelClient(
+            SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=provider))), MODEL, "aoai",
+        )
+        completion = client.chat.completions.create(model="model", messages=[{"role": "user", "content": "Check."}])
+        return {"reply": completion.choices[0].message.content}
+
+    runner["_execute_workflow_dispatch"] = dispatch
+    run_id, record = run_once(workflow, services)
+    control = make_store(workflow, run_id).read()
+    if status in (429, 503):
+        assert len(calls) == 3
+        assert record["status"] == control["state"] == "completed"
+    else:
+        assert len(calls) == 1
+        assert record["status"] == control["state"] == "failed"
+        assert record["error_code"] == "model_provider_request_failed"
+        assert record["provider_status"] == status
+        assert record["provider_error_type"] == error_type.__name__
+        assert record["effect_certainty"] == "none"
+    assert "PRIVATE" not in str(record)
+    assert "PRIVATE" not in str(control.get("gate"))
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_later_native_rejection_does_not_erase_prior_tool_effects(integration, monkeypatch, structured):
+    workflow, runner, services, make_store = prepare(integration, monkeypatch, structured=structured, retries=3)
+    effects = []
+
+    def provider(**kwargs):
+        raise NotFoundError(
+            "PRIVATE", response=httpx.Response(404, request=httpx.Request("POST", "https://offline.invalid")),
+            body={"error": {"message": "PRIVATE"}},
+        )
+
+    def dispatch(*args, **kwargs):
+        effects.append("tool-effect")
+        client = WorkflowModelClient(
+            SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=provider))), MODEL, "aoai",
+        )
+        client.chat.completions.create(model="model", messages=[
+            {"role": "user", "content": "Use the required tool."},
+            {"role": "assistant", "tool_calls": [{"id": "call", "type": "function", "function": {"name": "effect", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "call", "content": "Committed external effect."},
+        ])
+
+    runner["_execute_workflow_dispatch"] = dispatch
+    run_id, record = run_once(workflow, services)
+    control = make_store(workflow, run_id).read()
+    assert effects == ["tool-effect"]
+    assert record["status"] == control["state"] == "waiting_recovery"
+    assert control["gate"]["effect_certainty"] == "possible"
+    assert control["gate"]["provider_status"] == 404
+    assert control["gate"]["error_code"] == "model_provider_request_failed"
+    assert "PRIVATE" not in str(control["gate"])
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_native_rejection_cannot_erase_an_earlier_journaled_effect_without_tool_history(
+    integration, monkeypatch, structured,
+):
+    workflow, runner, services, make_store = prepare(integration, monkeypatch, structured=structured, retries=3)
+    effects, requests = [], []
+
+    def provider(**kwargs):
+        requests.append("request")
+        raise NotFoundError(
+            "PRIVATE", response=httpx.Response(404, request=httpx.Request("POST", "https://offline.invalid")),
+            body={"error": {"message": "PRIVATE"}},
+        )
+
+    def dispatch(*args, **kwargs):
+        workflow_unit("external-effect", lambda: effects.append("committed"), inputs={}, replay_safe=False)
+        client = WorkflowModelClient(
+            SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=provider))), MODEL, "aoai",
+        )
+        client.chat.completions.create(model="model", messages=[{"role": "user", "content": "Finish the operation."}])
+
+    runner["_execute_workflow_dispatch"] = dispatch
+    run_id, record = run_once(workflow, services)
+    control = make_store(workflow, run_id).read()
+    assert record["status"] == control["state"] == "waiting_recovery"
+    assert control["gate"]["effect_certainty"] == "possible"
+    assert control["gate"]["provider_status"] == 404
+    runtime.continue_durable_workflow_run(workflow, run_id)
+    assert effects == ["committed"] and requests == ["request"]
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_real_transport_failure_keeps_unknown_status_and_effect_certainty(integration, monkeypatch, structured):
+    workflow, runner, services, make_store = prepare(integration, monkeypatch, structured=structured, retries=2)
+    calls = []
+
+    def provider(**kwargs):
+        calls.append(True)
+        raise httpx.ReadTimeout("PRIVATE", request=httpx.Request("POST", "https://offline.invalid"))
+
+    def dispatch(*args, **kwargs):
+        client = WorkflowModelClient(
+            SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=provider))), MODEL, "aoai",
+        )
+        client.chat.completions.create(model="model", messages=[{"role": "user", "content": "Answer."}])
+
+    runner["_execute_workflow_dispatch"] = dispatch
+    run_id, record = run_once(workflow, services)
+    control = make_store(workflow, run_id).read()
+    assert calls == [True]
+    assert record["status"] == control["state"] == "waiting_recovery"
+    assert control["gate"]["request_outcome"] == "unconfirmed"
+    assert control["gate"]["provider_error_type"] == "ReadTimeout"
+    assert control["gate"]["effect_certainty"] == "possible"
+    assert "provider_status" not in control["gate"]
+    assert "PRIVATE" not in str(control["gate"])
+
+
+def test_programming_defects_are_not_normalized_as_provider_failures():
+    def provider(**kwargs):
+        raise TypeError("Programming defect")
+
+    client = WorkflowModelClient(
+        SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=provider))), MODEL, "aoai",
+    )
+    with workflow_context_budget_scope({}), pytest.raises(TypeError) as failure:
+        client.chat.completions.create(model="model", messages=[{"role": "user", "content": "Answer."}])
+    assert workflow_policy_failure(failure.value) is None
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_provider_failure_without_a_definitive_status_stays_recoverable(
+    integration, monkeypatch, structured,
+):
+    workflow, runner, services, make_store = prepare(
+        integration, monkeypatch, structured=structured,
+    )
+
+    def uncertain(*args, **kwargs):
+        raise SanitizedModelEndpointError(
+            "Custom model stream failed. (reference def67890)",
+            correlation_reference="def67890",
+            api_type="anthropic",
+            protocol="messages",
+        )
+
+    runner["_execute_workflow_dispatch"] = uncertain
+    run_id, record = run_once(workflow, services)
+    control = make_store(workflow, run_id).read()
+
+    assert record["status"] == control["state"] == "waiting_recovery"
+    assert control["gate"]["choices"] == ["retry", "cancel"]
+    if structured:
+        execution_rows = [
+            row["payload"] for row in make_store(workflow, run_id).container.items.values()
+            if row.get("record_kind") == "execution" and row.get("run_id") == run_id
+        ]
+        assert execution_rows[-1]["correlation_reference"] == "def67890"
+        assert execution_rows[-1]["effect_certainty"] == "possible"
+    else:
+        assert control["units"]["task:check"]["correlation_reference"] == "def67890"
+        assert control["units"]["task:check"]["effect_certainty"] == "possible"
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("status_code", [429, 503])
+def test_transient_provider_rejection_retries_then_completes(
+    integration, monkeypatch, structured, status_code,
+):
+    workflow, runner, services, _make_store = prepare(
+        integration, monkeypatch, structured=structured, retries=2,
+    )
+    attempts = 0
+
+    def transient(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise SanitizedModelEndpointError(
+                f"Custom model request failed. (reference retry{attempts})",
+                correlation_reference=f"retry{attempts}",
+                status_code=status_code,
+            )
+        return {"reply": "Recovered provider response."}
+
+    runner["_execute_workflow_dispatch"] = transient
+    _run_id, record = run_once(workflow, services)
+
+    assert attempts == 3
+    assert record["status"] == "completed"
+    assert not record.get("error_code")
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 404, 429, 502])
+def test_genai_mil_failure_classifies_terminal_only_for_definitive_rejections(status_code):
+    failure = workflow_policy_failure(
+        GenAIMilRequestError(status_code, reference="genai-ref"),
+    )
+
+    assert failure["correlation_reference"] == "genai-ref"
+    assert failure["terminal_failure"] is (status_code in {401, 403, 404})
+
+
+@pytest.mark.parametrize("structured", [False, True])
 def test_continue_policy_runs_independent_task_without_retry(integration, monkeypatch, structured):
     workflow, runner, services, make_store = prepare(integration, monkeypatch, structured=structured, strategy="continue", retries=3)
     workflow["tasks"].append({**copy.deepcopy(workflow["tasks"][0]), "id": "next", "name": "Independent task"})
@@ -300,7 +561,7 @@ def test_crash_after_failure_checkpoint_does_not_replay_agent(integration, monke
 
 
 @pytest.mark.parametrize("structured", [False, True])
-def test_real_semantic_kernel_tool_round_failure_is_terminal_without_replay(integration, monkeypatch, structured):
+def test_real_semantic_kernel_tool_round_failure_preserves_effect_uncertainty_without_replay(integration, monkeypatch, structured):
     workflow, runner, services, make_store = prepare(integration, monkeypatch, structured=structured, retries=3)
     original = ToolCallingCompletion(ai_model_id="fixture-model", service_id="model", api_key="test-only")
     effects = []
@@ -324,11 +585,12 @@ def test_real_semantic_kernel_tool_round_failure_is_terminal_without_replay(inte
 
     runner["_execute_workflow_dispatch"] = dispatch
     run_id, record = run_once(workflow, services)
-    assert record["status"] == "failed", record.get("error")
-    assert record["error_code"] == "workflow_context_budget_exceeded"
+    assert record["status"] == "waiting_recovery", record.get("error")
     assert effects == ["read"] and original.request_count == 1
     control = make_store(workflow, run_id).read()
-    assert control["state"] == "failed"
+    assert control["state"] == "waiting_recovery"
+    assert control["gate"]["effect_certainty"] == "possible"
+    assert control["gate"]["error_code"] == "workflow_context_budget_exceeded"
 
 
 @pytest.mark.parametrize("structured", [False, True])

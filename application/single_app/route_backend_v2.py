@@ -48,6 +48,7 @@ from admin_settings_fields import (
     write_nested_setting,
 )
 from admin_settings_nav import ADMIN_NAV
+from app_settings_store import SettingsConflictError
 from content_screening.contracts import ScreeningError
 from functions_mcp_server_config import is_mcp_ui_enabled
 from functions_mcp_destinations import describe_mcp_destination_environment_policy
@@ -116,6 +117,7 @@ from functions_ai_connections import (
     IMAGE_MIGRATION_VERSION,
     IMAGE_MIGRATION_VERSION_KEY,
     IMAGE_SELECTION_KEY,
+    ModelBinding,
     build_capability_model_catalog,
     embedding_settings_use_connections,
     filter_model_endpoints_by_capability,
@@ -132,7 +134,7 @@ from functions_embedding_compatibility import (
     preflight_embedding_settings,
     read_embedding_settings,
 )
-from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
+from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, embedding_transport, resolve_embedding_profile
 from functions_public_workspaces import (
     find_public_workspace_by_id,
     get_public_source_workspace_ids,
@@ -229,6 +231,7 @@ from functions_model_capabilities import resolve_model_vision_support
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
+    validate_custom_model_endpoint_url,
     validate_custom_model_endpoint,
     validate_custom_model_endpoints,
 )
@@ -1634,7 +1637,9 @@ def _model_endpoint_response(saved_endpoints, endpoint_id, status):
     return jsonify({"endpoint": sanitized[0] if sanitized else {}}), status
 
 
-def _persist_global_model_endpoints(endpoints, existing, *, updated_endpoint_id=None):
+def _persist_global_model_endpoints(
+    endpoints, existing, *, updated_endpoint_id=None, expected_etag=None
+):
     """Save the global endpoint list, moving Key Vault secrets to match.
 
     Only the requested create/update is normalized by its caller, validated here,
@@ -1652,6 +1657,19 @@ def _persist_global_model_endpoints(endpoints, existing, *, updated_endpoint_id=
         if isinstance(endpoint, dict) and endpoint.get("id") == updated_endpoint_id
     ] if updated_endpoint_id is not None else []
     validate_custom_model_endpoints(changed, settings)
+    for endpoint in changed:
+        for model in endpoint.get("models", []):
+            if "embedding_operation" not in model:
+                continue
+            binding = ModelBinding(EMBEDDINGS_CAPABILITY, {}, endpoint, model)
+            _, base_url, _, _ = embedding_transport(binding)
+            if endpoint.get("provider") in ("custom", "openai_compatible"):
+                validate_custom_model_endpoint_url(
+                    base_url,
+                    allow_private=settings.get("allow_private_custom_model_endpoints") is True,
+                    allow_insecure=settings.get("allow_insecure_custom_model_endpoints") is True,
+                    require_resolvable=False,
+                )
     existing_by_id = {
         endpoint.get("id"): endpoint
         for endpoint in existing
@@ -1733,8 +1751,59 @@ def _persist_global_model_endpoints(endpoints, existing, *, updated_endpoint_id=
             )
             updates["ai_connection_default_notices"] = notices
 
-    # Obsolete credentials remain usable until their dependent settings commit.
-    if not update_settings(updates):
+    # Obsolete credentials remain usable until their dependent settings commit. A
+    # staged replacement is disposable when the optimistic-concurrency check fails.
+    try:
+        revision = expected_etag or settings.get("_etag")
+        saved = (
+            update_settings(updates, expected_etag=revision)
+            if revision else update_settings(updates)
+        )
+    except Exception:
+        for endpoint in saved_endpoints:
+            if (
+                isinstance(endpoint, dict)
+                and endpoint.get("id") == updated_endpoint_id
+            ):
+                try:
+                    keyvault_model_endpoint_cleanup_helper(
+                        endpoint,
+                        existing_by_id.get(updated_endpoint_id),
+                        updated_endpoint_id,
+                        scope="global",
+                    )
+                except Exception as cleanup_error:
+                    log_event(
+                        "[V2_ADMIN_ENDPOINTS] Failed to discard a staged credential.",
+                        extra={
+                            "endpoint_id": updated_endpoint_id,
+                            "error_type": type(cleanup_error).__name__,
+                        },
+                        level=logging.WARNING,
+                    )
+        raise
+    if not saved:
+        for endpoint in saved_endpoints:
+            if (
+                isinstance(endpoint, dict)
+                and endpoint.get("id") == updated_endpoint_id
+            ):
+                try:
+                    keyvault_model_endpoint_cleanup_helper(
+                        endpoint,
+                        existing_by_id.get(updated_endpoint_id),
+                        updated_endpoint_id,
+                        scope="global",
+                    )
+                except Exception as cleanup_error:
+                    log_event(
+                        "[V2_ADMIN_ENDPOINTS] Failed to discard a staged credential.",
+                        extra={
+                            "endpoint_id": updated_endpoint_id,
+                            "error_type": type(cleanup_error).__name__,
+                        },
+                        level=logging.WARNING,
+                    )
         raise RuntimeError("The settings document could not be updated.")
 
     saved_endpoint_ids = {
@@ -1758,7 +1827,7 @@ def _persist_global_model_endpoints(endpoints, existing, *, updated_endpoint_id=
     return saved_endpoints
 
 
-def _persist_v2_admin_settings(updates, current_settings):
+def _persist_v2_admin_settings(updates, current_settings, *, expected_etag=None):
     """Stage Web IQ credentials once, before the retried settings write."""
     relevant = {
         "web_iq", "web_search_provider", "enable_key_vault_secret_storage",
@@ -1766,7 +1835,10 @@ def _persist_v2_admin_settings(updates, current_settings):
     }
     merged = {**current_settings, **updates}
     if not relevant.intersection(updates) or merged.get("enable_key_vault_secret_storage") is not True:
-        return update_settings(updates)
+        return (
+            update_settings(updates, expected_etag=expected_etag)
+            if expected_etag else update_settings(updates)
+        )
 
     connection = copy.deepcopy(merged.get("web_iq") or {})
     previous = current_settings.get("web_iq") or {}
@@ -1832,7 +1904,10 @@ def _persist_v2_admin_settings(updates, current_settings):
 
     if connection or "web_iq" in updates:
         updates["web_iq"] = connection
-    saved = update_settings(updates)
+    saved = (
+        update_settings(updates, expected_etag=expected_etag)
+        if expected_etag else update_settings(updates)
+    )
     if saved:
         current_auth = {field: connection.get(name, "") for name, (field, _) in credentials.items()}
         cleanup(previous_auth, current_auth)
@@ -2365,6 +2440,7 @@ def register_route_backend_v2_admin(bp):
                 jsonify(
                     {
                         "settings": _redact_admin_settings_for_v2(settings),
+                        "settings_revision": settings.get("_etag") or "",
                         "admin_nav": ADMIN_NAV,
                         "field_schema": field_schema,
                         "section_status": get_admin_section_status(),
@@ -2493,6 +2569,15 @@ def register_route_backend_v2_admin(bp):
 
         if not isinstance(updates, dict) or not updates:
             return jsonify({"error": "No settings supplied"}), 400
+        expected_etag = None
+        if "model_endpoints" in updates:
+            revision = payload.get("revision")
+            if not isinstance(revision, str) or not revision.strip():
+                return jsonify({
+                    "error": "A catalog revision is required for a whole-list endpoint save.",
+                    "error_code": "revision_required",
+                }), 400
+            expected_etag = revision
 
         # These values are not scalar form fields. Only the validated capability API
         # and the server-side compatibility guard may change them.
@@ -2580,7 +2665,9 @@ def register_route_backend_v2_admin(bp):
             _seed_connections_on_first_enable(normalized, current_settings)
 
             validate_content_screening_settings(normalized, current_settings)
-            if not _persist_v2_admin_settings(normalized, current_settings):
+            if not _persist_v2_admin_settings(
+                normalized, current_settings, expected_etag=expected_etag
+            ):
                 log_event(
                     "[V2_ADMIN_SETTINGS] Settings persistence did not succeed.",
                     extra={"updated_keys": sorted(normalized.keys())},
@@ -2661,6 +2748,11 @@ def register_route_backend_v2_admin(bp):
             }), exc.status_code
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
+        except SettingsConflictError:
+            return jsonify({
+                "error": "The model endpoint catalog changed. Reload and try again.",
+                "error_code": "settings_conflict",
+            }), 409
         except Exception as exc:
             log_event(
                 "[V2_ADMIN_SETTINGS] Failed to update settings.",
@@ -2890,12 +2982,13 @@ def register_route_backend_v2_admin(bp):
                         "migration": settings.get(MIGRATION_NOTICE_KEY),
                         "embedding_migration": settings.get(EMBEDDING_MIGRATION_NOTICE_KEY),
                         "default_notices": settings.get("ai_connection_default_notices", {}),
-                        "custom_api_types": get_model_endpoint_provider_ui_options(),
+                        "custom_api_types": get_model_endpoint_provider_ui_options(routing_schema_version=2),
                         "custom_network_policy": {
                             "allow_private_custom_model_endpoints": settings.get("allow_private_custom_model_endpoints") is True,
                             "allow_insecure_custom_model_endpoints": settings.get("allow_insecure_custom_model_endpoints") is True,
                             "custom_model_endpoint_ca_bundle_path": settings.get("custom_model_endpoint_ca_bundle_path") or "",
                         },
+                        "revision": settings.get("_etag") or "",
                     }
                 ),
                 200,
@@ -2921,7 +3014,8 @@ def register_route_backend_v2_admin(bp):
             return jsonify({"error": "Model endpoint payload must be an object."}), 400
 
         try:
-            existing = _load_global_model_endpoints()
+            settings_snapshot = get_settings()
+            existing = _load_global_model_endpoints(settings_snapshot)
             candidate = dict(payload)
 
             endpoint_id = str(candidate.get("id") or "").strip()
@@ -2936,7 +3030,10 @@ def register_route_backend_v2_admin(bp):
 
             normalized, _ = normalize_model_endpoints([candidate])
             saved = _persist_global_model_endpoints(
-                list(existing) + normalized, existing, updated_endpoint_id=endpoint_id
+                list(existing) + normalized,
+                existing,
+                updated_endpoint_id=endpoint_id,
+                expected_etag=settings_snapshot.get("_etag"),
             )
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Created model endpoint {endpoint_id}",
@@ -2945,6 +3042,11 @@ def register_route_backend_v2_admin(bp):
             return _model_endpoint_response(saved, endpoint_id, 201)
         except KeyVaultSecretStorageError as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 500
+        except SettingsConflictError:
+            return jsonify({
+                "error": "The model endpoint catalog changed. Reload and try again.",
+                "error_code": "settings_conflict",
+            }), 409
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
         except ModelEndpointValidationError as exc:
@@ -2996,7 +3098,8 @@ def register_route_backend_v2_admin(bp):
             return jsonify({"error": "Model endpoint payload must be an object."}), 400
 
         try:
-            existing = _load_global_model_endpoints()
+            settings_snapshot = get_settings()
+            existing = _load_global_model_endpoints(settings_snapshot)
             current = _find_model_endpoint(existing, endpoint_id)
             if not current:
                 return jsonify({"error": "Model endpoint not found."}), 404
@@ -3014,7 +3117,10 @@ def register_route_backend_v2_admin(bp):
             ]
 
             saved = _persist_global_model_endpoints(
-                replaced, existing, updated_endpoint_id=current.get("id")
+                replaced,
+                existing,
+                updated_endpoint_id=current.get("id"),
+                expected_etag=settings_snapshot.get("_etag"),
             )
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Updated model endpoint {endpoint_id}",
@@ -3023,6 +3129,11 @@ def register_route_backend_v2_admin(bp):
             return _model_endpoint_response(saved, current.get("id"), 200)
         except KeyVaultSecretStorageError as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 500
+        except SettingsConflictError:
+            return jsonify({
+                "error": "The model endpoint catalog changed. Reload and try again.",
+                "error_code": "settings_conflict",
+            }), 409
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
         except ModelEndpointValidationError as exc:
@@ -3046,7 +3157,8 @@ def register_route_backend_v2_admin(bp):
         stale copy in one browser tab cannot drop endpoints it never knew about.
         """
         try:
-            existing = _load_global_model_endpoints()
+            settings_snapshot = get_settings()
+            existing = _load_global_model_endpoints(settings_snapshot)
             if not _find_model_endpoint(existing, endpoint_id):
                 return jsonify({"error": "Model endpoint not found."}), 404
 
@@ -3059,7 +3171,11 @@ def register_route_backend_v2_admin(bp):
                 )
             ]
 
-            _persist_global_model_endpoints(remaining, existing)
+            _persist_global_model_endpoints(
+                remaining,
+                existing,
+                expected_etag=settings_snapshot.get("_etag"),
+            )
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Deleted model endpoint {endpoint_id}",
                 level=logging.INFO,
@@ -3067,6 +3183,11 @@ def register_route_backend_v2_admin(bp):
             return jsonify({"success": True}), 200
         except KeyVaultSecretStorageError as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 500
+        except SettingsConflictError:
+            return jsonify({
+                "error": "The model endpoint catalog changed. Reload and try again.",
+                "error_code": "settings_conflict",
+            }), 409
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)
         except ModelEndpointValidationError as exc:
@@ -3178,6 +3299,10 @@ def register_route_backend_v2_admin(bp):
                     continue
                 compatible_choices.append({
                     **choice,
+                    **({"embedding_request_url": (
+                        f"{profile.base_url}embeddings"
+                        + (f"?api-version={profile.api_version}" if profile.api == "azure_openai" else "")
+                    )} if selection == reference else {}),
                     "embedding_policy": {
                         key: profile.policy[key]
                         for key in choice.get("embedding_policy", {})

@@ -1,7 +1,7 @@
 # test_cosmos_contract_runner.py
 """Functional tests for portable, isolated Cosmos contract subprocess execution.
 
-Version: 0.261.402
+Version: 0.261.430
 Implemented in: 0.261.399
 
 The full selection must survive Windows command limits without changing node
@@ -9,10 +9,13 @@ IDs, child exit codes, or network blocking before collection.
 """
 
 import importlib.util
+import ast
+import hashlib
 import os
 from pathlib import Path
 import subprocess
 import sys
+import warnings
 from types import SimpleNamespace
 
 import pytest
@@ -24,6 +27,26 @@ SPEC = importlib.util.spec_from_file_location(
 )
 checker = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(checker)
+
+
+def test_inventory_digest_preserves_reviewed_empty_ast_fields():
+    """Python 3.13's dump default must not invalidate unchanged 3.12 reviews."""
+    node = ast.parse("def example():\n    return None\n").body[0]
+    options = {"include_attributes": False}
+    if sys.version_info >= (3, 13):
+        options["show_empty"] = True
+    expected = hashlib.sha256(ast.dump(node, **options).encode("utf-8")).hexdigest()
+    assert checker._digest(node) == expected
+
+
+def test_inventory_digest_emits_no_constructor_deprecation_warnings():
+    """The touched digest path must stay quiet without suppressing app warnings."""
+    tree = ast.parse("def example(value=None):\n    return {'value': value}\n")
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always", DeprecationWarning)
+        checker._digest(tree)
+        checker._digest(ast.Module(body=tree.body, type_ignores=[]))
+    assert not [item for item in captured if issubclass(item.category, DeprecationWarning)]
 
 
 @pytest.fixture

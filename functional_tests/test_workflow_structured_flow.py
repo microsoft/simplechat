@@ -1,12 +1,14 @@
 # test_workflow_structured_flow.py
 """
 Isolated regression coverage for the structured v3 compiler, exact results and journal.
-Version: 0.261.231
+Version: 0.261.430
 Implemented in: 0.261.116
 Results stopped re-checking their sources in: 0.261.231
 
 Uses production compiler, controller, flow traversal, result transport and readers
-with JSON-copying transactional Cosmos fakes. No model, Azure or workflow is invoked.
+with installed-SDK point defaults and plain transactional/query bodies. The
+dispatcher fixture supplies its existing explicit completeness-off setting;
+real default-on verification has separate real-module coverage. No live model or Azure call occurs.
 """
 
 import copy
@@ -367,7 +369,7 @@ def test_production_task_sequence_reuses_dispatcher_and_exact_results(runtime):
         execution = StructuredWorkflowExecution(store, lease, workflow, "run")
         with workflow_execution_scope(execution):
             result = runner["_execute_workflow_task_sequence"](
-                workflow, {}, "conversation", "run", None, {}, actor_user_id="owner",
+                workflow, runner["get_settings"](), "conversation", "run", None, {}, actor_user_id="owner",
             )
     assert len(requests) == 3
     assert result["workflow_outcome"] == {"status": "completed", "success": True}

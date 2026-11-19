@@ -6,7 +6,7 @@ menubar: docs_menu
 accent: teal
 eyebrow: "Admin How-To"
 description: "Assign managed identity or service principal access for Azure OpenAI, Foundry (classic), and New Foundry model endpoints in the multi-endpoint modal."
-version: "0.261.035"
+version: "0.261.046"
 keywords:
   - model endpoints
   - multi endpoint
@@ -38,8 +38,19 @@ redirect_from:
 
 Use this guide when admins need to configure the shared **Model Endpoint** modal for Azure OpenAI, Foundry (classic), or New Foundry without depending on legacy single-endpoint settings.
 
-Documented for version **0.261.035**. Model capacity overrides implemented in
+Documented for version **0.261.046**. Model capacity overrides implemented in
 version: **0.261.035**, tracked by `application/single_app/config.py`.
+
+Per-model editors were added in **0.261.042**; schema-v2 model tests and local
+runtime dispatch were added in **0.261.044**. **Test Connection** sends a real
+request using the saved endpoint and model route after scope/governance checks;
+unsaved route edits are rejected. New schema-v2 endpoints start disabled. In
+**0.261.046**, test a saved nonproduction endpoint, then explicitly enable it
+through the endpoint list. Global changes also require the main settings save.
+Signed-in beta testing is still required to establish live provider acceptance. For configuration,
+preview, and test behavior, see the
+[per-model routing workflow]({{ '/admin/ai-models/#multi-endpoint-configuration' | relative_url }}).
+Existing schema-v1 endpoints retain their legacy inference behavior.
 
 The multi-endpoint UI also includes a **Setup Guide** button beside endpoint actions and inside the Model Endpoint modal. Use that in-product guidance for quick RBAC reminders, and use this page when you need the full setup sequence.
 
@@ -214,8 +225,9 @@ the real local editor assets.
 ### Embedding inference
 
 Implemented in version **0.261.106**, shared embedding connections use a separate
-operation contract from chat. A Foundry project endpoint cannot route embeddings;
-configure the embedding inference base for that connection explicitly, usually
+operation contract from chat. Since **0.261.436**, that route is edited under
+**Embedding routing** on the model in AI Connections. A Foundry project
+endpoint cannot route embeddings; configure the model's inference base, usually
 the resource URL ending in `/openai/v1/`. Grant inference permissions on that
 resource as well as project/management read permissions for discovery.
 

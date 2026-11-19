@@ -2,8 +2,17 @@
 """
 Azure Playwright-ready endpoint/model capacity editor workflows.
 
-Version: 0.261.126
-Implemented in: 0.261.035
+Version: 0.261.435
+Implemented in: 0.261.431; saved per-model Responses path order fixed in 0.261.432
+Single-save routing rejection and error recovery verified in: 0.261.435
+
+Per-model routing round trips added in: 0.261.042
+Live schema-v2 model test coverage added in: 0.261.044
+Explicit activation/deactivation coverage added in: 0.261.046
+Editor usability and effective model-limit coverage added in: 0.261.052
+Endpoint API-key controls and request-path labels added in: 0.261.054
+Informative APIM header guidance updated in: 0.261.055
+Shared custom-authentication controls restored in: 0.261.057
 
 Exercises the real shared modal, local Bootstrap/assets, and admin/personal/group
 editors with same-origin API fixtures. Uses the existing AZURE_PLAYWRIGHT_*
@@ -17,6 +26,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import sys
 import re
 from urllib.parse import unquote, urlsplit
 
@@ -29,9 +39,13 @@ from playwright.sync_api import expect
 from application.single_app.functions_model_endpoint_providers import (
     get_model_endpoint_provider_ui_options,
 )
-
-
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
+sys.path.insert(0, str(APP_ROOT))
+
+from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route
+from functions_model_capabilities import get_model_endpoint_library_options, preview_model_token_limits
+
+
 ORIGIN = "http://simplechat.test"
 BUDGET_KEYS = (
     "contextWindow", "inputTokenLimit", "outputTokenLimit", "catalogModelId",
@@ -105,6 +119,8 @@ class EndpointApiFixture:
         self.saved_payloads = []
         self.discovered_models = []
         self.fetch_payloads = []
+        self.preview_payloads = []
+        self.test_payloads = []
         self.operation_tests = []
         self.page_errors = []
         self.console_errors = []
@@ -112,36 +128,178 @@ class EndpointApiFixture:
         self.unhandled_api_requests = []
         self.fail_save = False
         self.expected_save_error = False
+        self.expected_preview_error = False
+        self.defer_preview = False
+        self.deferred_previews = []
+        self.ca_bundles = []
+        self.group_id = "group-one"
+
+    def public_endpoints(self):
+        projected = copy.deepcopy(self.endpoints)
+        for endpoint in projected:
+            auth = endpoint.setdefault("auth", {})
+            auth.pop("api_key", None)
+            auth.pop("client_secret", None)
+            auth.pop("bearer_token", None)
+            if self.scope == "group":
+                endpoint["revision"] = f"revision-{endpoint.get('id')}"
+        return projected
+
+    def save_endpoint_request(self, route, endpoint_id, body):
+        if self.fail_save:
+            self.expected_save_error = True
+            route.fulfill(
+                status=400,
+                content_type="application/json",
+                body=json.dumps({
+                    "error": "contextWindow must be a positive whole number of tokens.",
+                    "error_code": "model_context_invalid",
+                }),
+            )
+            return
+
+        if "endpoints" in body and isinstance(body["endpoints"], list):
+            self.endpoints = copy.deepcopy(body["endpoints"])
+            self.saved_payloads.append({
+                **copy.deepcopy(body),
+                "endpoints": self.public_endpoints(),
+            })
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps({"success": True, "endpoints": self.public_endpoints()}),
+            )
+            return
+
+        existing = next((endpoint for endpoint in self.endpoints if endpoint.get("id") == endpoint_id), {})
+        saved = copy.deepcopy({**existing, **body})
+        saved.pop("expected_revision", None)
+        saved.pop("revision", None)
+        try:
+            normalize_model_endpoint_routing(saved)
+        except ValueError:
+            self.expected_save_error = True
+            route.fulfill(status=400, json={
+                "error": "Invalid model routing. Check API Type, API Path, URL Handling, model identifier, and version.",
+                "code": "invalid_custom_endpoint",
+            })
+            return
+        if endpoint_id:
+            self.endpoints = [saved if endpoint.get("id") == endpoint_id else endpoint for endpoint in self.endpoints]
+        else:
+            self.endpoints = [endpoint for endpoint in self.endpoints if endpoint.get("id") != saved.get("id")] + [saved]
+        self.saved_payloads.append({
+            "endpoint": copy.deepcopy(body),
+            "endpoints": self.public_endpoints(),
+        })
+        public_endpoint = next(
+            endpoint for endpoint in self.public_endpoints()
+            if endpoint.get("id") == saved.get("id")
+        )
+        route.fulfill(
+            status=200 if endpoint_id else 201,
+            content_type="application/json",
+            body=json.dumps({"endpoint": public_endpoint}),
+        )
 
     def handle_api(self, route, path):
         prefix = "/api" if self.scope == "admin" else f"/api/{self.scope}"
         body = route.request.post_data_json or {}
-        if path == "/api/models/catalog":
+        admin_collection = "/api/v2/admin/model-endpoints"
+        group_collection = f"/api/groups/{self.group_id}/model-endpoints"
+        collection_paths = {
+            "admin": admin_collection,
+            "user": "/api/user/model-endpoints",
+            "group": group_collection,
+        }
+        collection_path = collection_paths[self.scope]
+        endpoint_id = None
+        if path.startswith(collection_path + "/"):
+            endpoint_id = unquote(path[len(collection_path) + 1:])
+        if path in (collection_path,):
+            if route.request.method == "GET":
+                payload = {
+                    "endpoints": self.public_endpoints(),
+                    "revision": f"catalog-{self.scope}",
+                    "group_id": self.group_id,
+                    "custom_api_types": get_model_endpoint_provider_ui_options(),
+                }
+                route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps(payload),
+                )
+            else:
+                self.save_endpoint_request(route, None, body)
+            return
+        if endpoint_id is not None:
+            if route.request.method == "DELETE":
+                self.endpoints = [
+                    endpoint for endpoint in self.endpoints
+                    if endpoint.get("id") != endpoint_id
+                ]
+                route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps({"success": True}),
+                )
+            else:
+                self.save_endpoint_request(route, endpoint_id, body)
+            return
+        if path == f"{prefix}/models/ca-bundle-options":
+            payload = {"bundles": self.ca_bundles}
+        elif path == "/api/models/catalog":
             payload = {"profiles": [
                 {"id": "gpt-5", "displayName": "GPT-5", "summary": "Coding and reasoning."},
                 {"id": "custom:internal", "displayName": "Internal", "summary": "Administrator-declared text model."},
             ]}
         elif path == f"{prefix}/model-endpoints":
             if route.request.method == "POST":
-                self.saved_payloads.append(copy.deepcopy(body))
-                if self.fail_save:
-                    self.expected_save_error = True
-                    route.fulfill(
-                        status=400, content_type="application/json",
-                        body=json.dumps({
-                            "error": "contextWindow must be a positive whole number of tokens.",
-                            "error_code": "model_context_invalid",
-                        }),
-                    )
-                    return
-                self.endpoints = copy.deepcopy(body["endpoints"])
-                for endpoint in self.endpoints:
-                    endpoint["auth"].pop("api_key", None)
-                    endpoint["auth"].pop("client_secret", None)
-            payload = {"success": True, "endpoints": self.endpoints}
+                self.save_endpoint_request(route, None, body)
+                return
+            payload = {
+                "success": True,
+                "endpoints": self.public_endpoints(),
+                "revision": f"catalog-{self.scope}",
+                "group_id": self.group_id,
+            }
         elif path == f"{prefix}/models/fetch":
             self.fetch_payloads.append(copy.deepcopy(body))
             payload = {"models": self.discovered_models}
+        elif path == f"{prefix}/models/test-model":
+            if body.get("preview_only") is True:
+                self.preview_payloads.append(copy.deepcopy(body))
+                try:
+                    resolved = resolve_model_endpoint_route({**body, "id": body.get("id") or "preview"}, body["model"])
+                except ValueError:
+                    self.expected_preview_error = True
+                    route.fulfill(status=400, content_type="application/json", body=json.dumps({"error": "Invalid model routing."}))
+                    return
+                payload = {
+                    "preview_only": True,
+                    "resolved": {"method": "POST", **resolved},
+                    "budget": preview_model_token_limits(body["model"], body, resolved["protocol"]),
+                }
+                if self.defer_preview:
+                    self.deferred_previews.append((route, payload))
+                    return
+            else:
+                self.test_payloads.append(copy.deepcopy(body))
+                endpoint_id = str(body.get("id") or body.get("endpoint_id") or "")
+                saved_endpoint = next((item for item in self.endpoints if item.get("id") == endpoint_id), None)
+                requested_model = body.get("model") if isinstance(body.get("model"), dict) else {}
+                saved_model = next((item for item in (saved_endpoint or {}).get("models", []) if item.get("id") == requested_model.get("id")), None)
+                if not saved_endpoint or not saved_model:
+                    route.fulfill(status=404, content_type="application/json", body=json.dumps({"error": "Saved endpoint or model not found."}))
+                    return
+                if body.get("connection", {}).get("endpoint") != saved_endpoint.get("connection", {}).get("endpoint"):
+                    route.fulfill(status=409, content_type="application/json", body=json.dumps({"error": "Save endpoint changes before testing."}))
+                    return
+                if any(
+                    field in requested_model and requested_model.get(field) != saved_model.get(field)
+                    for field in ("api_type", "api_path", "url_mode", "modelName", "deploymentName", "api_version", "anthropic_version")
+                ):
+                    route.fulfill(status=409, content_type="application/json", body=json.dumps({"error": "Save model changes before testing."}))
+                    return
+                resolved = resolve_model_endpoint_route(saved_endpoint, saved_model)
+                payload = {"success": True, "resolved": {"request_url": resolved["operation_url"]}}
         elif self.scope == "admin" and path == "/api/models/vision-capability":
             payload = {"models": {
                 model["deploymentName"]: {"supports_vision": False, "source": "heuristic"}
@@ -168,11 +326,13 @@ def capacity_ui(request, capacity_browser):
     )
     modal = environment.get_template("_multiendpoint_modal.html").render(
         model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
+        model_endpoint_routing_api_types=get_model_endpoint_provider_ui_options(routing_schema_version=2),
+        model_endpoint_library=get_model_endpoint_library_options(),
     )
     connection_templates = ""
     if options.get("connection_templates"):
         source = (APP_ROOT / "templates" / "admin" / "_panes" / "model-endpoints.html").read_text(encoding="utf-8")
-        for template_id in ("model-endpoint-embedding-template", "custom-model-endpoint-fields-template"):
+        for template_id in ("custom-model-endpoint-fields-template",):
             match = re.search(rf'<template id="{template_id}">.*?</template>', source, re.DOTALL)
             assert match is not None, f"The actual admin template {template_id} must exist."
             connection_templates += environment.from_string(match.group()).render()
@@ -242,6 +402,7 @@ def capacity_ui(request, capacity_browser):
                 api.expected_save_error
                 and ("Error saving endpoint" in error or "status of 400" in error)
             )
+            and not (api.expected_preview_error and "status of 400" in error)
         ]
         assert not unexpected_errors, (unexpected_errors, api.unhandled_api_requests)
 
@@ -249,6 +410,7 @@ def capacity_ui(request, capacity_browser):
 def _open_editor(page, api):
     page.add_init_script(
         f"window.modelEndpoints = {json.dumps(api.endpoints)};"
+        f"window.workspaceModelEndpoints = {json.dumps(api.endpoints)};"
         f"window.modelEndpointScope = {json.dumps(api.scope)};"
         "window.enableMultiModelEndpoints = true;"
     )
@@ -271,27 +433,580 @@ def _edit_saved_endpoint(page):
 
 def _expand(editor):
     if editor.get_attribute("open") is None:
-        editor.locator("summary").click()
+        editor.locator(":scope > summary").click()
 
 
 def _save(page, api):
-    if api.scope == "admin":
-        page.locator("#model-endpoint-save-btn").click()
-    else:
-        expected_url = f"{ORIGIN}/api/{api.scope}/model-endpoints"
-        with page.expect_response(
-            lambda response: response.url == expected_url and response.request.method == "POST"
-        ) as saved_response:
-            page.locator("#model-endpoint-save-btn").click()
-        status = saved_response.value.status
-        assert status == 200
+    page.locator("#model-endpoint-save-btn").click()
     expect(page.locator("#modelEndpointModal")).to_be_hidden()
-    if api.scope == "admin":
-        return json.loads(page.locator("#model_endpoints_json").input_value())[0]
     assert api.saved_payloads
     return api.saved_payloads[-1]["endpoints"][0]
 
 
+def test_explicit_model_routing_round_trip(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["auth"].update({"api_key_header": "Ocp-Apim-Subscription-Key", "api_key_prefix": ""})
+    endpoint["connection"]["endpoint"] = "https://gateway.example/shared"
+    endpoint["models"][0].update({
+        "api_type": "azure_openai_v1", "api_path": "team-a", "url_mode": "auto",
+    })
+    endpoint["models"].append({
+        "id": "model-two", "modelName": "vendor-independent", "enabled": True,
+        "displayName": '<img src=x onerror="window.routingXss=true">',
+        "api_type": "anthropic", "api_path": "team-b", "url_mode": "exact",
+        "anthropic_version": "2023-06-01",
+    })
+    _open_editor(page, api)
+    rows = page.locator("[data-model-row-id]")
+    expect(rows).to_have_count(2)
+    expect(page.locator("#model-endpoint-api-type-group")).to_be_hidden()
+    expect(page.locator("#model-endpoint-url-mode-group")).to_be_hidden()
+    expect(rows.nth(0).get_by_label("Request API", exact=True)).to_have_value("azure_openai_v1:chat_completions")
+    expect(rows.nth(1).get_by_label("Request API", exact=True)).to_have_value("anthropic:messages")
+    rows.nth(0).get_by_label("API Path", exact=True).fill("/team-c/")
+    rows.nth(0).get_by_label("Request API", exact=True).select_option("azure_openai:chat_completions")
+    rows.nth(0).get_by_label("Deployment Name", exact=True).fill("azure-deployment")
+    rows.nth(0).get_by_label("API Version", exact=True).fill("2025-01-01-preview")
+    expect(rows.nth(1).get_by_label("URL Handling", exact=True)).to_have_value("exact")
+    expect(rows.nth(1).get_by_label("API Path", exact=True)).to_have_value("team-b")
+    saved = _save(page, api)
+    assert saved["routing_schema_version"] == 2
+    first, second = saved["models"]
+    assert first["api_type"] == "azure_openai"
+    assert first["deploymentName"] == "azure-deployment"
+    assert first["api_path"] == "/team-c/"
+    assert first["api_version"] == "2025-01-01-preview"
+    assert first["url_mode"] == "auto"
+    assert second["api_type"] == "anthropic"
+    assert second["modelName"] == "vendor-independent"
+    assert second["anthropic_version"] == "2023-06-01"
+    assert second["url_mode"] == "exact"
+    assert not saved["auth"].get("api_key")
+    assert saved["auth"]["api_key_header"] == "Ocp-Apim-Subscription-Key"
+    assert saved["auth"]["api_key_prefix"] == ""
+    _edit_saved_endpoint(page)
+    expect(rows.nth(0).get_by_label("API Version", exact=True)).to_have_value("2025-01-01-preview")
+    expect(rows.nth(1).get_by_label("Request API", exact=True)).to_have_value("anthropic:messages")
+    assert page.evaluate("window.routingXss || false") is False
+    assert rows.locator("img[src=x]").count() == 0
+
+
+def test_saved_responses_inference_api_round_trips_without_save(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["routing_path_order"] = "connection_first"
+    endpoint["connection"]["endpoint"] = "https://gateway.example/shared"
+    endpoint["models"][0].update({
+        "api_type": "azure_openai_v1",
+        "inference_api": "responses",
+        "api_path": "foundry;rev=2",
+        "api_path_order": "model_first",
+        "url_mode": "auto",
+    })
+
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    expect(row.get_by_label("Request API", exact=True)).to_have_value("azure_openai_v1:responses")
+    row.get_by_role("button", name="Test Connection", exact=True).click()
+    expect(page.locator(".toast-body").first).to_be_visible()
+
+    assert len(api.test_payloads) == 1
+    assert api.test_payloads[0]["model"]["inference_api"] == "responses"
+    assert api.test_payloads[0]["model"]["api_type"] == "azure_openai_v1"
+    assert api.test_payloads[0]["model"]["api_path_order"] == "model_first"
+    assert "foundry;rev=2/shared/openai/v1/responses" in page.locator(".toast-container").inner_text()
+
+
+def test_custom_api_key_header_and_prefix_round_trip(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["models"][0].update({
+        "api_type": "openai", "url_mode": "auto", "api_path": "chat",
+    })
+    second = copy.deepcopy(endpoint["models"][0])
+    second.update({
+        "id": "model-two", "modelName": "messages-alias", "api_type": "anthropic",
+        "api_path": "messages-team", "anthropic_version": "2023-06-01",
+    })
+    endpoint["models"].append(second)
+    _open_editor(page, api)
+    header = page.get_by_label("Custom authentication header", exact=True)
+    prefix = page.get_by_label("API key prefix", exact=True)
+    expect(header).to_be_visible()
+    expect(page.locator("#model-endpoint-api-key-header-help")).to_contain_text(
+        "APIM uses Ocp-Apim-Subscription-Key by default."
+    )
+    expect(header).to_have_value("")
+    expect(prefix).to_have_value("")
+    expect(page.locator("#model-endpoint-api-key")).to_have_value("")
+    expect(page.locator("#model-endpoint-api-key")).to_have_attribute("placeholder", "Stored")
+    assert page.locator("[data-model-row-id]").get_by_label(
+        "Custom authentication header", exact=True,
+    ).count() == 0
+    header.fill("Ocp-Apim-Subscription-Key")
+    header.press("Tab")
+    expect(prefix).to_be_focused()
+    saved = _save(page, api)
+    assert saved["auth"]["api_key_header"] == "Ocp-Apim-Subscription-Key"
+    assert saved["auth"]["api_key_prefix"] == ""
+    assert saved["has_api_key"] is True
+    assert not saved["auth"].get("api_key")
+    for model in saved["models"]:
+        route = resolve_model_endpoint_route(saved, model)
+        assert route["credential_policy"]["header"] == "Ocp-Apim-Subscription-Key"
+        assert "auth" not in model
+        assert "api_key_header" not in model
+    _edit_saved_endpoint(page)
+    expect(header).to_have_value("Ocp-Apim-Subscription-Key")
+    expect(prefix).to_have_value("")
+    header.fill("X-Corp-Key")
+    prefix.fill(" Token ")
+    saved = _save(page, api)
+    assert saved["auth"]["api_key_header"] == "X-Corp-Key"
+    assert saved["auth"]["api_key_prefix"] == "Token"
+    _edit_saved_endpoint(page)
+    expect(header).to_have_value("X-Corp-Key")
+    expect(prefix).to_have_value("Token")
+    header.fill("")
+    prefix.fill("")
+    cleared = _save(page, api)
+    assert cleared["auth"]["api_key_header"] == ""
+    assert cleared["auth"]["api_key_prefix"] == ""
+    assert cleared["has_api_key"] is True
+    _edit_saved_endpoint(page)
+    expect(header).to_have_value("")
+    expect(prefix).to_have_value("")
+
+
+@pytest.mark.parametrize("label,value", (
+    ("Custom authentication header", "Bad Header"),
+    ("Custom authentication header", "Host"),
+    ("Custom authentication header", "X" * 129),
+    ("API key prefix", "Token\u0001"),
+))
+def test_custom_api_key_inputs_validate_before_save(capacity_ui, label, value):
+    page, api = capacity_ui
+    _open_editor(page, api)
+    field = page.get_by_label(label, exact=True)
+    field.evaluate("(element, value) => { element.value = value; }", value)
+    field.dispatch_event("input")
+    page.locator("#model-endpoint-save-btn").click()
+    expect(page.locator("#modelEndpointModal")).to_be_visible()
+    expect(field).to_be_focused()
+    expect(field).to_have_attribute("aria-invalid", "true")
+    message = field.evaluate("element => element.validationMessage")
+    assert message
+    assert not api.saved_payloads
+    assert not api.preview_payloads
+    page.get_by_label("Custom authentication header", exact=True).fill("Ocp-Apim-Subscription-Key")
+    page.get_by_label("API key prefix", exact=True).fill("")
+    saved = _save(page, api)
+    assert saved["auth"]["api_key_header"] == "Ocp-Apim-Subscription-Key"
+
+
+def test_custom_api_key_controls_follow_provider_profile_and_reset(capacity_ui):
+    page, api = capacity_ui
+    api.endpoints[0]["auth"].update({
+        "api_key_header": "X-Corp-Key", "api_key_prefix": "Token",
+    })
+    _open_editor(page, api)
+    header = page.get_by_label("Custom authentication header", exact=True)
+    prefix = page.get_by_label("API key prefix", exact=True)
+    expect(header).to_have_value("X-Corp-Key")
+    expect(prefix).to_have_value("Token")
+    page.get_by_label("Provider", exact=True).select_option("aoai")
+    expect(header).to_be_hidden()
+    page.get_by_label("Provider", exact=True).select_option("custom")
+    expect(header).to_be_visible()
+    page.get_by_label("Custom profile", exact=True).select_option("genai_mil")
+    expect(header).to_be_hidden()
+    expect(header).to_be_disabled()
+    expect(prefix).to_be_disabled()
+    page.get_by_label("Custom profile", exact=True).select_option("")
+    expect(header).to_be_visible()
+    expect(header).to_have_value("X-Corp-Key")
+    expect(prefix).to_have_value("Token")
+    auth_type = page.get_by_label("Authentication Type", exact=True)
+    if api.scope == "admin":
+        expect(auth_type).to_be_enabled()
+        assert page.locator(
+            "#model-endpoint-auth-type option[value='bearer']"
+        ).count() == 1
+        assert page.locator(
+            "#model-endpoint-auth-type option[value='oauth2_client_credentials']"
+        ).count() == 1
+    else:
+        expect(auth_type).to_be_disabled()
+        assert page.locator(
+            "#model-endpoint-auth-type option[value='bearer']"
+        ).count() == 0
+        assert page.locator(
+            "#model-endpoint-auth-type option[value='oauth2_client_credentials']"
+        ).count() == 0
+    page.locator("#modelEndpointModal").get_by_role("button", name="Cancel", exact=True).click()
+    page.get_by_role("button", name="Add Endpoint", exact=True).click()
+    page.get_by_label("Provider", exact=True).select_option("custom")
+    expect(header).to_have_value("")
+    expect(prefix).to_have_value("")
+
+
+@pytest.mark.parametrize("schema", (1, 2))
+def test_api_type_options_show_request_path_templates(capacity_ui, schema):
+    page, api = capacity_ui
+    if schema == 2:
+        api.endpoints[0]["routing_schema_version"] = 2
+        api.endpoints[0]["models"][0].update({"api_type": "openai", "url_mode": "auto"})
+    _open_editor(page, api)
+    selector = (
+        page.locator("[data-model-row-id]").first.get_by_label("Request API", exact=True)
+        if schema == 2 else page.locator("#model-endpoint-api-type")
+    )
+    labels = {
+        "openai": "Chat Completions (/v1/chat/completions)",
+        "azure_openai": "Chat Completions (/openai/deployments/{deploymentid}/chat/completions?api-version={api-version})",
+        "anthropic": "Messages (/v1/messages)",
+        "gemini": "Chat Completions (/v1beta/openai/chat/completions)",
+    }
+    if schema == 2:
+        labels["anthropic"] = "Anthropic Messages (/v1/messages)"
+        labels["azure_openai_v1"] = "Chat Completions (/openai/v1/chat/completions)"
+        labels = {f"{key}:{'messages' if key == 'anthropic' else 'chat_completions'}": label for key, label in labels.items()}
+        labels.update({
+            "openai:responses": "Responses (/v1/responses)",
+            "azure_openai_v1:responses": "Responses (/openai/v1/responses)",
+        })
+    expect(selector.locator("option")).to_have_count(len(labels))
+    for value, label in labels.items():
+        expect(selector.locator(f'option[value="{value}"]')).to_have_text(label)
+    expect(selector).to_have_value("openai:chat_completions" if schema == 2 else "openai")
+    assert selector.locator('option[value="azure_openai:responses"]').count() == 0
+    saved = _save(page, api)
+    selected_type = saved["models"][0]["api_type"] if schema == 2 else saved["api_type"]
+    assert selected_type == "openai"
+
+
+@pytest.mark.parametrize("width", (1440, 390))
+def test_routing_preview_validation_and_mobile_layout(capacity_ui, width):
+    page, api = capacity_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["connection"]["endpoint"] = "https://gateway.example/shared"
+    endpoint["models"][0].update({"api_type": "anthropic", "api_path": "team", "url_mode": "auto"})
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    page.locator("#model-endpoint-api-key").fill("synthetic-key-not-for-preview")
+    row.get_by_role("button", name="Preview Route", exact=True).click()
+    output = row.get_by_test_id("model-route-preview")
+    expect(output).to_contain_text("POST https://gateway.example/team/shared/v1/messages")
+    expect(row.get_by_role("button", name="Test Connection", exact=True)).to_be_enabled()
+    body = api.preview_payloads[-1]
+    assert body["routing_schema_version"] == 2
+    assert body["model"]["api_type"] == "anthropic"
+    assert body["model"]["id"] == "model-one"
+    assert "auth" not in body
+    assert "synthetic-key-not-for-preview" not in json.dumps(body)
+    row.get_by_label("API Path", exact=True).fill("../invalid")
+    expect(output).to_be_empty()
+    row.get_by_role("button", name="Preview Route", exact=True).click()
+    expect(output).to_contain_text("Invalid model routing")
+    assert len(api.preview_payloads) == 2
+    with page.expect_response(lambda response: response.request.method == "PATCH" and "/model-endpoints/" in response.url) as saved:
+        page.locator("#model-endpoint-save-btn").click()
+    assert saved.value.status == 400
+    error = page.locator("#modelEndpointModal").get_by_role("alert").filter(has_text="Invalid model routing")
+    expect(error).to_be_visible()
+    expect(error).to_be_focused()
+    expect(page.locator("#modelEndpointModal")).to_be_visible()
+    assert len(api.preview_payloads) == 2 and not api.saved_payloads
+    assert api.endpoints[0]["models"][0]["api_path"] == "team"
+    row.get_by_label("API Path", exact=True).fill("reviewed")
+    expect(error).to_be_hidden()
+    row.get_by_role("button", name="Preview Route", exact=True).click()
+    expect(output).to_contain_text("https://gateway.example/reviewed/shared/v1/messages")
+    dimensions = page.locator("#modelEndpointModal .modal-body").evaluate(
+        "element => ({client: element.clientWidth, scroll: element.scrollWidth})"
+    )
+    assert dimensions["scroll"] <= dimensions["client"]
+    artifact = Path(__file__).parent / "artifacts" / f"model-routing-{api.scope}-{width}.png"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(artifact))
+
+
+def test_schema_v2_live_connection_uses_saved_model_route(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["connection"]["endpoint"] = "https://gateway.example/shared/v1"
+    endpoint["models"][0].update({
+        "api_type": "openai",
+        "api_path": "aoai-global-team",
+        "url_mode": "auto",
+    })
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    test_button = row.get_by_role("button", name="Test Connection", exact=True)
+    expect(test_button).to_be_enabled()
+    test_button.click()
+    expect(page.locator(".toast-body").first).to_be_visible()
+    assert "aoai-global-team/shared/v1/chat/completions" in (
+        page.locator(".toast-container").inner_text()
+    )
+    assert len(api.test_payloads) == 1
+    request = api.test_payloads[0]
+    assert request["routing_schema_version"] == 2
+    assert request["id"] == "endpoint-one"
+    assert request["model"]["id"] == "model-one"
+
+
+def test_new_endpoints_use_explicit_routing_without_migrating_legacy(capacity_ui):
+    page, api = capacity_ui
+    _open_editor(page, api)
+    expect(page.locator("#model-endpoint-api-type-group")).to_be_visible()
+    assert page.locator("[data-model-routing-editor]").count() == 0
+    page.locator("#modelEndpointModal .btn-close").click()
+    expect(page.locator("#modelEndpointModal")).to_be_hidden()
+    page.locator("#add-model-endpoint-btn").click()
+    page.locator("#model-endpoint-provider").select_option("custom")
+    page.locator("#model-endpoint-name").fill("New explicit endpoint")
+    page.locator("#model-endpoint-endpoint").fill("https://gateway.example/shared")
+    page.locator("#model-endpoint-api-key").fill("synthetic-new-key")
+    page.locator("#model-endpoint-add-model-btn").click()
+    row = page.locator("[data-model-row-id]").first
+    row.get_by_label("Model Name", exact=True).fill("manual-gateway-model")
+    row.get_by_label("Request API", exact=True).select_option("azure_openai_v1:chat_completions")
+    row.get_by_label("API Path", exact=True).fill("team")
+    page.locator("#model-endpoint-save-btn").click()
+    expect(page.locator("#modelEndpointModal")).to_be_hidden()
+    endpoints = api.saved_payloads[-1]["endpoints"]
+    assert "routing_schema_version" not in endpoints[0]
+    assert endpoints[1]["routing_schema_version"] == 2
+    assert endpoints[1]["enabled"] is False
+    assert endpoints[1]["models"][0]["api_type"] == "azure_openai_v1"
+    assert endpoints[1]["models"][0]["url_mode"] == "auto"
+    assert "api_type" not in endpoints[1]
+    assert "url_mode" not in endpoints[1]["connection"]
+
+    saved_model = copy.deepcopy(endpoints[1]["models"][0])
+    toggle = page.locator('#model-endpoints-tbody [data-action="toggle"]').nth(1)
+    for enabled in (True, False):
+        expect(toggle).to_be_enabled()
+        toggle.click()
+        expect(toggle).to_have_text("Disable" if enabled else "Enable")
+        updated = api.saved_payloads[-1]["endpoints"]
+        assert updated[1]["enabled"] is enabled
+        assert updated[1]["models"][0] == saved_model
+        assert "routing_schema_version" not in updated[0]
+
+
+def test_model_library_preserves_explicit_routing_and_capabilities(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["models"][0].update({"api_type": "openai", "api_path": "team", "url_mode": "exact"})
+    original = copy.deepcopy(endpoint["models"][0])
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    library = row.get_by_label("Model Library", exact=True)
+    library.select_option("claude-sonnet-4-5-20250929")
+    expect(row.get_by_label("Request API", exact=True)).to_have_value("openai:chat_completions")
+    expect(row.get_by_label("URL Handling", exact=True)).to_have_value("exact")
+    expect(row.get_by_label("API Path", exact=True)).to_have_value("team")
+    expect(row.get_by_label("Model Name", exact=True)).to_have_value("private-deployment")
+    saved = _save(page, api)
+    assert saved["models"][0]["catalogModelId"] == "claude-sonnet-4-5-20250929"
+    assert saved["models"][0]["capabilities"] == original["capabilities"]
+    _edit_saved_endpoint(page)
+    expect(row.get_by_label("Model Library", exact=True)).to_have_value("claude-sonnet-4-5-20250929")
+    page.locator("#model-endpoint-add-model-btn").click()
+    new_row = page.locator("[data-model-row-id]").nth(1)
+    new_row.get_by_label("Model Library", exact=True).select_option("claude-sonnet-4-5-20250929")
+    expect(new_row.get_by_label("Request API", exact=True)).to_have_value("anthropic:messages")
+    expect(new_row.get_by_label("Model Name", exact=True)).to_have_value("claude-sonnet-4-5-20250929")
+    expect(new_row.get_by_label("Anthropic Version", exact=True)).to_have_value("2023-06-01")
+
+
+def test_genai_profile_discovery_and_case_sensitive_model_ids(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint.update({"routing_schema_version": 2, "profile": "genai_mil", "approved_origin": "https://api.genai.mil"})
+    endpoint["connection"]["endpoint"] = "https://api.genai.mil/v1"
+    endpoint["models"][0].update({"api_type": "openai", "url_mode": "auto"})
+    api.discovered_models = [
+        {"modelName": "Authorized-ID", "api_type": "openai", "url_mode": "auto"},
+        {"modelName": "authorized-id", "api_type": "openai", "url_mode": "auto"},
+    ]
+    _open_editor(page, api)
+    expect(page.get_by_label("Custom profile", exact=True)).to_have_value("genai_mil")
+    expect(page.get_by_label("Custom authentication header", exact=True)).to_be_hidden()
+    expect(page.get_by_label("API key prefix", exact=True)).to_be_disabled()
+    expect(page.locator("#model-endpoint-fetch-btn")).to_be_visible()
+    page.locator("#model-endpoint-fetch-btn").click()
+    page.wait_for_timeout(100)
+    assert api.fetch_payloads, page.locator(".toast-container").inner_text()
+    rows = page.locator("[data-model-row-id]")
+    expect(rows).to_have_count(3)
+    expect(rows.nth(1).get_by_label("Model Name", exact=True)).to_have_value("Authorized-ID")
+    expect(rows.nth(2).get_by_label("Model Name", exact=True)).to_have_value("authorized-id")
+    assert api.fetch_payloads[-1]["profile"] == "genai_mil"
+    assert api.fetch_payloads[-1]["auth"]["api_key_header"] == "Authorization"
+    assert api.fetch_payloads[-1]["auth"]["api_key_prefix"] == "Bearer"
+    saved = _save(page, api)
+    assert saved["profile"] == "genai_mil"
+    assert saved["auth"]["api_key_header"] == "Authorization"
+    assert saved["auth"]["api_key_prefix"] == "Bearer"
+    assert {model["modelName"] for model in saved["models"]} >= {"Authorized-ID", "authorized-id"}
+    _edit_saved_endpoint(page)
+    expect(page.get_by_label("Custom profile", exact=True)).to_have_value("genai_mil")
+    expect(rows.nth(0).get_by_label("Request API", exact=True).locator("option")).to_have_count(1)
+
+
+def test_ca_bundle_selection_preserves_legacy_and_explicit_trust(capacity_ui):
+    page, api = capacity_ui
+    bundle_id = "ca-0123456789abcdef0123456789abcdef"
+    api.ca_bundles = [{"id": bundle_id, "name": "<img src=x onerror=alert(1)>", "revision": 1}]
+    _open_editor(page, api)
+    choice = page.get_by_label("Certificate trust", exact=True)
+    expect(choice).to_have_value("inherit")
+    choice.select_option(bundle_id)
+    saved = _save(page, api)
+    assert saved["connection"]["ca_bundle_mode"] == "bundle"
+    assert saved["connection"]["ca_bundle_id"] == bundle_id
+    _edit_saved_endpoint(page)
+    expect(choice).to_have_value(bundle_id)
+    choice.select_option("public")
+    saved = _save(page, api)
+    assert saved["connection"]["ca_bundle_mode"] == "public"
+    assert "ca_bundle_id" not in saved["connection"]
+    assert page.locator('img[src="x"]').count() == 0
+
+
+def test_missing_ca_bundle_is_not_silently_replaced(capacity_ui):
+    page, api = capacity_ui
+    bundle_id = "ca-0123456789abcdef0123456789abcdef"
+    api.endpoints[0]["connection"].update({"ca_bundle_mode": "bundle", "ca_bundle_id": bundle_id})
+    _open_editor(page, api)
+    expect(page.get_by_label("Certificate trust", exact=True)).to_have_value(bundle_id)
+    expect(page.locator("#model-endpoint-ca-bundle-error")).to_contain_text("not be silently replaced")
+
+
+def test_effective_limits_preview_uses_model_then_endpoint_then_catalog(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint.update({"routing_schema_version": 2, "inputTokenLimit": 60000})
+    endpoint["models"][0].update({
+        "api_type": "openai", "url_mode": "auto", "catalogModelId": "claude-sonnet-4-5-20250929",
+        "contextWindow": 16384, "outputTokenLimit": 2048,
+    })
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    row.get_by_role("button", name="Preview Route", exact=True).click()
+    limits = row.get_by_test_id("model-effective-limits")
+    expect(limits.locator('[data-limit-preview="contextWindow"]')).to_have_attribute("data-effective-value", "16384")
+    expect(limits.locator('[data-limit-preview="inputTokenLimit"]')).to_contain_text("Endpoint default")
+    expect(limits.locator('[data-limit-preview="outputTokenLimit"]')).to_contain_text("Model override")
+    row.get_by_label("Context Window (tokens)", exact=True).fill("")
+    expect(limits).to_contain_text("Preview Route to resolve")
+    row.get_by_role("button", name="Preview Route", exact=True).click()
+    expect(limits.locator('[data-limit-preview="contextWindow"]')).to_contain_text("Verified catalog")
+    body = api.preview_payloads[-1]
+    assert body["inputTokenLimit"] == 60000
+    assert body["model"]["catalogModelId"] == "claude-sonnet-4-5-20250929"
+    assert body["model"]["contextWindow"] is None
+
+
+def test_library_does_not_fill_azure_deployment_alias(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["models"][0].update({
+        "api_type": "azure_openai", "url_mode": "auto",
+        "deploymentName": "", "modelName": "", "api_version": "2024-05-01-preview",
+    })
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    row.get_by_label("Model Library", exact=True).select_option("claude-sonnet-4-5-20250929")
+    expect(row.get_by_label("Deployment Name", exact=True)).to_have_value("")
+    expect(row.get_by_label("Request API", exact=True)).to_have_value("azure_openai:chat_completions")
+    expect(row.get_by_text("Optional catalog metadata", exact=False)).to_be_visible()
+
+
+def test_schema_v2_has_single_catalog_identity_and_model_first_limits(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["models"][0].update({
+        "api_type": "openai", "url_mode": "auto", "catalogModelId": "claude-sonnet-4-5-20250929",
+    })
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    expect(row.get_by_label("Model Library", exact=True)).to_have_value("claude-sonnet-4-5-20250929")
+    expect(row.locator('[data-budget-field="catalogModelId"]')).to_have_count(0)
+    expect(row.get_by_test_id("model-budget-editor")).to_have_attribute("open", "")
+    endpoint_limits = page.get_by_test_id("endpoint-budget-editor")
+    expect(endpoint_limits.locator("summary")).to_have_text("Default model limits")
+    assert endpoint_limits.get_attribute("open") is None
+    saved = _save(page, api)
+    assert saved["models"][0]["catalogModelId"] == "claude-sonnet-4-5-20250929"
+    assert saved["models"][0]["modelName"] == "private-deployment"
+
+
+@pytest.mark.parametrize("edit_kind", ["path", "add", "remove"])
+def test_changed_form_does_not_commit_an_inflight_manual_preview(capacity_ui, edit_kind):
+    page, api = capacity_ui
+    api.endpoints[0]["routing_schema_version"] = 2
+    api.endpoints[0]["models"][0].update({"api_type": "openai", "api_path": "first", "url_mode": "auto"})
+    _open_editor(page, api)
+    api.defer_preview = True
+    row = page.locator("[data-model-row-id]").first
+    row.get_by_role("button", name="Preview Route", exact=True).click()
+    expect(page.locator("[data-model-row-id]").first.get_by_test_id(
+        "model-route-preview"
+    )).to_contain_text("Resolving route")
+    if edit_kind == "path":
+        page.get_by_label("API Path", exact=True).fill("changed-during-preview")
+    elif edit_kind == "add":
+        page.locator("#model-endpoint-add-model-btn").click()
+        page.locator("[data-model-row-id]").nth(1).get_by_label(
+            "Model Name", exact=True
+        ).fill("additional-model")
+    else:
+        page.locator('[data-action="remove-model"]').click()
+    assert len(api.deferred_previews) == 1
+    route, payload = api.deferred_previews.pop()
+    route.fulfill(content_type="application/json", body=json.dumps(payload))
+    expect(page.locator("#modelEndpointModal")).to_be_visible()
+    assert not api.saved_payloads
+    assert len(api.preview_payloads) == 1
+    if edit_kind == "path":
+        expect(page.get_by_label("API Path", exact=True)).to_have_value("changed-during-preview")
+    if edit_kind != "remove":
+        _save(page, api)
+        assert len(api.preview_payloads) == 1, "Save must not replay model previews."
+
+
+def test_non_custom_model_path_preview_and_save(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint.update({"routing_schema_version": 2, "provider": "aoai"})
+    endpoint.pop("api_type")
+    endpoint["connection"].update({"endpoint": "https://gateway.example/shared", "openai_api_version": "2024-05-01-preview"})
+    endpoint["models"][0]["deploymentName"] = "claude-gateway"
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    assert row.get_by_label("Request API", exact=True).count() == 0
+    row.get_by_label("API Path", exact=True).fill("team")
+    row.get_by_role("button", name="Preview Route", exact=True).click()
+    expect(row.get_by_test_id("model-route-preview")).to_contain_text("https://gateway.example/team/shared/v1/messages")
+    saved = _save(page, api)
+    assert saved["models"][0]["api_path"] == "team"
+    assert saved["models"][0]["deploymentName"] == "claude-gateway"
+    _edit_saved_endpoint(page)
+    expect(row.get_by_label("API Path", exact=True)).to_have_value("team")
 def test_catalog_profile_association_survives_scope_save(capacity_ui):
     page, api = capacity_ui
     original = copy.deepcopy(api.endpoints[0])
@@ -492,6 +1207,10 @@ def test_capacity_editor_mobile_keyboard_and_labels(capacity_ui):
         editor = page.get_by_test_id(f"{scope}-budget-editor").first
         summary = editor.locator("summary")
         summary.focus()
+        if scope == "model":
+            expect(editor).to_have_attribute("open", "")
+            summary.press("Enter")
+            expect(editor.get_by_label("Context Window (tokens)", exact=True)).to_be_hidden()
         summary.press("Enter")
         control = editor.get_by_label("Context Window (tokens)", exact=True)
         expect(control).to_be_visible()

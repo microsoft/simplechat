@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_custom_merge.py
 """
 Regression coverage for embeddings merged with the Custom/image foundation.
-Version: 0.261.122
+Version: 0.261.436
 Implemented in: 0.261.108
 
 Preserve legacy embedding references while sharing Custom URL, credential, and
@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import httpx
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,10 +84,7 @@ class CustomEmbeddingMergeTests(unittest.TestCase):
         )
         ssl_context = httpx.create_ssl_context(verify=True, trust_env=False)
         with (
-            patch.dict(sys.modules, {
-                "functions_keyvault": vault,
-                "functions_model_endpoint_runtime": self.endpoint_runtime,
-            }),
+            pytest.MonkeyPatch.context() as monkeypatch,
             patch.object(self.endpoint_runtime, "build_custom_openai_sync_http_client", transport_factory),
             patch.object(httpx.HTTPTransport, "handle_request", handle),
             patch("httpcore.SyncBackend.connect_tcp", return_value=Mock()) as dial,
@@ -98,6 +96,11 @@ class CustomEmbeddingMergeTests(unittest.TestCase):
             patch.object(model_endpoint_clients, "build_custom_endpoint_ssl_context", return_value=ssl_context),
             patch.object(runtime, "build_model_endpoint_identity_headers", return_value=identity_headers or {}) as identity,
         ):
+            monkeypatch.setitem(sys.modules, "functions_keyvault", vault)
+            monkeypatch.setitem(sys.modules, "functions_model_endpoint_runtime", self.endpoint_runtime)
+            monkeypatch.setitem(sys.modules, "functions_settings", types.SimpleNamespace(
+                resolve_model_endpoint_ca_trust=lambda endpoint, settings, fallback: fallback,
+            ))
             result = runtime.generate_embedding_batch(["text"], settings=settings, max_retries=0)
         self.dial = dial
         self.identity = identity

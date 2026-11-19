@@ -138,7 +138,9 @@ def get_group_agent_options(user_id, group_id):
     # this module stays importable for standalone tests.
     route_agents = import_module("route_backend_agents")
     authoring = import_module("functions_workspace_authoring")
-    endpoints = route_agents.build_combined_model_endpoints(settings, user_id, group_id=group_id)
+    endpoints = route_agents.collect_agent_model_endpoints(
+        settings, user_id, group_id=group_id,
+    ) if can_manage else []
     options = authoring.build_group_agent_editor_options(
         user_id, group_id, settings, endpoints, can_manage,
     )
