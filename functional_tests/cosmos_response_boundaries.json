@@ -23773,10 +23773,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
+        "module_sha256": "baee8fd7b11a0c51bf853b12637c2e9fa33f2a9b1889aa862345fb1d73257155"
       },
       "classification": "sdk-compatible",
-      "contract": "Fresh SDK mappings are consumed via get/item access; nested settings remain plain JSON, ETags are preserved for conditional replace, and the returned SDK mapping refreshes the request cache with the committed ETag. Real-owner recovery tests cover persisted null, request/UI caches and matching ETags, SDK representation, missing ETags, authorization, conflicts and concurrent selections. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
+      "contract": "SDK mapping reads and ETag-fenced replacement preserve unrelated settings; stale-group recovery tests execute the real owner.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
@@ -23795,10 +23795,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
+        "module_sha256": "baee8fd7b11a0c51bf853b12637c2e9fa33f2a9b1889aa862345fb1d73257155"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_app_settings_store: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
+      "contract": "Bootstrap reads only mapping.get for Redis policy and passes the container into AppSettingsStore; interface and stale-group probes execute the real bootstrap.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
@@ -23822,10 +23822,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
+        "module_sha256": "baee8fd7b11a0c51bf853b12637c2e9fa33f2a9b1889aa862345fb1d73257155"
       },
       "classification": "sdk-compatible",
-      "contract": "add_search_to_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
+      "contract": "Point mapping.get supplies a plain nested history list; deduplication and bounded history update the mapping before upsert, whose return is unused.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
@@ -23849,10 +23849,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
+        "module_sha256": "baee8fd7b11a0c51bf853b12637c2e9fa33f2a9b1889aa862345fb1d73257155"
       },
       "classification": "sdk-compatible",
-      "contract": "clear_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
+      "contract": "Point mapping is mutated and upserted; returned SDK write response is unused and the owner returns a boolean.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
@@ -23871,10 +23871,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
+        "module_sha256": "baee8fd7b11a0c51bf853b12637c2e9fa33f2a9b1889aa862345fb1d73257155"
       },
       "classification": "sdk-compatible",
-      "contract": "get_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
+      "contract": "Point mapping.get returns the plain nested history list; the SDK top-level wrapper never enters a strict domain validator.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
@@ -23903,10 +23903,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
+        "module_sha256": "baee8fd7b11a0c51bf853b12637c2e9fa33f2a9b1889aa862345fb1d73257155"
       },
       "classification": "sdk-compatible",
-      "contract": "get_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
+      "contract": "Authorized SDK mapping is read/mutated through mapping operations and cloned by the existing cache boundary; interface persistence tests cover real reads and writes.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
@@ -23925,10 +23925,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
+        "module_sha256": "baee8fd7b11a0c51bf853b12637c2e9fa33f2a9b1889aa862345fb1d73257155"
       },
       "classification": "sdk-compatible",
-      "contract": "read_user_settings_snapshot: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
+      "contract": "Authorized SDK point response is cloned by the existing settings boundary before nested defaults, without writes.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
@@ -23962,10 +23962,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
+        "module_sha256": "baee8fd7b11a0c51bf853b12637c2e9fa33f2a9b1889aa862345fb1d73257155"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK point documents use Mapping reads and nested JSON updates; the empty agent list now follows the existing no-agent branch instead of indexing an empty list. Writes preserve document metadata and existing OCC behavior, refresh request settings and invalidate shared UI settings. Real routes exercise no-agent preference saves, account isolation, cache invalidation and failed persistence.",
+      "contract": "Authorized SDK point mapping retains all fields while nested settings are merged; upsert response is unused and real HTTP preference tests verify persistence.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
@@ -31992,10 +31992,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "The conversation point mapping proves owner/nondeleted state through field access and now rechecks shared-source membership before dependent reads; missing or unauthorized records retain ConversationContextError. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "SDK mapping.get verifies ownership/deletion and source access before consumers receive the authorized mapping.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_conversation_sources.py"
@@ -32014,10 +32014,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "Artifact point mappings are JSON-encoded by the existing checkpoint fingerprint helper; SDK dictionary subclasses are supported and nested artifact validation is unchanged. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Authorized SDK point mappings enter the existing canonical fingerprint function; context-route runtime tests exercise checkpoint behavior.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -32035,10 +32035,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "The saved turn point mapping is normalized by normalize_history_message before role/conversation/fingerprint validation; history-disabled snapshots fail before reuse and source authorization is rechecked. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "SDK point mappings are passed through normalize_history_message and ownership/fingerprint checks before building plain planner context.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_conversation_sources.py"
@@ -32067,10 +32067,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "Requested conversation point mappings supply owner/scope/deletion fields; constructed create/upsert bodies are plain and write responses are discarded. Shared ownership is established separately, not inferred from wrapper type. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Existing SDK point mappings use mapping.get/update for backing metadata; create/upsert responses are unused.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -32088,10 +32088,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "Point answer mappings supply conversation/visibility and nested thread fields; metadata patching retains its existing owner and stale or missing answers are not silently restored. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "SDK answer mapping is checked for partition/deletion and patched through the metadata owner, preserving source identity.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -32115,10 +32115,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "A cutoff point mapping supplies authorized conversation/role/timestamp; plain bounded query rows pass through screening and saved-analysis sanitization before plain snapshot construction. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "An authorized SDK point mapping supplies the before timestamp; plain query rows enter checked history and snapshot builders.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -32136,10 +32136,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "Ledger revalidation consumes plain projected query rows through current conversation ownership, masking, soft-deletion and active-thread checks. Requested source identity DTOs are projected separately from successful reads, not used as prior permission. Hidden turns cannot restore sources; current manifest authorization is required. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Authorized plain query projections are checked for visible source turns before ledger projection; no point wrapper crosses a strict consumer.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_selected_source_planning.py::test_hidden_source_turn_cannot_restore_its_requested_documents"
@@ -32158,10 +32158,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "Historical context discovery consumes plain partitioned query rows, applies retry-prefix/screening rules and builds a bounded plain conversation snapshot. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Plain query history rows are checked and sanitized before building a logical-order snapshot.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -32184,10 +32184,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "Conversation SDK mappings feed existing mapping-compatible shared authorization. The saved question is normalized by public_planning_message before projection/mirroring; private claims are not shared, and required admission mirror failures are explicit. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "SDK conversation/message mappings use authorized mapping access and the existing public_planning_message projection before mirroring.",
       "tests": [
         "functional_tests/test_orchestration_shared_conversations.py"
       ],
@@ -32205,10 +32205,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "The review-required question point mapping uses nested metadata mapping updates and the existing conditional metadata writer. Planning ownership is checked before run publication; no raw SDK question reaches an exact-dictionary JSON contract. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Saved SDK question mapping receives nested orchestration metadata through mapping operations before the existing metadata-patch boundary.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py::test_explicit_retry_uses_saved_inputs_and_one_question",
         "functional_tests/test_orchestration_message_regeneration.py"
@@ -32227,10 +32227,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "The assistant point mapping supplies role/deletion/mask metadata to reply_is_retracted; absence is treated as removed, never as an empty valid response. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "SDK point mapping is consumed by the existing retraction predicate; missing messages remain removed.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -32248,10 +32248,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "response-unused",
-      "contract": "The message upsert response is discarded; screening and source-availability checks occur before publication, and persistence errors retain the existing failure path. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Write response is deliberately unused; success returns the locally allocated message ID, and write failures retain the existing failure path.",
       "tests": [],
       "evidence_scope": "owner-runtime"
     },
@@ -32272,10 +32272,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "Question SDK point mappings are consumed by normalize_history_message and metadata mapping operations. The projected history dictionary, not the SDK wrapper, is fingerprinted. Create-only admission and conditional lifecycle writes preserve the original question. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Authorized SDK point reads enter the existing history normalization and content/fingerprint checks; deterministic IDs preserve retry identity.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py"
       ],
@@ -32298,10 +32298,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "The question create response is discarded. A racing 409 rereads an SDK point and validates the existing question instead of upserting over it; mismatched content fails without a save acknowledgement. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Create response is unused; conflict reads use the same normalized-history validation so the winner is never overwritten.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py::test_concurrent_question_creation_never_upserts_over_the_winner"
       ],
@@ -32324,10 +32324,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "The conversation point mapping supplies owner/deletion and mutable index fields; replace response is discarded and the Mapping-compatible cache invalidator consumes the authorized input. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "SDK mapping.get validates owner/deletion; mapping mutation preserves the ETag for conditional replace, whose return is unused.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -32345,10 +32345,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "Artifact point mappings are checked by field access for conversation/user/visibility and nested content metadata; no top-level exact-dictionary result contract consumes them. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Authorized SDK point mappings use mapping.get to validate artifact identity, visibility, owner, and expiry.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -32366,10 +32366,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "Source revalidation consumes plain bounded query rows through screening and strict saved-snapshot checks; no point wrapper is repaired into a domain context. Selected-history projection uses plain SDK query rows, existing visibility/fingerprint checks and admitted typed result references; new full-text projection and assistant-only result selection are exercised through real planning, execution and editor routes with SDK-default containers. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Authorized plain query rows pass checked/sanitized history before validating the saved snapshot.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_followup_citation_provenance.py"
@@ -32378,7 +32378,7 @@
     },
     "application/single_app/route_backend_orchestration.py::register_route_backend_orchestration.orchestration_plan": {
       "boundary": {
-        "sha256": "a606c38efb0189c7316013597308a5b42c641cf25a8db4751612771e4aee7a98",
+        "sha256": "08720811b6873604a8788b0a3c6e2ba86fb16e53ae7009e7f9638efd263cea07",
         "points": [
           {
             "method": "read_item",
@@ -32388,10 +32388,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "faaf5acdcc8f086a1e7b0744800af37604de5b1244ea911d9bed72319f3e8e0c"
+        "module_sha256": "a7818cd52b8e3e7e34c2e8ff65df6f37bfb6a5e46876106f527cfd62076f9dce"
       },
       "classification": "sdk-compatible",
-      "contract": "Clarification conversation point mappings remain Mapping-compatible and owner-checked. Referenced visible failed-turn source IDs retain original scope/filter constraints and all nine inputs are resolved through current authorized plain manifest DTOs before planning. Revocation fails before a new plan; no SDK point document enters strict planner source/result contracts. Existing conditional planning owners still publish. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.446: TRE-05 added bounded prepared-calculation planning, qualification and private lowering state through the existing lifecycle-fenced checkpoint owner. Point/query response consumption and write-response use remain as classified; no SDK wrapper is normalized by substitution or downgraded to an empty fallback. Re-reviewed 0.261.446 final: resolver and main-planner exact-source restoration reauthorize through existing candidate readers before publication; no Cosmos response shape, strict consumer or ETag contract changed.",
+      "contract": "Point/write/query consumers retain their authorized mapping-compatible contracts; the only owner AST change removes an unused export_catalog assignment while keeping context publication.",
       "tests": [
         "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text",
         "functional_tests/test_orchestration_planning_persistence.py::test_typed_contract_failure_survives_reload_and_clears_on_explicit_retry",
@@ -32849,7 +32849,7 @@
         "module_sha256": "058ec0b4369c03a89f78657a8266f04fdbf320cf4423b5dae5373dbe3896fee5"
       },
       "classification": "sdk-compatible",
-      "contract": "Plain query rows identify conversations; the installed SDK point response is read through Mapping.get for membership status. No strict top-level dictionary contract consumes the response. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
+      "contract": "Plain query rows identify conversations; target SDK point mapping.get checks accepted membership without exact-dict validation.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_graph_route_cosmos_response_contracts.py::test_collaboration_profile_relationship_consumes_sdk_member_point_response"
@@ -32871,7 +32871,7 @@
         "module_sha256": "058ec0b4369c03a89f78657a8266f04fdbf320cf4423b5dae5373dbe3896fee5"
       },
       "classification": "sdk-compatible",
-      "contract": "The SELECT VALUE query returns a plain list of document IDs, consumed only for existence after parameterized relationship filtering; it is not a point-document response. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
+      "contract": "Query results are plain scalar document IDs, materialized only for an existence check.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_graph_route_cosmos_response_contracts.py::test_shared_document_profile_relationship_consumes_scalar_query_projection"
@@ -32893,7 +32893,7 @@
         "module_sha256": "058ec0b4369c03a89f78657a8266f04fdbf320cf4423b5dae5373dbe3896fee5"
       },
       "classification": "sdk-compatible",
-      "contract": "The authorized current-account SDK mapping is returned intact with metadata; downstream consumers project fields through Mapping reads. Runtime coverage exercises the real authorization and reader. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
+      "contract": "Object authorization precedes the SDK point read; mapping consumers project allowed profile fields.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_graph_route_cosmos_response_contracts.py::test_authorized_profile_point_response_preserves_sdk_fields_and_etag"
@@ -32915,7 +32915,7 @@
         "module_sha256": "058ec0b4369c03a89f78657a8266f04fdbf320cf4423b5dae5373dbe3896fee5"
       },
       "classification": "sdk-compatible",
-      "contract": "Plain query rows are projected into a new suggestion dictionary; the account settings SDK document is read through Mapping.get. The real route executes with installed-SDK account storage and plain query results. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
+      "contract": "Plain query rows are projected into normalized suggestion fields; SDK-backed user settings remain compatible through their existing owner.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_graph_route_cosmos_response_contracts.py::test_collaboration_suggestions_consume_sdk_settings_and_plain_directory_rows"
@@ -32937,7 +32937,7 @@
         "module_sha256": "058ec0b4369c03a89f78657a8266f04fdbf320cf4423b5dae5373dbe3896fee5"
       },
       "classification": "sdk-compatible",
-      "contract": "The real route authorizes the target, reads an installed-SDK point response and projects only identity fields through Mapping.get into JSON; it never requires an exact top-level dict. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
+      "contract": "Object authorization precedes the SDK point read; mapping.get feeds a new plain allowlisted response dictionary.",
       "tests": [
         "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_graph_route_cosmos_response_contracts.py::test_user_info_route_consumes_sdk_point_response_without_graph_fallback"

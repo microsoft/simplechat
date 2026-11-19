@@ -1,4 +1,5 @@
 # requirements.txt
+-c requirements.lock.txt
 pandas==2.2.3
 azure-monitor-query==1.4.1
 Flask==3.1.3

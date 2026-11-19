@@ -19,21 +19,23 @@ permissions:
 
 jobs:
   browser-assets:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.12.12'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22'
+          node-version: '24.22.3'
       - name: Restore normal frontend dependencies
         run: npm --prefix application/v2_ui ci --no-audit --no-fund
       - name: Build V2 assets
         run: npm --prefix application/v2_ui run build
       - name: Install existing test tools
-        run: python -m pip install pytest==9.0.3 pytest-playwright==0.7.2
+        run: |
+          python -m pip install pip==26.0.1
+          python -m pip install --build-constraint docker-customization/requirements-build.lock.txt -r ui_tests/requirements.txt
       - name: Install test browser
         run: python -m playwright install --with-deps chromium
       - name: Enforce source and compiled asset policy

@@ -1,0 +1,8 @@
+{
+    "name": "simplechat-devcontainer-tooling",
+    "private": true,
+    "version": "1.0.0",
+    "devDependencies": {
+        "@devcontainers/cli": "0.80.1"
+    }
+}

@@ -19,6 +19,13 @@ engine:
   id: copilot
   copilot-sdk: true
 timeout-minutes: 30
+runs-on: ubuntu-24.04
+runs-on-slim: ubuntu-24.04
+runtimes:
+  node:
+    version: "24.22.1"
+  python:
+    version: "3.12.12"
 concurrency:
   group: weekly-model-catalog-review
   cancel-in-progress: false
@@ -45,11 +52,18 @@ network:
     - huggingface.co
     - llama.com
 steps:
-  - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+  - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
     with:
-      python-version: "3.12"
+      python-version: "3.12.12"
   - name: Install pinned offline catalog validation dependencies
-    run: python -m pip install -r scripts/requirements-model-catalog-tests.txt
+    run: |
+      python -m pip install pip==26.0.1
+      python -m pip install --build-constraint docker-customization/requirements-build.lock.txt -r scripts/requirements-model-catalog-tests.txt
+  - name: Prepare locked Copilot SDK dependencies
+    run: |
+      python scripts/prepare_model_catalog_sdk.py
+      npm ci --ignore-scripts --no-audit --no-fund
+      echo "NPM_CONFIG_OFFLINE=true" >> "$GITHUB_ENV"
 tools:
   edit:
   bash: ["python", "git diff", "git status"]
@@ -59,6 +73,9 @@ tools:
     allowed-repos: "${{ github.repository }}"
     min-integrity: none
 safe-outputs:
+  runs-on: ubuntu-24.04
+  threat-detection:
+    runs-on: ubuntu-24.04
   report-incomplete:
     create-issue: false
   create-pull-request:

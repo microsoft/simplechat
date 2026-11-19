@@ -1,0 +1,1606 @@
+{
+  "base_image": "mcr.microsoft.com/azurelinux/base/python:3.12.16-1-azl3.0.20261028@sha256:71a1f5a1821f4c56e45aff52e792ed6c0500631e201cfc140c4c9d22886b29f9",
+  "selected_at": "2026-11-19T15:28:02.352294+00:00",
+  "minimum_age_days": 14,
+  "profiles": {
+    "common": [
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/c/ca-certificates-3.0.0-19.azl3.noarch.rpm",
+        "sha256": "230c46aef2514de0ba49670a8f3eecdee16debcb9304877b387ca5189b890914",
+        "published_at": 1792674742
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/g/glibc-iconv-2.38-21.azl3.x86_64.rpm",
+        "sha256": "d22a13baa507ddd4b3f90118e95116d203e6be8886720a64f3791c40d2722c2e",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libgcc-atomic-13.2.0-7.azl3.x86_64.rpm",
+        "sha256": "5a5766be71a7110c6f16f8f361d02f375ba5bdeaa47f6026eeb47da4e360ad64",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libltdl-2.4.7-2.azl3.x86_64.rpm",
+        "sha256": "8038996cafb539c9d258143c8a1dedb30d4b69025415d482ae8a5716342297cc",
+        "published_at": 1786577026
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libpkgconf-2.0.2-1.azl3.x86_64.rpm",
+        "sha256": "008eac09a260c7c0d419721ebd9588bc2c58eafcbf68526e1568e96fd2625000",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/ms-non-oss/x86_64/Packages/m/msodbcsql18-18.7.1.1-1.x86_64.rpm",
+        "sha256": "e5480a62cdacbe66b457cd1fd9a35796f19285d7eef72996cc6696fab187e8fd",
+        "published_at": 1788974114
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/pkgconf-2.0.2-1.azl3.x86_64.rpm",
+        "sha256": "a3dc300bca2eac5ba8bc32b11122f85c5d7a5b70e582011e763f9216b1051479",
+        "published_at": 1721834091
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/pkgconf-m4-2.0.2-1.azl3.noarch.rpm",
+        "sha256": "8aeea7f05266d19af172f8f4e829f337ddf5212f519b2fbfe65dc14d9486e979",
+        "published_at": 1721834091
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/pkgconf-pkg-config-2.0.2-1.azl3.x86_64.rpm",
+        "sha256": "6c8dadcda5baff08ef113c460d525c09393b1faaebd25c1e982b609b62615133",
+        "published_at": 1721834091
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/u/unixODBC-2.3.12-2.azl3.x86_64.rpm",
+        "sha256": "d9de08262fae18ef0f4ae752cfb17cc2d1d6efa390ff9e30733e4df210c3cde3",
+        "published_at": 1721675336
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/u/unixODBC-devel-2.3.12-2.azl3.x86_64.rpm",
+        "sha256": "b0e704d1c579916447f3cd5d41627036294f938d181b20ee1aa4531b837c2d52",
+        "published_at": 1721675336
+      }
+    ],
+    "chromium": [
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/a/adwaita-cursor-theme-3.36.1-2.azl3.noarch.rpm",
+        "sha256": "0491c5a27b47dca489303c8cb8754417b261c15505cb425fa72f73593229041e",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/a/adwaita-icon-theme-3.36.1-2.azl3.noarch.rpm",
+        "sha256": "a65e447e1fc077a1ff57a6f0ca9ccee85c28be68af5a3e09eb0eb889a2875175",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/a/alsa-lib-1.2.16.1-1.azl3.x86_64.rpm",
+        "sha256": "b7250e600486dd84d695351cff0fcbde51098cfb087e2aa0fa705d8890880f5b",
+        "published_at": 1783526939
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/a/at-spi2-atk-2.34.2-4.azl3.x86_64.rpm",
+        "sha256": "7a44eab668ef131332ba8ca062a5ff94e8cf437fd757722e41f50336bfad3db0",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/a/at-spi2-core-2.36.1-3.azl3.x86_64.rpm",
+        "sha256": "de204a5e25d0cf3bf421ca8d52e015dda495e3035d63890cffdc1a9ab96bf8e4",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/a/atk-2.36.0-3.azl3.x86_64.rpm",
+        "sha256": "55d669e3caedd5963cf5faaae9914f273bbc8aa1d2d4ab6b29bf9efbaa627eaf",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/a/audit-libs-3.1.2-1.azl3.x86_64.rpm",
+        "sha256": "6df10d8524dc393c5e941150ee5c7696afd6c4e9ffb222f185e32deaa8c77cfa",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/a/avahi-libs-0.8-8.azl3.x86_64.rpm",
+        "sha256": "0fb19cf2651ab2cc000def919072932a39ab2cb107a47a104461963d80c986fa",
+        "published_at": 1778297547
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/a/azurelinux-rpm-macros-3.0-7.azl3.noarch.rpm",
+        "sha256": "a82f3a1e7021f479a5d22032124e33080e8b2cb3fac72a1cccb75217b35c8237",
+        "published_at": 1729017206
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/b/brotli-1.2.1-1.azl3.x86_64.rpm",
+        "sha256": "9306a58e6ffdba47b75e633fcc94a84629a6153d2d26f65eaa17b58815d8739b",
+        "published_at": 1792708942
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/b/brotli-devel-1.2.1-1.azl3.x86_64.rpm",
+        "sha256": "ddede103fd6d92fd9dab7fc5b589dadf1741357ba271aba405926365a91dbfb0",
+        "published_at": 1792708942
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/c/cairo-1.18.0-1.azl3.x86_64.rpm",
+        "sha256": "37721cea9e4741ecb96055e5407e9fa448bfd9f2944776a6acf16631052a421a",
+        "published_at": 1721663411
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/c/cairo-gobject-1.18.0-1.azl3.x86_64.rpm",
+        "sha256": "dd68c7539b7e203b2cc3c13f43891313ad421844c54d6e2f1a0b7ded96667509",
+        "published_at": 1721663411
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/c/colord-libs-1.4.6-1.azl3.x86_64.rpm",
+        "sha256": "33a8ab957b5bd1c44a54c040f4229802510e88b418bc14c8ff70c110dfe4f0af",
+        "published_at": 1721663411
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/c/cracklib-2.9.11-1.azl3.x86_64.rpm",
+        "sha256": "0c14f9774b2fcfeeb3ef6cb4e288c55d2898231dad3ef3795d6c61ae6358646d",
+        "published_at": 1721663411
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/c/cracklib-dicts-2.9.11-1.azl3.x86_64.rpm",
+        "sha256": "357bee24f08c6bee1ffed0b3c9e3c96f3dc5eb843c8ca0bd0c28000905e63d6d",
+        "published_at": 1721663411
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/c/cryptsetup-libs-2.4.3-6.azl3.x86_64.rpm",
+        "sha256": "44aa413f6367dd0df4042de6b97e28dfa83f09715733e29169053ad1d98bc7df",
+        "published_at": 1721663411
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/c/cups-libs-2.4.19-2.azl3.x86_64.rpm",
+        "sha256": "4d01c0b3563008c86f1a7bc1c1b9b389a5319822609aca1be2c0ba37915f5946",
+        "published_at": 1792166828
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/d/dbus-1.15.8-3.azl3.x86_64.rpm",
+        "sha256": "b05ce578282db155fd4b30c656714b931d5c6e0e3a29c8569f1d58ad56eabc45",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/d/dconf-0.40.0-2.azl3.x86_64.rpm",
+        "sha256": "c1e88764e02b93ac70f742602eeaf4fba0a8967b4cdf794a920bc65e67a4b8cb",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/d/dejavu-sans-fonts-2.37-3.azl3.x86_64.rpm",
+        "sha256": "77393d8fd19678544ad0492259a6c2ca6eda27a74de7f82b64af89f25331027d",
+        "published_at": 1729017206
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/d/device-mapper-libs-2.03.23-1.azl3.x86_64.rpm",
+        "sha256": "4e871b3d38e0817c4534675a037b844ee12d36483992f68c98e2782c7b0f341e",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/d/diffutils-3.10-1.azl3.x86_64.rpm",
+        "sha256": "484419ebf2b8f507964280ab0dcf65d91fce1195463914beb7c21bf466c84e4e",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/e/elfutils-0.189-6.azl3.x86_64.rpm",
+        "sha256": "8b89833c8375be04b4a9cd94db34a269a255f77eafe82621657d9f6094cdac20",
+        "published_at": 1763153914
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/e/elfutils-default-yama-scope-0.189-6.azl3.noarch.rpm",
+        "sha256": "816f9d546a2d9c34b709797372d271ab78fd31aa3275ac48b5f71eb69f266827",
+        "published_at": 1763153914
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/f/file-libs-5.45-1.azl3.x86_64.rpm",
+        "sha256": "431961503ca3bb30cb78510008ba073ab50f35b2e425432db0ad1d6bc027d9d4",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/f/fontconfig-2.14.2-2.azl3.x86_64.rpm",
+        "sha256": "cc62643e79f7e9d4da53f8d1648a3e4cb04ddbf0aeebd4ea1ac4d4b99d388c16",
+        "published_at": 1775519319
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/f/freetype-2.13.2-2.azl3.x86_64.rpm",
+        "sha256": "4d581cf73a718b30bee99e505eb8e60b3d326414868d8eba76a6dd1b8cb4fb68",
+        "published_at": 1775519319
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/f/freetype-devel-2.13.2-2.azl3.x86_64.rpm",
+        "sha256": "39f028ee02a93013bd13891756e4bce0f62334a1b0b3c6cc2e414444a662c98e",
+        "published_at": 1775519319
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/f/fribidi-1.0.13-1.azl3.x86_64.rpm",
+        "sha256": "1910d02f09a5eb4af68828f669cb830a78b749b22f54238043ad6bd32e386856",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/g/gcc-13.2.0-7.azl3.x86_64.rpm",
+        "sha256": "5648de51e803a9b09a0dae9ab0cdc3efa4b2548adbcac8df374a43ed7ca2b6c0",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/g/gcc-c++-13.2.0-7.azl3.x86_64.rpm",
+        "sha256": "8c9e25ba140f71a38326b0ef7570d2c5103dd15ddec2135cfcac27bcb6063075",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/g/gdk-pixbuf2-2.42.10-6.azl3.x86_64.rpm",
+        "sha256": "68833674ff91288592759c06eb05e8efe84e2d791d3b28edf539b497eafded34",
+        "published_at": 1790827421
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/g/gdk-pixbuf2-modules-2.42.10-6.azl3.x86_64.rpm",
+        "sha256": "142fe85f2aa9b9784555b53fb7c0ed1b34215263b4aafa76ce12d3f1f03d6d54",
+        "published_at": 1790827421
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/g/glib-2.78.6-11.azl3.x86_64.rpm",
+        "sha256": "958aca73d457dc0a509232a03044e00a57ed3568099caad13c942b59afab93df",
+        "published_at": 1786577026
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/g/glib-devel-2.78.6-11.azl3.x86_64.rpm",
+        "sha256": "666fe39d924fd3adeb01e539ada2254916978a63d056c76bfc73dec52db479f0",
+        "published_at": 1786577026
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/g/glib-schemas-2.78.6-11.azl3.x86_64.rpm",
+        "sha256": "acfc269fd4d15141779c22850631a62fc92c10cdcbaf493153af515e5efa7e11",
+        "published_at": 1786577026
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/g/gtk-update-icon-cache-3.24.39-1.azl3.x86_64.rpm",
+        "sha256": "668871ac44c67c895ab28df47ed664819fb11491c030daeae1a56233449d0ce2",
+        "published_at": 1721690390
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/g/gtk3-3.24.28-10.azl3.x86_64.rpm",
+        "sha256": "abf12512797918e3a4dfa04ec7a0dc72431afacfd5a2e90006523e6704398ead",
+        "published_at": 1724730593
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/h/harfbuzz-8.3.0-4.azl3.x86_64.rpm",
+        "sha256": "d977239cae135eb916c7f27d60a435b0575f032a500b61fee527164bbc83b987",
+        "published_at": 1770680379
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/h/harfbuzz-devel-8.3.0-4.azl3.x86_64.rpm",
+        "sha256": "ec550d78a266320d835833834050d1a375419db80496968d9a8bf4c055fbb303",
+        "published_at": 1770680379
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/h/hicolor-icon-theme-0.17-10.azl3.noarch.rpm",
+        "sha256": "ccf86a4ff5ab0d9bd56a5681feffeab498e01715027fe6af291af41f71e5252f",
+        "published_at": 1721740723
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/h/hwdata-0.378-1.azl3.noarch.rpm",
+        "sha256": "c5d48281b49e9f1be99a27a553521c16e565ebf1722a9d2b174affb98ea41014",
+        "published_at": 1721740723
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/i/icu-72.1.0.3-2.azl3.x86_64.rpm",
+        "sha256": "e90d5f826e46f1c1bc010eaed277d1beccb0277db91db893e13388424a07888b",
+        "published_at": 1755545094
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/i/icu-devel-72.1.0.3-2.azl3.x86_64.rpm",
+        "sha256": "5d12f50c589323ff4da5dde98e5208dd87f5cf01ea478713af5f7456fe813255",
+        "published_at": 1755545094
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/j/json-c-0.17-1.azl3.x86_64.rpm",
+        "sha256": "c4638dc9f721f6efaae3076cccced99976d0cc3bcd0011dc683bc5951f0586ea",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/k/kmod-30-1.azl3.x86_64.rpm",
+        "sha256": "5ab2a4d2b2fbd01f442fa046efa468174dbc853cbc46eaf6ea461c3fa952581d",
+        "published_at": 1721663411
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/lcms2-2.15-2.azl3.x86_64.rpm",
+        "sha256": "dad56d1213e25a8d28d3480a9c4138e3f2adae9cc23163de6608622f43b7e3a1",
+        "published_at": 1778297547
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libX11-1.8.14-1.azl3.x86_64.rpm",
+        "sha256": "e68d27a74e76246c461c0d40d2c12e63327a46357b219d27ea3a55b3e9201cb4",
+        "published_at": 1793282099
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libX11-common-1.8.14-1.azl3.noarch.rpm",
+        "sha256": "466683f0c0483050cfc6a16aec1b8d279a801310d5bbfa495beb264c606ebf09",
+        "published_at": 1793282099
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXau-1.0.11-1.azl3.x86_64.rpm",
+        "sha256": "3d07b672cba4c6717e8b3461ef0ba082203418add7b0852e7334a38556a221c0",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXcomposite-0.4.6-1.azl3.x86_64.rpm",
+        "sha256": "10e8646a70ded339b367790d002567a2d852671519cabc656ee8497c15b10586",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXcursor-1.2.1-1.azl3.x86_64.rpm",
+        "sha256": "750a264eab793990c232941f921f500af2282b52f3d57855e7d716847fcf8980",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXdamage-1.1.6-1.azl3.x86_64.rpm",
+        "sha256": "caf15e7cfe744ec9b0bbd93ae6ababb20df5f186799c35c0f93084392615b934",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXext-1.3.5-1.azl3.x86_64.rpm",
+        "sha256": "968e2fdca210feeeef0846095e95c2871505e36855cd09b6e45c080664fb1647",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXfixes-6.0.1-1.azl3.x86_64.rpm",
+        "sha256": "cd2f446f28f7d6594379a366b96f7a68a1c95a178cc6c02899a6f16c4be27ad1",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXft-2.3.8-1.azl3.x86_64.rpm",
+        "sha256": "7bd1889addd00ace8cb56de61a5ea638987f401d54ffef406bd44fed36258dd1",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXi-1.8.4-1.azl3.x86_64.rpm",
+        "sha256": "19da8448c8007549217221f198e6a11d7bb38ebd5b517f5123a0e33b21e6c484",
+        "published_at": 1792811704
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXinerama-1.1.5-1.azl3.x86_64.rpm",
+        "sha256": "bff9606cf727ae3415657dfa5d6d49c6270f292c37fdb3d0a61ed0aa4d388c86",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXrandr-1.5.3-1.azl3.x86_64.rpm",
+        "sha256": "6a392b3c18f72b55a521a17d498aa72f5e7a5cb25cc5d8d8409db5bfec107648",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXrender-0.9.13-1.azl3.x86_64.rpm",
+        "sha256": "50431b7e517ae150b59a88428705495764892d2f71a7e4efcf44c3c25a074215",
+        "published_at": 1793282099
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libXtst-1.2.6-1.azl3.x86_64.rpm",
+        "sha256": "c1f751e3fbbcbd0f18eaaaafc1709b1b0f5dfb31421938df15e2e3fe4e289f62",
+        "published_at": 1792811704
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libbpf-1.5.0-2.azl3.x86_64.rpm",
+        "sha256": "79940534dc76ece600b7bfe8402e237327fc1cab5fe9ab3735cce806a1c27819",
+        "published_at": 1756931914
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libcap-ng-0.8.4-1.azl3.x86_64.rpm",
+        "sha256": "8581adc2486084581ae829ea79b7a929cb788c08c5fb35550eb4e44973426feb",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libdrm-2.4.120-1.azl3.x86_64.rpm",
+        "sha256": "29a0a810aa7ba996120747dfed63dd99aa0afc78a69872f67d5da7b38d57d179",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libepoxy-1.5.10-2.azl3.x86_64.rpm",
+        "sha256": "43385bbfaec8d32d95feb6e1bc1d9e912bb9a0012b5c0d8568eb4245e53cd550",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libevent-2.1.13-1.azl3.x86_64.rpm",
+        "sha256": "2237188a27061d424516c8a8cec01b30475b05a3c2b98e939233957cec4dcf1f",
+        "published_at": 1788381518
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libffi-devel-3.4.4-1.azl3.x86_64.rpm",
+        "sha256": "c3d00120623185bcdc88c7bb43552fb431bf48f9118819b70548b66d739bc120",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libgcc-devel-13.2.0-7.azl3.x86_64.rpm",
+        "sha256": "d79c0fea175a4e922cb577145d198210de5439f1074ca2f74a32475f2ca02770",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libgomp-13.2.0-7.azl3.x86_64.rpm",
+        "sha256": "a3134ca34de72d13544b013efaf2bf60f8b0e091d00e7b7b9e9bb3c3c462ebec",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libgomp-devel-13.2.0-7.azl3.x86_64.rpm",
+        "sha256": "75ba8a60d67340dd195f231a88ee0acd93ea4032eb8a42bb4edec75f6dd41e1c",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libgusb-0.3.5-3.azl3.x86_64.rpm",
+        "sha256": "3849dc95aca31a6b2434fbf27de6818971e4f27a434efe4b1b99435fb2187ac1",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libidn2-2.3.4-5.azl3.x86_64.rpm",
+        "sha256": "ac040fe37633a6c71034ee697ccc144bd0296e65d457bb732345337fae6e6508",
+        "published_at": 1729017206
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libjpeg-turbo-3.0.0-1.azl3.x86_64.rpm",
+        "sha256": "b40d845b4f9c372ce03e69a8eafc1706847bb39c2cb85434ac6998eeb5dee81d",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libmpc-1.3.1-1.azl3.x86_64.rpm",
+        "sha256": "e8ac8fd044e3065f0f40ec35dda1085900a9e640d6fb8a6d10668299484dc58d",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libpciaccess-0.17-1.azl3.x86_64.rpm",
+        "sha256": "7ddf842d7815591aee14b19920559b8fdd83b1f8821c16cb2dcc2881fd3d1fc8",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libpng-1.6.58-1.azl3.x86_64.rpm",
+        "sha256": "3ae31927a55a9b44f1a03af287c449559eeee5b20f443f4c8b619083c66a8bb8",
+        "published_at": 1779136299
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libpng-devel-1.6.58-1.azl3.x86_64.rpm",
+        "sha256": "57ed3ef97ec48d282bed9ce673fdfbe61eef3afb6b9d05d311320675d24232af",
+        "published_at": 1779136299
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libpwquality-1.4.5-2.azl3.x86_64.rpm",
+        "sha256": "e20f6296009d32f942a6001df0d763be0e3483d04591f1b91d5d9c4a8a10b50d",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libseccomp-2.5.6-1.azl3.x86_64.rpm",
+        "sha256": "6ac5a92309de1a274a2f7d889b4584564cdd87ea3ad1def77f3092238e20ff9d",
+        "published_at": 1762447103
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libselinux-devel-3.6-4.azl3.x86_64.rpm",
+        "sha256": "36d837f9fbd9d8b703e10d23b0d8ac199aa9854472bce29380643f5bdb3aae2a",
+        "published_at": 1763153914
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libsepol-devel-3.6-2.azl3.x86_64.rpm",
+        "sha256": "ff7c78bdb9e37217ae6f4ba001d08344d30fb26458cc90d48a1f12006cfc5e7c",
+        "published_at": 1746456311
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libstdc++-devel-13.2.0-7.azl3.x86_64.rpm",
+        "sha256": "fa0aee9f0c817cb4073aa50a0a69b16f5f269c3d80b719a65fe1ca3badf659d4",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libtiff-4.6.0-14.azl3.x86_64.rpm",
+        "sha256": "d4c87c8493447c6085992df0a37199fdafcf2479973547754ba80ceb08d84b00",
+        "published_at": 1783799770
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libunistring-1.1-1.azl3.x86_64.rpm",
+        "sha256": "e0fb3935fba5fbff7613d9e15782fef95ce1c2e74b5309db816a854c0013fd2d",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libusb-1.0.30-1.azl3.x86_64.rpm",
+        "sha256": "d57fbef3b5ba2566996a51655d52e55053cab4b3e951cb058f8d84952813c2da",
+        "published_at": 1781059156
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libwayland-client-1.22.0-1.azl3.x86_64.rpm",
+        "sha256": "8c0c87efdb818b3c29b0ca5f44d90178fe7524413a204ec987ac4fe1ac6ade05",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libwayland-cursor-1.22.0-1.azl3.x86_64.rpm",
+        "sha256": "97db445056f7a03c63678d56c1e4c452ace77bb44a4dc77bfbc99be8d3eabfd5",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libwayland-egl-1.22.0-1.azl3.x86_64.rpm",
+        "sha256": "5a3efbb4fc9cdcae354516381b1bb304c607f2e21e33bb32abf713ba82380933",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libwayland-server-1.22.0-1.azl3.x86_64.rpm",
+        "sha256": "b4807219ecee5cf330b673a42435c127f4c1204a3dddfdc0595eeadca42cca90",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libxcb-1.16-1.azl3.x86_64.rpm",
+        "sha256": "ffb384723f772a9bc67348ab2b3f846906614a0a85271bebf252c592b6ff0447",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libxkbcommon-1.6.0-2.azl3.x86_64.rpm",
+        "sha256": "0600a81b9a540b0d2e7dc57e9a2311b8bbbfd83376d439228a017b3152c4c197",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libxml2-2.11.5-11.azl3.x86_64.rpm",
+        "sha256": "27e30d5df8a51d1d1c21ce6996833c6c530fa42d53943b9ad51fff17a2a9c6c3",
+        "published_at": 1789743204
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/libxshmfence-1.3.2-1.azl3.x86_64.rpm",
+        "sha256": "4ed99fcf42b7fb8d6eefdb3d7e2af0e40859bfabfb6db5cc394bf15fee454b2e",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/llvm-18.1.8-1.azl3.x86_64.rpm",
+        "sha256": "6a5d91a99204a43ebab09e100eb6094816bf316439fbbcb10cc5ac54886d1a91",
+        "published_at": 1749101699
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/lm-sensors-3.6.0-2.azl3.x86_64.rpm",
+        "sha256": "5ce028180eb51fbacd36ac1822dbeed44c08235384ad4fd82d36d0286efd01fe",
+        "published_at": 1721755121
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/l/lz4-1.9.4-2.azl3.x86_64.rpm",
+        "sha256": "5e16dd7f6ee6f95c545b071d3d6a20ef5881d7b93c0c5e45702dbed52bd413d1",
+        "published_at": 1763153914
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/m/make-4.4.1-2.azl3.x86_64.rpm",
+        "sha256": "f2758d21eabd2dd5dc62edb026b79dbb0d727ff6964933a281e2a813705a1958",
+        "published_at": 1724730593
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/m/mesa-dri-drivers-24.0.1-9.azl3.x86_64.rpm",
+        "sha256": "512956f9c39adcf5b2409ecaa03d57540eb1effb5359c4d6f086c47d8dc52ddb",
+        "published_at": 1781374561
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/m/mesa-filesystem-24.0.1-9.azl3.x86_64.rpm",
+        "sha256": "cac16d177e8cbeaadc3a76dd48c09f6458b92bc424b62d01cf2b8565b077a5b2",
+        "published_at": 1781374561
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/m/mesa-libgbm-24.0.1-9.azl3.x86_64.rpm",
+        "sha256": "ba06f6f538f5b073bac6aa5f0201232bbca711abfed94e28d01aabe0d92b3e49",
+        "published_at": 1781374561
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/m/mesa-libglapi-24.0.1-9.azl3.x86_64.rpm",
+        "sha256": "31c52cc3487f9b1cdf96fb3e884c9c99867fa80db45b6b6bdb6da9d9b9b79e03",
+        "published_at": 1781374561
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/m/mpfr-4.2.1-1.azl3.x86_64.rpm",
+        "sha256": "264a9f4a7f3f46136749839a0175698d6a5347af9f5d08d1d6db9f152b1b2848",
+        "published_at": 1721767986
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/n/nspr-4.35-2.azl3.x86_64.rpm",
+        "sha256": "6dc3c05c7463bf62b902d6d86378190639542808581d20bb6584fe0a5be006bd",
+        "published_at": 1721767986
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/n/nss-3.96.1-4.azl3.x86_64.rpm",
+        "sha256": "e899f35cfc6c2f629ee745a34fef40ad41bf075c9cc6d2c2c75c973beb11629d",
+        "published_at": 1793043904
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/n/nss-libs-3.96.1-4.azl3.x86_64.rpm",
+        "sha256": "cd59c58630a20270534084eed06c488338c667b634e630390e939511da283cae",
+        "published_at": 1793043904
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/pam-1.5.3-5.azl3.x86_64.rpm",
+        "sha256": "2698aec4e3ab1755b53a5a1c60686abe42bf9c6e4f69b9f12aaac843a6fe6d18",
+        "published_at": 1752008738
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/pango-1.51.2-2.azl3.x86_64.rpm",
+        "sha256": "a9f6d608f97dcd812c6823877c1220110c7f41600ea940ff81969296a46facd0",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/pcre2-devel-10.48-1.azl3.x86_64.rpm",
+        "sha256": "2c319d38cde487756dddcc8af955dd2cd4ceda7143e13dc63cac970225d5dc9c",
+        "published_at": 1789743204
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-5.38.2-516.azl3.x86_64.rpm",
+        "sha256": "3c4bafe9b82632e6898719c834e2168eccb650e7fb0a51033d30c43c8d9452b8",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Archive-Tar-2.40-516.azl3.noarch.rpm",
+        "sha256": "260334580dd82d859bc509ca46b531f56e90e2738a93eb0457dc63cd40c10e3f",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Attribute-Handlers-1.03-516.azl3.noarch.rpm",
+        "sha256": "b42024eb3fb6dd9baab59500062c0f479c5ff65c40645e2a1aa193e172e7ae29",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-AutoLoader-5.74-516.azl3.noarch.rpm",
+        "sha256": "914a1ce69ca6a36f8318c4335a0eb7f863dd7635dcebc56808c2d642cefc39ee",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-AutoSplit-5.74-516.azl3.noarch.rpm",
+        "sha256": "48875aa9726c1c24889ca94539fb5c2cedb6a6be7ccfc83c7bcdcb3ba61a1e73",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-B-1.88-516.azl3.x86_64.rpm",
+        "sha256": "2d382834bded7dc01d164a36f66633617d52c8d134e9351b410db53bf78a94bb",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Benchmark-1.24-516.azl3.noarch.rpm",
+        "sha256": "3b986b71dcf64a4751dcd0ecd1a76d886d8f01bb5e18e1f71f3eb3caa6bb41ef",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-CPAN-2.36-516.azl3.noarch.rpm",
+        "sha256": "30e84bab6da1ed229b1c039a370ae0e7fd5621664a921c8ef62708879e3e731f",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-CPAN-Meta-2.150010-516.azl3.noarch.rpm",
+        "sha256": "417d0e13a9495f2ee8bb9082e18e7c5b24675ebc30678d214b8e1b2563734b59",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-CPAN-Meta-Requirements-2.140-516.azl3.noarch.rpm",
+        "sha256": "a7c19d0b74eb2865cbad83af6ebb612a69352c02ca2d532bc6c4bff0fcc00bc2",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-CPAN-Meta-YAML-0.018-516.azl3.noarch.rpm",
+        "sha256": "1c408095e340922a49a6f6029ef4ed63623759bbf9dfefa820068f8adf6b35ba",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Carp-1.54-516.azl3.noarch.rpm",
+        "sha256": "f831c9f033e14ee9916293b23ee14c7c59d0c244c3533bc87cb9a5596164b16f",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Class-Struct-0.68-516.azl3.noarch.rpm",
+        "sha256": "81d5c8fd6248d7c9c11e94abdb825c7071e411085e7d810b2dc67e3724d55d0b",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Compress-Raw-Bzip2-2.204-516.azl3.x86_64.rpm",
+        "sha256": "543bddda135db9ae0f25da052710beb9841ae784e70fbba5f76c4bd8ef0e981e",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Compress-Raw-Zlib-2.204-516.azl3.x86_64.rpm",
+        "sha256": "271711e95fedfe577e1b67c3fba3f4220156b84f9efca8157fc17eaa553c338b",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Config-Extensions-0.03-516.azl3.noarch.rpm",
+        "sha256": "b3d5053096e2ba4021bbe42074004f3e6140e1a80f8da3fe1216fb7f8ae1862b",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Config-Perl-V-0.36-516.azl3.noarch.rpm",
+        "sha256": "9ea9bb2c4ff81f55439824de4aa073cd7fffc03938e92a37a91c0beb615bcd56",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-DBM_Filter-0.06-516.azl3.noarch.rpm",
+        "sha256": "a7dc45de60eca0f3c8a7051ac78ab5ecb610288d007f715e4136ba04f10a9697",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Data-Dumper-2.188-516.azl3.x86_64.rpm",
+        "sha256": "d7b8b6b22fcca5bc05381d77ad56012f1fe61c56119e65b4c986a6ecdcfd4e24",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Devel-PPPort-3.71-516.azl3.x86_64.rpm",
+        "sha256": "cb0cf99d3d048a22eb5d5ce4191f4c4fd8f2528b7bc845e10799b17316dd6b7a",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Devel-Peek-1.33-516.azl3.x86_64.rpm",
+        "sha256": "b92e4c30d8a0ad8f178b5d7ddd5e1d2ebbbc56bfe20907dc26b03706858d9804",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Devel-SelfStubber-1.06-516.azl3.noarch.rpm",
+        "sha256": "f2f96c4b6bbb0e41a28509ca8b3681dd7d7c8d595005a67b1a77c256925baf15",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Digest-1.20-516.azl3.noarch.rpm",
+        "sha256": "16ce74cd470be084998e98e6cf8078089ca881e483b8d56ec76273412fe76412",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Digest-MD5-2.58-516.azl3.x86_64.rpm",
+        "sha256": "b7487739c2f80c038a22b9787ce119eef0b2df8bd499af2a7a336507fbbc2abd",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Digest-SHA-6.04-516.azl3.x86_64.rpm",
+        "sha256": "1984375195b08fe89b4cff86d59e97746dd67c1251e9581207861c17822b4545",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-DirHandle-1.05-516.azl3.noarch.rpm",
+        "sha256": "3d64666e7b10d086b7746a52754865188b911b92dd35989d3fdd79c50426a93e",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Dumpvalue-2.27-516.azl3.noarch.rpm",
+        "sha256": "c720c720265998485081a6efe49e5c5fbc63cbb6597dd42d489e5c10f49c9956",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-DynaLoader-1.54-516.azl3.x86_64.rpm",
+        "sha256": "84cd83428b6c6081aa660afe7bfcc55d4284e33b31f2d7fe76807d4258814b6c",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Encode-3.19-516.azl3.x86_64.rpm",
+        "sha256": "3773ebef273991e6930e5d2b085b63941352b2b37659c1b9607782a1ada60597",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Encode-devel-3.19-516.azl3.noarch.rpm",
+        "sha256": "2aa4f7341070f4a3e4943b418e4f82065d7f8f47286038e104bbf3080a6250f6",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-English-1.11-516.azl3.noarch.rpm",
+        "sha256": "4dd6f240b50f065eba76972a28f48986eb42eda2470fa8b251492dd7b5ed8bc5",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Env-1.06-516.azl3.noarch.rpm",
+        "sha256": "1a122118839135c511f68e92badacd30230f9dfa6e6602403be189a59120b379",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Errno-1.37-516.azl3.x86_64.rpm",
+        "sha256": "9e7b5cf2cad8625cfd40508a908eebcbde8822fa0dac29c4dbe69f4ac6686c7b",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Exporter-5.77-516.azl3.noarch.rpm",
+        "sha256": "7ffb64bf79871acb67a4a4dc5877f7f4b6b37debda7a61d2970cb9c4fdbe7477",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ExtUtils-CBuilder-0.280238-516.azl3.noarch.rpm",
+        "sha256": "2c36fcbaa9954a67c069023b6cc05b9e21d1e5684b338a6ff3a2dea8d95f4c5d",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ExtUtils-Command-7.70-516.azl3.noarch.rpm",
+        "sha256": "9799f6455cb37283f3d4839bc03e0e8c0c222065884e05460f264a3352a1c86c",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ExtUtils-Constant-0.25-516.azl3.noarch.rpm",
+        "sha256": "1573047029b7a1bc6addc45b621bae9e4c801e0ef16993d48c993f84265581a8",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ExtUtils-Embed-1.35-516.azl3.noarch.rpm",
+        "sha256": "5bbfed0744271884ce1ab785d6396f27e7936bc2d2e5956dfb35d7a87700a3a9",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ExtUtils-Install-2.22-516.azl3.noarch.rpm",
+        "sha256": "6dee160ceb172fc1519082d22228c591f9011eaa26ed690da0fa4ddfae4650e3",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ExtUtils-MM-Utils-7.44-516.azl3.noarch.rpm",
+        "sha256": "86be15b4d6a91ec18c6a08449e71da180923115f00c2695e14814bd8fd0dc966",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ExtUtils-MakeMaker-7.70-516.azl3.noarch.rpm",
+        "sha256": "0275728aecb9dbe8c5f6100c03d295fd75a2bff244953b0b63bd480c242edd78",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ExtUtils-Manifest-1.73-516.azl3.noarch.rpm",
+        "sha256": "ea8c6a4b97d10c0d54fd848cf7835c85a6ac57bd85d616be9875cc5cfd7ee361",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ExtUtils-Miniperl-1.13-516.azl3.noarch.rpm",
+        "sha256": "d02c2ec713c6f6ad39d064ce6a29295ef38a86fab7e2d7fdf3e9bab5592c8645",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ExtUtils-ParseXS-3.51-516.azl3.noarch.rpm",
+        "sha256": "e541e0643933fc59d3b30bf6887c4df5af273190ef609281435be71b4138c94d",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Fcntl-1.15-516.azl3.x86_64.rpm",
+        "sha256": "e790d9623af0cf6125ade1fec3ed799b421d747e231c937a8e560ca554ad4790",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-File-Basename-2.86-516.azl3.noarch.rpm",
+        "sha256": "3243e21d6765bc2fcd40690a52b711a668b7093e9b1ea0e7899466d5bd62c3cf",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-File-Compare-1.100.700-516.azl3.noarch.rpm",
+        "sha256": "a33a10a29d5890edd88910c8b580d0e5177cc3b95d9b8ba391b96712db1cfb1c",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-File-Copy-2.41-516.azl3.noarch.rpm",
+        "sha256": "97d3c7d394dbeddde4e6aea8a3b518b5872c4c53e994504fa92d6867da90a6f3",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-File-DosGlob-1.12-516.azl3.x86_64.rpm",
+        "sha256": "0d0ac1a2f3c9f23b7ca5ef0af8307315e84301d504504da23ab17144ad955361",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-File-Fetch-1.04-516.azl3.noarch.rpm",
+        "sha256": "610d3b0e845796de74b3c12e65f8c228908813be6af0e3b63f88160d8c975e84",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-File-Find-1.43-516.azl3.noarch.rpm",
+        "sha256": "443917d9de50aeda5b61273be803d985809f005d15a92bc6e07cc78264390dc8",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-File-Path-2.18-516.azl3.noarch.rpm",
+        "sha256": "3588971b9dcc05f1ea55f834a36197683f803f42513052ee6fa9e686b2ed673e",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-File-Temp-0.231.100-516.azl3.noarch.rpm",
+        "sha256": "5560bc9e360633937e1f05a57882eadd1e9d4b57ba7f04440f35a5aae43b4ed3",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-File-stat-1.13-516.azl3.noarch.rpm",
+        "sha256": "b4a79bfc4f8f161e3d9872f97b1bf3d138625357fc7f00a47e7915a55b5afb1e",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-FileCache-1.10-516.azl3.noarch.rpm",
+        "sha256": "79b770c1eb2f56a55d09ee75e36850d9b5cb2f21bbcd2516f5cb2775e1e58ae6",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-FileHandle-2.05-516.azl3.noarch.rpm",
+        "sha256": "821689f043c08861cf03c0fd23e923e41e38c3c79a3360d111aae26b98c97dcc",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Filter-1.64-516.azl3.x86_64.rpm",
+        "sha256": "2d644a3c9d6b2b2fce6b14c5578406d7f958758ea328f3633ed7dd1d4c204439",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Filter-Simple-0.96-516.azl3.noarch.rpm",
+        "sha256": "90cec9a6ad3595db4a3c18f9dcc77a50bbfbd4a48e07b8a00c61b9f4cc70ef4d",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-FindBin-1.53-516.azl3.noarch.rpm",
+        "sha256": "0a07f3d5a41b00ad7d843af39a11aefd83bf4c945996362ef32bc69c4cca3b65",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-GDBM_File-1.24-516.azl3.x86_64.rpm",
+        "sha256": "9e73790a0ac325bc62ccb7eb2b9b690e75808973236137433f2b3756063aadf2",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Getopt-Long-2.54-516.azl3.noarch.rpm",
+        "sha256": "8c294d79d43ccdca8b5d913dbcb481cbb61c5313f113326d65fee79fcb4dc8fa",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Getopt-Std-1.13-516.azl3.noarch.rpm",
+        "sha256": "828d0b3d2fa608234a2d690c0f4fc2a4dcf8e991f709e6baa6dea28040582a62",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-HTTP-Tiny-0.086-516.azl3.noarch.rpm",
+        "sha256": "1ade9396b044c5e22bdd705ced4e0110311b18d082799d49e76ad217c1920901",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Hash-Util-0.30-516.azl3.x86_64.rpm",
+        "sha256": "2ade86fe2339543e918290ef3b1a00d201b8390d3362d51accedc157a705fd28",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Hash-Util-FieldHash-1.26-516.azl3.x86_64.rpm",
+        "sha256": "95982e775639325ce88d2db74ee7be379317ea287e6742033b93e45d73b5e0f1",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-I18N-Collate-1.02-516.azl3.noarch.rpm",
+        "sha256": "9ba5607c562f1fa4714095211ba483fdc5be2976cc12fc8dac612fc0419a09cd",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-I18N-LangTags-0.45-516.azl3.noarch.rpm",
+        "sha256": "f06fdfa4795d60eb0d8d7dd3fe47e593873e1ceaa172a4f7d87df992ce51929c",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-I18N-Langinfo-0.22-516.azl3.x86_64.rpm",
+        "sha256": "2e571e29757bd1d789a2efa415a83738322485fa242604a2d8a8e3e61d5189d4",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-IO-1.52-516.azl3.x86_64.rpm",
+        "sha256": "0ca8ca2c22546ae93d5d80e3ae91e765868665b28f94f38ba78b8a040fb9790a",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-IO-Compress-2.204-516.azl3.noarch.rpm",
+        "sha256": "3f9c3861d60d1b082fc03f8e8e308e563a9b19ebeef3506f8f1b056af032ac1c",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-IO-Socket-IP-0.41-516.azl3.noarch.rpm",
+        "sha256": "cb8dea59877776256a15413ac72cd4155ec5622338b0952345c364bc3a622948",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-IO-Zlib-1.14-516.azl3.noarch.rpm",
+        "sha256": "efec47c18e004628735fa114d04a8330f0ce6c2876d41eb61f67dd991be95714",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-IPC-Cmd-1.04-516.azl3.noarch.rpm",
+        "sha256": "25c86c4d5cae78f5dd5aea5ac76dbc0a2ac92a1bfd7df2d227babbbc2ac41ad5",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-IPC-Open3-1.22-516.azl3.noarch.rpm",
+        "sha256": "c371d00d4de18e5369db4ba50ee06bd3b3a93403ec929fdb6fb39cb0abec061c",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-IPC-SysV-2.09-516.azl3.x86_64.rpm",
+        "sha256": "ce66ab00e89df7fdc1cb73fa5917828c4923f2db23c836e4b1345e08c9e66bed",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-JSON-PP-4.16-516.azl3.noarch.rpm",
+        "sha256": "875830fe07dc164130ef3bc4c5928f570e4d6c2d2837db61f64fc5d83ce215ec",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Locale-Maketext-1.33-516.azl3.noarch.rpm",
+        "sha256": "4e8713a20a4ba007c4c6d9b54a33bf02aca11a31f740e43a55a275fdfb80908f",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Locale-Maketext-Simple-0.21-516.azl3.noarch.rpm",
+        "sha256": "955ee72a192399b41e1c1308b3ee5d40ced573e89460919567e33f4dca0655d8",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-MIME-Base64-3.16-516.azl3.x86_64.rpm",
+        "sha256": "65e28f2449f88a4c1b8fc3fcb3789f56018154822e15abef8537cf561dd2ee88",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Math-BigInt-1.9998.37-516.azl3.noarch.rpm",
+        "sha256": "3ff48ae44ca5793b4a62872233beb77c35aa0d6ccd013fdf3ad1f3546e72e2ac",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Math-BigInt-FastCalc-0.501.300-516.azl3.x86_64.rpm",
+        "sha256": "bd4b4c23219517981fc0b6401fc56252b8f7301f628fd59d4cf2fb7f0eb8bcf3",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Math-BigRat-0.2624-516.azl3.noarch.rpm",
+        "sha256": "ea0d85c54336a4135770713093cee8387d160b5cc5aa036691214ec628af577d",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Math-Complex-1.62-516.azl3.noarch.rpm",
+        "sha256": "eb2f416becce83ea6dbe25050acf91573994c1a341961bbaf32c8a6f185f508c",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Memoize-1.16-516.azl3.noarch.rpm",
+        "sha256": "c0b8fbdbe90625a4bb2fee8a2d8e5854a52adbdbb1456823e3cc2d8b4bfcafe1",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Module-CoreList-5.20231129-516.azl3.noarch.rpm",
+        "sha256": "e68af6582c26fdc0f973a31c4ef0c698371b98e8fb36f7c837399092fe36ebaf",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Module-CoreList-tools-5.20231129-516.azl3.noarch.rpm",
+        "sha256": "4a2d49bd7d02ecf92b102ef69fc0ed4e2389e0b3581c1c4a642ca60a06a7fac5",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Module-Load-0.36-516.azl3.noarch.rpm",
+        "sha256": "e6a012cad7ee69020667a444a1e028382a1a562c1b650e3d763558abff656325",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Module-Load-Conditional-0.74-516.azl3.noarch.rpm",
+        "sha256": "3ca744f5a3106252cb56e479c672ad389ea622c71a4ee5eef32b562dfb678297",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Module-Loaded-0.08-516.azl3.noarch.rpm",
+        "sha256": "0758d0bd606fa046263b777f2e7139d8e4b326819f65c8a3d95cc813a62baabc",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Module-Metadata-1.000037-516.azl3.noarch.rpm",
+        "sha256": "364d50f2577a7e6e8f901dda0069d3eb11606f6dfc1a9247ecc97e2e68d6da09",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-NDBM_File-1.16-516.azl3.x86_64.rpm",
+        "sha256": "7bbef4ead0126d011fde2a0e818aedd094573b925e889367e2ceffde5be53274",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-NEXT-0.69-516.azl3.noarch.rpm",
+        "sha256": "19b95eb2cdaf0a4c1fb7029394ecdf91287b7254efb74aad5401cfbc8945d609",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Net-1.03-516.azl3.noarch.rpm",
+        "sha256": "9957c4a4caab3e15b412989a11b38069a7e7c13fb95fac37649ce6daac6ec987",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Net-Ping-2.76-516.azl3.noarch.rpm",
+        "sha256": "5355e92ccce21caf918b4857393290cfa5594cdd8d83c8a53c8da3e70f60ab9b",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ODBM_File-1.18-516.azl3.x86_64.rpm",
+        "sha256": "74808692e605fcf9b4cddb5475600ada7387898c0920315d65d54439c61dbfb7",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Opcode-1.64-516.azl3.x86_64.rpm",
+        "sha256": "99876731650154f4bd93ddf08b9cbee41a830e625bb5715a78c684eaebff9b1a",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-POSIX-2.13-516.azl3.x86_64.rpm",
+        "sha256": "42a41e11e921906c49ae73b7a8b39676fbd801af2180b43e37ee7f9376d6d71d",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Params-Check-0.38-516.azl3.noarch.rpm",
+        "sha256": "2e8e54c8d4dd90ddf7702277173d956f7a028d7c644a14e5485b04beb8535066",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-PathTools-3.89-516.azl3.x86_64.rpm",
+        "sha256": "9debd0bf49d696f995b838ca97623cf1b588f2ad84983b92b5fdb49cefa0fc5d",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Perl-OSType-1.010-516.azl3.noarch.rpm",
+        "sha256": "9e2f46c88d8e6237dbf09a7d40d2d5b1cbe020e59d458d23a7b63b06ac1ebefc",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-PerlIO-via-QuotedPrint-0.10-516.azl3.noarch.rpm",
+        "sha256": "caf1d6d7f733267da0a53643f1006f473b731b6129df06c635a2f3fc4cdd320d",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Pod-Checker-1.75-516.azl3.noarch.rpm",
+        "sha256": "f746ea09b619b43c3710dcd145dc07ef9c1c1bf123ccd5924108a1da58875420",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Pod-Escapes-1.07-516.azl3.noarch.rpm",
+        "sha256": "40cc888338cc67e811d6642f2e5500dcdc35d8a0f3b59cc4f9b6984fda3e2fd7",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Pod-Functions-1.14-516.azl3.noarch.rpm",
+        "sha256": "a1d2e0b03defcadebfa4795c342bcb5ef1d2a0cf733d092b4a3a31a06247c9f0",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Pod-Html-1.34-516.azl3.noarch.rpm",
+        "sha256": "fcfdecfd8460eaf2988849ee32e6c686e1fbf8351c883efd1feb8f3d01c29190",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Pod-Perldoc-3.28.01-516.azl3.noarch.rpm",
+        "sha256": "c65330b896fdac2217547e0ece6a33e43df0b40841e7bff64acc8e7eacfea4b3",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Pod-Simple-3.43-516.azl3.noarch.rpm",
+        "sha256": "7a49a1039965cc11a06f692ee9cbb05823de80c82ad01ab8ad954bbbbf5e5ac0",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Pod-Usage-2.03-516.azl3.noarch.rpm",
+        "sha256": "9566c43dcab44121c0d9a0921678c6c21da36d256c6a1ed590d652040309f25c",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Safe-2.44-516.azl3.noarch.rpm",
+        "sha256": "efc7a7ad8ab5e31a6a563cec31c1878091bb8990280785cf901509137fcf3f4c",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Scalar-List-Utils-1.63-516.azl3.x86_64.rpm",
+        "sha256": "de0e9b73c61206f8d4dc2aaa56e7b466f9da147adbbf7d371dc2aa5ff358dc31",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Search-Dict-1.07-516.azl3.noarch.rpm",
+        "sha256": "6fe95966dcd8bd397532f0d86c8e953c3ac17a42f1d55a9566af5d0913e8f9eb",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-SelectSaver-1.02-516.azl3.noarch.rpm",
+        "sha256": "6faa66aee6c97008bd2e7a89f5b3579810b98ebbe38323397b94212dcd586f92",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-SelfLoader-1.26-516.azl3.noarch.rpm",
+        "sha256": "83357d701e48d49c435dac9147f45d648f467b83b9864400ebd5ce887ab5e69e",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Socket-2.036-516.azl3.x86_64.rpm",
+        "sha256": "3216c7079357af02ed31475b147c9d2634a2478eb977b9b0793fc5f27d469d2a",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Storable-3.32-516.azl3.x86_64.rpm",
+        "sha256": "d1c3fd732004b8cf96fd69d2296687bbd25e5ff13347e61d73dda18e8037c47f",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Symbol-1.09-516.azl3.noarch.rpm",
+        "sha256": "bc84750da5ab007af8921d1477f24756dcf83e67b03d3acc9e2826244df5aac1",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Sys-Hostname-1.25-516.azl3.x86_64.rpm",
+        "sha256": "5d77e79c179e00661962f4a55365fa3121b68c512a0ffdc1cb3607fd023d1ed6",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Sys-Syslog-0.36-516.azl3.x86_64.rpm",
+        "sha256": "e6a418871c435b652169bd72133839189fa5e828f4202b84652674917e96f390",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Term-ANSIColor-5.01-516.azl3.noarch.rpm",
+        "sha256": "9b0fbddd22e02c60f7fa0cdd9e33ddbea92cfd5db1736d9744efcc337e7bbaa6",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Term-Cap-1.18-516.azl3.noarch.rpm",
+        "sha256": "8225686f7c60304420706bd2ef98f228cc8f431f998d22709d7fb64050f7a4a5",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Term-Complete-1.403-516.azl3.noarch.rpm",
+        "sha256": "9906f29088e66cbf2d23b692520e9b4f881b14a0997bde7fee796e621baf7e2b",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Term-ReadLine-1.17-516.azl3.noarch.rpm",
+        "sha256": "ba02deb94493496d9eda01d990af1033223e7e9f4518b2696ea4c81affa9d03f",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Test-1.31-516.azl3.noarch.rpm",
+        "sha256": "8464602796d616b3b33c158e77ada9039d59af4aec131952cdf273af9f91045f",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Test-Harness-3.44-516.azl3.noarch.rpm",
+        "sha256": "ab1c23662020e4f326ec530a4bf1c05b73b2a81af1755e86328f8d42d9d1ab1f",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Test-Simple-1.302194-516.azl3.noarch.rpm",
+        "sha256": "7e5b0c7f455d04df275c9db36984cab7b14fecf882297e2c64f594e220ae7d5a",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Text-Abbrev-1.02-516.azl3.noarch.rpm",
+        "sha256": "f959cf46d74e7bfbc88c402e94c5f20250b78ad5cc7b6dce8eabc6ecda78120f",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Text-Balanced-2.06-516.azl3.noarch.rpm",
+        "sha256": "e7c51261899b1838a9df3ae0213099274228cbbfc57ea99469af9d42a8e21e06",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Text-ParseWords-3.31-516.azl3.noarch.rpm",
+        "sha256": "562066df2d79a6906c54bc53211ab39fa4847656927923b9d3df153682f8b69b",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Text-Tabs+Wrap-2021.0814-516.azl3.noarch.rpm",
+        "sha256": "e3b225310a7fd7b666b8178139582ff2deb80cf4beef2122d0bc5db716841f2e",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Thread-3.05-516.azl3.noarch.rpm",
+        "sha256": "77ad884fe6968b22a69eaa3a2faa5166db58cea87d493e6c655ef5c0244f0f96",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Thread-Queue-3.14-516.azl3.noarch.rpm",
+        "sha256": "64efbbad1b4ada58123209b5ef66ff98cca5bd6605af6a165046773370dd41e3",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Thread-Semaphore-2.13-516.azl3.noarch.rpm",
+        "sha256": "79dbc87d81a796a322b9c9730fc2c467fd8fc21b47bbdedf4d31bbb3cacc9795",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Tie-4.6-516.azl3.noarch.rpm",
+        "sha256": "6aaf436b72bf21de0d04635c2555a2595ad8490c966671842b6ee7a1d539411b",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Tie-File-1.07-516.azl3.noarch.rpm",
+        "sha256": "e72837565f80fc0f26968e559b6224bad2fa3b2e9d40d9b2f95788eba58c05e6",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Tie-Memoize-1.1-516.azl3.noarch.rpm",
+        "sha256": "ee07366baae82339f9bee9a7a601dc23f51bad335ec09e6bb2090f79e6209984",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Tie-RefHash-1.40-516.azl3.noarch.rpm",
+        "sha256": "0ab09549ba05c5871e4f1cfa2116e6291412857e399f11d97e647af80a4e96d9",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Time-1.03-516.azl3.noarch.rpm",
+        "sha256": "f06e6911994d2829d7061791c2279a3737f8598a551195de57a91db89dac29c9",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Time-HiRes-1.9775-516.azl3.x86_64.rpm",
+        "sha256": "e36f4a048b8abd3b0896e08f2d02ed38c32dbd6e0108df4e9ee08bb6b88a4de7",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Time-Local-1.300-516.azl3.noarch.rpm",
+        "sha256": "566c6342116833d221910a268664b3a2427a8cb6d4a41ae18d555716581b0413",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Time-Piece-1.3401-516.azl3.x86_64.rpm",
+        "sha256": "8210f7a87dc34adb4e02251399a3407d4c2bea40d4158778983dbf5f3d8cd60a",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Unicode-Collate-1.31-516.azl3.x86_64.rpm",
+        "sha256": "d859a43c5f06bdfec8250d1d27597d561b4f924950f6ba2389d598b88c036663",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Unicode-Normalize-1.32-516.azl3.x86_64.rpm",
+        "sha256": "704c545efc0b59b4b92fafd73883afb6577501c1bc0420fd63d4a9d87981e2d4",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-Unicode-UCD-0.78-516.azl3.noarch.rpm",
+        "sha256": "a424ef892767717d1808f14c1cdbcf7b31b98d6b22ea4fd0bc564efc38680b45",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-User-pwent-1.04-516.azl3.noarch.rpm",
+        "sha256": "13a5e50a76e3634366a251e1e80b7fc4db1a33381f65acc444e0fb4eabe71e04",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-autodie-2.36-516.azl3.noarch.rpm",
+        "sha256": "eaa0cc18e6b0e90acdc9b824869a67ecbb29ce2bb945398e6018ef1c560e44f1",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-autouse-1.11-516.azl3.noarch.rpm",
+        "sha256": "f443f53d292709cd26a5a0e248bee24f8b89fc47c1603519a16e7ea66befa789",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-base-2.27-516.azl3.noarch.rpm",
+        "sha256": "58557630607403412d2ed013e59d333ab85906c89c048d0c8c3f646a33ad5f5a",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-bignum-0.66-516.azl3.noarch.rpm",
+        "sha256": "ff24c4f40e22174a21f3dfb29369a56a10f435a88d449a65479dba9d401db6f4",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-blib-1.07-516.azl3.noarch.rpm",
+        "sha256": "12fec8efc3e66d84939c0772366346c3e4fdd3e1e4b1a1b38843a5ed38afcdc7",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-constant-1.33-516.azl3.noarch.rpm",
+        "sha256": "19f4be81a8742301a9bd5c924c5c860c63bc1d0521934f9f8242448c0e231f3b",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-debugger-1.60-516.azl3.noarch.rpm",
+        "sha256": "cb6bc1ff538b8067bdee89b59f3afc660ea972ae43028dcd27822f89ad418592",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-deprecate-0.04-516.azl3.noarch.rpm",
+        "sha256": "54a0823dceb41034d46d1c4ba07e5493d31535bf00f833bdcc319b8dfad8ae19",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-devel-5.38.2-516.azl3.x86_64.rpm",
+        "sha256": "815533e6d68591ffd690607baa2969b4119cc043b907042f7c729c694e4e6334",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-diagnostics-1.39-516.azl3.noarch.rpm",
+        "sha256": "57789e5fd5d9ef2a310d5970787668f3b46d0e2ecc1475e010c4533c9d701374",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-doc-5.38.2-516.azl3.noarch.rpm",
+        "sha256": "3d4e2a43da413f8cb3546a699190f595f41289c10b76994a101f707d0bcec272",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-encoding-3.00-516.azl3.x86_64.rpm",
+        "sha256": "d07bdd277914efbc270b0efdb09e36f9a6a82f7c162a51a4867b61bf1fc3e6eb",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-encoding-warnings-0.14-516.azl3.noarch.rpm",
+        "sha256": "0079737ecc66f650eb92c3b3dddbe9b5d30649479ff801b2fe34cfc332e76d0a",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-experimental-0.031-516.azl3.noarch.rpm",
+        "sha256": "c93a032b2e68aac41e4b2da5bad7c4ba73915b530cbd69f737983f2c1e24637d",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-fields-2.27-516.azl3.noarch.rpm",
+        "sha256": "62544fa8fb95e78792a7801991ed44106eec0db5ea6ad0691d379116ed85b4be",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-filetest-1.03-516.azl3.noarch.rpm",
+        "sha256": "e525fa3d472850de07b9b5cdd144ab5c88bbbcbd64871466c0bc7ee8e849372f",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-if-0.61.000-516.azl3.noarch.rpm",
+        "sha256": "8bea822533c7bb236f9010262e07807ab3841f6a5292410b235ad219527038e0",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-interpreter-5.38.2-516.azl3.x86_64.rpm",
+        "sha256": "82ea3b4b0cd4e07d50da0ac1318d2d5e963fa30042bf138ec79a98d647dbafd3",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-less-0.03-516.azl3.noarch.rpm",
+        "sha256": "7339a9993515b135740aac1a192f38fc6193b0c115d2126828cb555aa2d3b549",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-lib-0.65-516.azl3.x86_64.rpm",
+        "sha256": "2f38b72b796ee5f5e1d94d217c8248882ac821dff8c6de4dca031e58afaac6b1",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-libnet-3.15-516.azl3.noarch.rpm",
+        "sha256": "41c902e92134ae057edc87ef7a3683949852038d0f6895644ec6a6a82365e5c2",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-libnetcfg-5.38.2-516.azl3.noarch.rpm",
+        "sha256": "3a321b45ac6439b18d3ecfe0c776df75b31b346a9a104e43c2b15acd5d2e9e25",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-libs-5.38.2-516.azl3.x86_64.rpm",
+        "sha256": "61c52d2680dfcb76224ec14eee5584c32781fb98e77654220e720f25ade689f4",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-locale-1.10-516.azl3.noarch.rpm",
+        "sha256": "257c0cd7fc4a61c2379196af681cf4f416e0683308b6c3e210730e1562829602",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-macros-5.38.2-516.azl3.noarch.rpm",
+        "sha256": "9ca533649cc22a1463946ecc7559e5b273b8ceaa6679bfa4b615415f4e5a0c9e",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-meta-notation-5.38.2-516.azl3.noarch.rpm",
+        "sha256": "97716bb1f743014500e4063fe3bd87474dc6efd8543b24c0e53863237081a430",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-mro-1.28-516.azl3.x86_64.rpm",
+        "sha256": "bf1edf4f7d6ab01cf931fced61fc4071a3551b4ad9e7d4ead3ffe0baa945ba55",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-open-1.13-516.azl3.noarch.rpm",
+        "sha256": "75f485e6d75f15afb5734846c3ad8c218b54c1740f1c414a054ab71cd643b709",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-overload-1.37-516.azl3.noarch.rpm",
+        "sha256": "16351bf39e46a82822331d871d22e88a331727b9948b93d9af99875df90817e4",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-overloading-0.02-516.azl3.noarch.rpm",
+        "sha256": "282303c58e687bc8ade98e920658687525b85fe52e7399813c555bb944f91b5a",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-parent-0.241-516.azl3.noarch.rpm",
+        "sha256": "eba13cbd4c9e1170d0f7b7790b385e17e8e09eed20e66f6226e042d8cb631d73",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-perlfaq-5.20210520-516.azl3.noarch.rpm",
+        "sha256": "820bad35e01a937230ae521ccc965e591cc68ab44463c4cdda37338ec41736fa",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-ph-5.38.2-516.azl3.x86_64.rpm",
+        "sha256": "837eab94aaf7aafdc5e53f8a76eb3f021c4a9ee50dbf030d04be40a0d67cd932",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-podlators-5.01-516.azl3.noarch.rpm",
+        "sha256": "cefe897d034d7050aed5a2d9245b8f6e9bb828cbbd25f72740f30ee56d1108c8",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-sigtrap-1.10-516.azl3.noarch.rpm",
+        "sha256": "d6580d16d09accde6488c35bbc7cb15bc229af75de98c47331a161cd4b999fb7",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-sort-2.05-516.azl3.noarch.rpm",
+        "sha256": "81e0894d4c00651a63c8aa39efe4ad00b9145ab1ab1373f527ec2b9d5dce1d40",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-subs-1.04-516.azl3.noarch.rpm",
+        "sha256": "fbf1f038ed4fe8b03ce7cac936aeaccd5e5ec42a97f35178196a8c178aaa94a1",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-threads-2.36-516.azl3.x86_64.rpm",
+        "sha256": "8a39c94295f21d46f3f276607d3ccbc3f4112bcd7bcbbd5529988b41d36a07b8",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-threads-shared-1.68-516.azl3.x86_64.rpm",
+        "sha256": "94bdd884522acfbdd682a50ae6fcd21db298c1171fa72751ebd236ab5f642e39",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-utils-5.38.2-516.azl3.noarch.rpm",
+        "sha256": "a122f0001c7d3d1905598d7a22fb27663df478f44331c316814aceac736e1bff",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-vars-1.05-516.azl3.noarch.rpm",
+        "sha256": "8410f122b013e1b4ff400cc2d862e823aeaea4fdf7a8aebffc98454c291e6ec3",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-version-0.99.29-516.azl3.noarch.rpm",
+        "sha256": "8651d5959ffcf9e7050efe5294664088fe7e66ba520150747611e8e4a42b9ff3",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/perl-vmsish-1.04-516.azl3.noarch.rpm",
+        "sha256": "0ab6c400e22a1fff9b5b96d514b8bbec75f28cb8d577748b9c84ab86d1f62604",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/p/pixman-0.43.2-1.azl3.x86_64.rpm",
+        "sha256": "7ab67c5b64e55151f609fee490e311378e81f6d6a56bcc89e881f4d55c622ec8",
+        "published_at": 1721834091
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/s/shared-mime-info-2.2-3.azl3.x86_64.rpm",
+        "sha256": "4503a70eb4b06e97122c80b372395245d30c8b7d66bc6f2877fdaa5feaf0fc70",
+        "published_at": 1729017206
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/s/systemd-255-34.azl3.x86_64.rpm",
+        "sha256": "b1a8a40106bdc3cf076c5b509cfc1c2c92221fe15b6ad7dd4ce1aef8e6c9fc39",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/s/systemd-libs-255-34.azl3.x86_64.rpm",
+        "sha256": "63c8467bd98cad8656eac98dac3fce11f8e630263e4afc457c9ff03cc88df721",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/s/systemd-networkd-255-34.azl3.x86_64.rpm",
+        "sha256": "a3acbd11b4662707bf5c266ba940051d20910be44b2bee960a6400cfc4f00df8",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/s/systemd-pam-255-34.azl3.x86_64.rpm",
+        "sha256": "786a2ebc9ee901ee5eb14d6de6bb7c9d4602e4a92196d3b558fcbf8d812f3ac5",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/s/systemd-resolved-255-34.azl3.x86_64.rpm",
+        "sha256": "f08ec021e2745563184b5aa7fed2d57031d52b71d61b34c990918eddcf5700ee",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/s/systemd-rpm-macros-255-34.azl3.noarch.rpm",
+        "sha256": "6bfc927eee4c0b3276cb455b7072777e5eae8760ca2f3e04ca9e1114c07eee54",
+        "published_at": 1789171497
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/u/util-linux-2.40.2-6.azl3.x86_64.rpm",
+        "sha256": "1ffbe83ccc12dccb01b1f166b1dab6dd76ad64856c3c608a5bbb7b85cac2e688",
+        "published_at": 1789743204
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/u/util-linux-devel-2.40.2-6.azl3.x86_64.rpm",
+        "sha256": "89453c2939fbb7e9c867fda67f1d691efb608eb627c66b439c89f26cd22c8206",
+        "published_at": 1789743204
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/x/xkeyboard-config-2.40-1.azl3.noarch.rpm",
+        "sha256": "828681d04affac42fe90ee6c0b9f4fd24a1e9878533ba2e21f07732ef0c596e7",
+        "published_at": 1721663411
+      },
+      {
+        "url": "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/Packages/z/zlib-devel-1.3.2-1.azl3.x86_64.rpm",
+        "sha256": "c66a89fc223b48935aedd4363dcb146bf153be20549ec43f455e7e97cdea582a",
+        "published_at": 1773183726
+      }
+    ]
+  }
+}

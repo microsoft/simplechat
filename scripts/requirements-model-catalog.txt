@@ -1,4 +1,5 @@
 # requirements-model-catalog.txt
+-c requirements-model-catalog.lock.txt
 azure-identity==1.24.0
 azure-keyvault-keys==4.11.0
 cryptography==46.0.7
