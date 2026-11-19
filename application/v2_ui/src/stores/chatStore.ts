@@ -1577,7 +1577,38 @@ function buildStreamHandlers(
                 // and whichever of the two lands second must update the message rather than
                 // add a second copy of it.
                 messages: kind === 'personal'
-                    ? insertRetryReply(updateRetryState(state.messages, streamRetry(), event.blocked ? 'failed' : 'completed'), finalMessage, streamRetry())
+                    ? insertRetryReply(
+                          updateRetryState(
+                              state.messages.map((message) => {
+                                  if (
+                                      message.id !== streamUserMessageId
+                                      || message.role !== 'user'
+                                      || message.conversation_id !== conversationId
+                                  ) {
+                                      return message;
+                                  }
+                                  const threadInfo = finalMessage.metadata?.thread_info;
+                                  return {
+                                      ...message,
+                                      metadata: {
+                                          ...message.metadata,
+                                          ...(threadInfo && typeof threadInfo === 'object'
+                                              ? { thread_info: threadInfo }
+                                              : {}),
+                                          response_attempt: {
+                                              ...savedResponseAttempt(message),
+                                              kind: 'chat',
+                                              state: event.blocked ? 'failed' : 'completed',
+                                          },
+                                      },
+                                  };
+                              }),
+                              streamRetry(),
+                              event.blocked ? 'failed' : 'completed',
+                          ),
+                          finalMessage,
+                          streamRetry(),
+                      )
                     : mergeCollaborationMessage(state.messages, finalMessage as CollaborationMessage),
                 completedReply: { conversationId, messageId: finalMessage.id },
                 streaming: false,

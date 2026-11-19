@@ -40,7 +40,9 @@ from functions_ai_connections import (
     normalize_model_capability_fields,
     supports_model_capability,
 )
-from functions_embedding_profile import normalize_embedding_operation, resolve_embedding_profile
+from functions_embedding_profile import (
+    normalize_embedding_operation, normalize_model_embedding_operation, resolve_embedding_profile,
+)
 from functions_content_safety import (
     CONTENT_SAFETY_CATEGORY_KEYS,
     CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
@@ -3528,6 +3530,8 @@ def normalize_model_endpoints(endpoints):
             if not isinstance(model, dict):
                 continue
             model_copy = normalize_model_capability_fields(json.loads(json.dumps(model)))
+            if "embedding_operation" in model_copy:
+                model_copy["embedding_operation"] = normalize_model_embedding_operation(model_copy["embedding_operation"])
             # Effective profile metadata is resolved from current settings, never accepted
             # as a caller-supplied assertion or saved back as a deployment override.
             model_copy.pop("_catalog_profile", None)
@@ -3771,6 +3775,8 @@ def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_detai
                 model["capability_status"] = describe_model_capabilities(
                     effective_model, endpoint_copy.get("provider"), endpoint=endpoint,
                 )
+                if not include_connection_details:
+                    model.pop("embedding_operation", None)
         if not include_connection_details:
             for field in ("auth", "connection", "management", "identity_header"):
                 endpoint_copy.pop(field, None)

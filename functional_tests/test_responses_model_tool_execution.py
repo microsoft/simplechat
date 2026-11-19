@@ -1,8 +1,10 @@
 # test_responses_model_tool_execution.py
 """Functional tests for Responses reasoning in the real authorized SDK tool loop.
 
-Version: 0.261.429
+Version: 0.261.436
 Implemented in: 0.261.388
+Agent stream option and terminal usage regression added in: 0.261.435
+Completed Responses delivery regression added in: 0.261.436
 
 The real SDK and Semantic Kernel execute against a mock HTTP transport. Reasoning
 continuation is request-owned and never appears in public message serialization.
@@ -15,11 +17,13 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
 import pytest
 from openai import AsyncOpenAI
+from openai.types.responses import Response
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings
@@ -34,11 +38,37 @@ from functions_orchestration_model_capture import azure_chat_construction_metada
 from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC, MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+    OpenAIStyleChatCompletionClient,
     infer_model_endpoint_protocol, normalize_openai_style_base_url, resolve_openai_style_request_api_version,
     resolve_model_inference_endpoint,
 )
 from model_responses_chat import responses_request
 from model_tool_chat_completion import OpenAIToolChatCompletion
+
+
+def test_direct_responses_delivers_completed_reply_once_with_terminal_metadata():
+    text = "This is an already completed response. " * 70
+    ready = Response.model_validate({
+        "id": "response-1", "object": "response", "created_at": 1, "model": "gpt-6.1-terra",
+        "status": "completed", "parallel_tool_calls": False, "tool_choice": "none", "tools": [],
+        "output": [{
+            "type": "message", "id": "answer", "role": "assistant", "status": "completed",
+            "content": [{"type": "output_text", "text": text, "annotations": []}],
+        }],
+        "usage": {
+            "input_tokens": 10, "output_tokens": 14, "total_tokens": 24,
+            "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 1},
+        },
+    })
+    sdk = SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: ready))
+    client = OpenAIStyleChatCompletionClient(sdk, inference_api="responses")
+    chunks = list(client.chat.completions.create(
+        model=ready.model, messages=[{"role": "user", "content": "Synthetic prompt"}], stream=True,
+    ))
+    assert len(chunks) == 1
+    assert chunks[0].choices[0].delta.content == text
+    assert chunks[0].choices[0].finish_reason == "stop"
+    assert chunks[0].usage.total_tokens == 24
 
 
 @pytest.mark.parametrize("streaming", [False, True])
@@ -130,6 +160,7 @@ def test_reasoning_and_function_results_continue_once_without_changing_model_or_
                         if any(message.finish_reason is not None for message in chunk)
                     ]
                     assert visible_indexes[-1] < terminal_indexes[-1]
+                    assert chunks[terminal_indexes[-1]][0].metadata["usage"]["total_tokens"] == 14
                 else:
                     result = await service.get_chat_message_contents(history, settings, kernel=kernel)
                     text = result[0].content
@@ -154,6 +185,7 @@ def test_reasoning_and_function_results_continue_once_without_changing_model_or_
         assert request["store"] is False
         assert "reasoning_effort" not in request
         assert "previous_response_id" not in request
+        assert "stream_options" not in request, "Do not send Chat Completions usage flags to Responses."
     continuation = requests[1]["input"]
     assert any(item.get("encrypted_content") == "encrypted-private" for item in continuation)
     assert len([item for item in continuation if item.get("type") == "function_call"]) == 1
@@ -162,6 +194,16 @@ def test_reasoning_and_function_results_continue_once_without_changing_model_or_
     assert "encrypted-private" not in "".join(public)
     if new_user_turn:
         assert "encrypted-private" not in json.dumps(requests[2]["input"])
+
+
+def test_responses_stream_keeps_native_options_without_chat_usage_flag():
+    request = responses_request({
+        "model": "gpt-6.1-terra",
+        "messages": [{"role": "user", "content": "Calculate a total"}],
+        "stream": True,
+        "stream_options": {"include_usage": True, "include_obfuscation": False},
+    })
+    assert request["stream_options"] == {"include_obfuscation": False}
 
 
 def test_a_callers_json_cannot_inject_private_reasoning_continuation():

@@ -565,14 +565,19 @@ def normalize_model_endpoint_routing(endpoint: dict) -> dict:
         return normalized
     models = normalized.get("models")
     if not isinstance(models, list) or not models:
-        raise ValueError("Explicit endpoints require configured models.")
+        raise _validation_error("Add at least one model to the connection.")
     seen_ids = set()
     for model in models:
         if not isinstance(model, dict) or any(field in model for field in ("auth", "api_key", "bearer_token", "headers")):
-            raise ValueError("Model credentials must remain endpoint-scoped.")
-        route = resolve_model_endpoint_route(normalized, model)
+            raise _validation_error("Each model must be an object. Configure credentials on the connection, not the model.")
+        try:
+            route = resolve_model_endpoint_route(normalized, model)
+        except ValueError as exc:
+            raise _validation_error(
+                "Invalid model routing. Check API Type, API Path, URL Handling, model identifier, and version."
+            ) from exc
         if route["model_id"] in seen_ids:
-            raise ValueError("Model IDs must be unique within an endpoint.")
+            raise _validation_error("Model IDs must be unique within a connection.")
         seen_ids.add(route["model_id"])
         for field in ("api_type", "api_path", "url_mode", "inference_api"):
             model[field] = route[field]

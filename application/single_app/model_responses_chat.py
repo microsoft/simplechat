@@ -135,7 +135,10 @@ def responses_request(parameters):
             raise ModelEndpointValidationError(
                 "Responses stream options are invalid."
             )
-        request["stream_options"] = deepcopy(stream_options)
+        # Responses reports usage on its terminal event; include_usage is Chat Completions-only.
+        native_options = {key: value for key, value in stream_options.items() if key != "include_usage"}
+        if native_options:
+            request["stream_options"] = deepcopy(native_options)
     return request
 
 

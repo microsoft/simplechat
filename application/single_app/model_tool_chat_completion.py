@@ -120,7 +120,6 @@ class _ModelToolPolicy:
         if not isinstance(settings, OpenAIChatPromptExecutionSettings):
             settings = self.get_prompt_execution_settings_from_settings(settings)
         settings.stream = True
-        settings.stream_options = {"include_usage": True}
         settings.messages = self._prepare_chat_history_for_request(chat_history)
         settings.ai_model_id = settings.ai_model_id or self.ai_model_id
 

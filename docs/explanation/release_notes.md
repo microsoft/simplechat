@@ -2,6 +2,46 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.438)**
+
+#### Bug Fixes
+
+*   **Readable Native Dropdowns Throughout V2**
+    *   Fixes pale options appearing on white popup backgrounds in dark mode, including the Model Catalog Connections filter and workspace model menus.
+    *   Uses the active theme's colors across V2 native dropdowns while preserving keyboard selection and disabled options.
+    *   (Ref: `theme.css`, `test_v2_admin_model_catalog_workbench.py`, `test_v2_workspace_authoring.py`)
+
+### **(v0.261.436)**
+
+#### User Interface Enhancements
+
+*   **Per-Model Request API in Classic and V2**
+    *   Uses one **Request API** selector for explicit Custom routes, with distinct options for Chat Completions, `/v1/responses`, `/openai/v1/responses`, and Anthropic Messages. Dated Azure Responses is not included.
+    *   Lets V2 edit the gateway path, path order, and URL handling for each model, preview the exact URL without running inference, and test the saved route. Existing legacy routes are not automatically converted.
+    *   (Ref: `model_routing_editor.js`, `CustomConnectionFields.tsx`, `ModelConnectionsManager.tsx`)
+
+*   **Embedding Routing on the Model**
+    *   Moves optional embedding route overrides into each model's settings in AI Connections. Models without overrides keep their saved connection defaults; credentials remain on the connection.
+    *   Embeddings still selects and tests the saved default. It now shows the effective request URL and opens that model in AI Connections for edits. This change does not switch defaults or rebuild vectors.
+    *   (Ref: `functions_embedding_profile.py`, `admin_model_endpoints.js`, `CapabilityModelPicker.tsx`)
+
+#### Bug Fixes
+
+*   **Completed Responses Delivered Once**
+    *   Direct chat now delivers an already-completed Responses reply as one chunk, matching agents rather than simulating a stream. Native Responses text still streams incrementally.
+    *   (Ref: `model_endpoint_clients.py`, `test_responses_model_tool_execution.py`)
+
+### **(v0.261.433)**
+
+#### Bug Fixes
+
+*   **Post-Merge Retry, Responses Editor, And Workflow Model Routing**
+    *   Lets V2 retry a newly completed response immediately without requiring a conversation reload, while preserving the original model, agent, route, and attempt history.
+    *   Preserves a saved Responses model's operation and per-model path order when the AI Connection editor opens and runs Test Connection, removing the false “save changes first” response for unchanged routes.
+    *   Applies exact catalog capabilities to explicit Custom routes so Claude Legacy workflows retain tool calling, and adds verified GPT-6 Luna/Terra token limits with Luna's supported Chat Completions tool reasoning policy.
+    *   Verified Luna and Terra workflows now reach their intended Chat Completions or Responses routes with known token budgets instead of failing before inference.
+    *   (Ref: `chatRetryAttempts.ts`, `chatStore.ts`, `model_routing_editor.js`, `functions_model_capabilities.py`, `model_capabilities.json`, `POST_MERGE_STABILIZATION_FIX.md`)
+
 ### **(v0.261.429)**
 
 #### Bug Fixes

@@ -754,7 +754,7 @@ def list_group_model_endpoints(user_id, group_id):
     return {
         "endpoints": endpoints,
         "multi_endpoint_enabled": bool(settings.get("enable_multi_model_endpoints", False)),
-        "custom_api_types": get_model_endpoint_provider_ui_options(),
+        "custom_api_types": get_model_endpoint_provider_ui_options(routing_schema_version=2),
     }, 200
 
 

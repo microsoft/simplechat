@@ -115,6 +115,7 @@ from functions_ai_connections import (
     IMAGE_MIGRATION_VERSION,
     IMAGE_MIGRATION_VERSION_KEY,
     IMAGE_SELECTION_KEY,
+    ModelBinding,
     build_capability_model_catalog,
     embedding_settings_use_connections,
     filter_model_endpoints_by_capability,
@@ -131,7 +132,7 @@ from functions_embedding_compatibility import (
     preflight_embedding_settings,
     read_embedding_settings,
 )
-from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
+from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, embedding_transport, resolve_embedding_profile
 from functions_public_workspaces import (
     find_public_workspace_by_id,
     get_public_source_workspace_ids,
@@ -228,6 +229,7 @@ from functions_model_capabilities import resolve_model_vision_support
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
+    validate_custom_model_endpoint_url,
     validate_custom_model_endpoint,
     validate_custom_model_endpoints,
 )
@@ -1633,6 +1635,19 @@ def _persist_global_model_endpoints(
         if isinstance(endpoint, dict) and endpoint.get("id") == updated_endpoint_id
     ] if updated_endpoint_id is not None else []
     validate_custom_model_endpoints(changed, settings)
+    for endpoint in changed:
+        for model in endpoint.get("models", []):
+            if "embedding_operation" not in model:
+                continue
+            binding = ModelBinding(EMBEDDINGS_CAPABILITY, {}, endpoint, model)
+            _, base_url, _, _ = embedding_transport(binding)
+            if endpoint.get("provider") in ("custom", "openai_compatible"):
+                validate_custom_model_endpoint_url(
+                    base_url,
+                    allow_private=settings.get("allow_private_custom_model_endpoints") is True,
+                    allow_insecure=settings.get("allow_insecure_custom_model_endpoints") is True,
+                    require_resolvable=False,
+                )
     existing_by_id = {
         endpoint.get("id"): endpoint
         for endpoint in existing
@@ -2945,7 +2960,7 @@ def register_route_backend_v2_admin(bp):
                         "migration": settings.get(MIGRATION_NOTICE_KEY),
                         "embedding_migration": settings.get(EMBEDDING_MIGRATION_NOTICE_KEY),
                         "default_notices": settings.get("ai_connection_default_notices", {}),
-                        "custom_api_types": get_model_endpoint_provider_ui_options(),
+                        "custom_api_types": get_model_endpoint_provider_ui_options(routing_schema_version=2),
                         "custom_network_policy": {
                             "allow_private_custom_model_endpoints": settings.get("allow_private_custom_model_endpoints") is True,
                             "allow_insecure_custom_model_endpoints": settings.get("allow_insecure_custom_model_endpoints") is True,
@@ -3262,6 +3277,10 @@ def register_route_backend_v2_admin(bp):
                     continue
                 compatible_choices.append({
                     **choice,
+                    **({"embedding_request_url": (
+                        f"{profile.base_url}embeddings"
+                        + (f"?api-version={profile.api_version}" if profile.api == "azure_openai" else "")
+                    )} if selection == reference else {}),
                     "embedding_policy": {
                         key: profile.policy[key]
                         for key in choice.get("embedding_policy", {})

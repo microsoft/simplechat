@@ -225,8 +225,9 @@ the real local editor assets.
 ### Embedding inference
 
 Implemented in version **0.261.106**, shared embedding connections use a separate
-operation contract from chat. A Foundry project endpoint cannot route embeddings;
-configure the embedding inference base for that connection explicitly, usually
+operation contract from chat. Since **0.261.436**, that route is edited under
+**Embedding routing** on the model in AI Connections. A Foundry project
+endpoint cannot route embeddings; configure the model's inference base, usually
 the resource URL ending in `/openai/v1/`. Grant inference permissions on that
 resource as well as project/management read permissions for discovery.
 

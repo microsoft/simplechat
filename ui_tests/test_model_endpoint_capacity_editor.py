@@ -2,8 +2,9 @@
 """
 Azure Playwright-ready endpoint/model capacity editor workflows.
 
-Version: 0.261.428
-Implemented in: 0.261.035
+Version: 0.261.435
+Implemented in: 0.261.431; saved per-model Responses path order fixed in 0.261.432
+Single-save routing rejection and error recovery verified in: 0.261.435
 
 Per-model routing round trips added in: 0.261.042
 Live schema-v2 model test coverage added in: 0.261.044
@@ -41,7 +42,7 @@ from application.single_app.functions_model_endpoint_providers import (
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 
-from functions_model_endpoint_urls import resolve_model_endpoint_route
+from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route
 from functions_model_capabilities import get_model_endpoint_library_options, preview_model_token_limits
 
 
@@ -145,7 +146,6 @@ class EndpointApiFixture:
         return projected
 
     def save_endpoint_request(self, route, endpoint_id, body):
-        self.saved_payloads.append(copy.deepcopy(body))
         if self.fail_save:
             self.expected_save_error = True
             route.fulfill(
@@ -160,41 +160,37 @@ class EndpointApiFixture:
 
         if "endpoints" in body and isinstance(body["endpoints"], list):
             self.endpoints = copy.deepcopy(body["endpoints"])
-            self.saved_payloads[-1] = {
+            self.saved_payloads.append({
                 **copy.deepcopy(body),
                 "endpoints": self.public_endpoints(),
-            }
+            })
             route.fulfill(
                 content_type="application/json",
                 body=json.dumps({"success": True, "endpoints": self.public_endpoints()}),
             )
             return
 
+        existing = next((endpoint for endpoint in self.endpoints if endpoint.get("id") == endpoint_id), {})
+        saved = copy.deepcopy({**existing, **body})
+        saved.pop("expected_revision", None)
+        saved.pop("revision", None)
+        try:
+            normalize_model_endpoint_routing(saved)
+        except ValueError:
+            self.expected_save_error = True
+            route.fulfill(status=400, json={
+                "error": "Invalid model routing. Check API Type, API Path, URL Handling, model identifier, and version.",
+                "code": "invalid_custom_endpoint",
+            })
+            return
         if endpoint_id:
-            existing = next(
-                (endpoint for endpoint in self.endpoints if endpoint.get("id") == endpoint_id),
-                {},
-            )
-            saved = copy.deepcopy(existing)
-            saved.update(copy.deepcopy(body))
-            saved.pop("expected_revision", None)
-            saved.pop("revision", None)
-            self.endpoints = [
-                saved if endpoint.get("id") == endpoint_id else endpoint
-                for endpoint in self.endpoints
-            ]
+            self.endpoints = [saved if endpoint.get("id") == endpoint_id else endpoint for endpoint in self.endpoints]
         else:
-            saved = copy.deepcopy(body)
-            saved.pop("expected_revision", None)
-            saved.pop("revision", None)
-            self.endpoints = [
-                endpoint for endpoint in self.endpoints
-                if endpoint.get("id") != saved.get("id")
-            ] + [saved]
-        self.saved_payloads[-1] = {
+            self.endpoints = [endpoint for endpoint in self.endpoints if endpoint.get("id") != saved.get("id")] + [saved]
+        self.saved_payloads.append({
             "endpoint": copy.deepcopy(body),
             "endpoints": self.public_endpoints(),
-        }
+        })
         public_endpoint = next(
             endpoint for endpoint in self.public_endpoints()
             if endpoint.get("id") == saved.get("id")
@@ -336,7 +332,7 @@ def capacity_ui(request, capacity_browser):
     connection_templates = ""
     if options.get("connection_templates"):
         source = (APP_ROOT / "templates" / "admin" / "_panes" / "model-endpoints.html").read_text(encoding="utf-8")
-        for template_id in ("model-endpoint-embedding-template", "custom-model-endpoint-fields-template"):
+        for template_id in ("custom-model-endpoint-fields-template",):
             match = re.search(rf'<template id="{template_id}">.*?</template>', source, re.DOTALL)
             assert match is not None, f"The actual admin template {template_id} must exist."
             connection_templates += environment.from_string(match.group()).render()
@@ -437,7 +433,7 @@ def _edit_saved_endpoint(page):
 
 def _expand(editor):
     if editor.get_attribute("open") is None:
-        editor.locator("summary").click()
+        editor.locator(":scope > summary").click()
 
 
 def _save(page, api):
@@ -467,10 +463,10 @@ def test_explicit_model_routing_round_trip(capacity_ui):
     expect(rows).to_have_count(2)
     expect(page.locator("#model-endpoint-api-type-group")).to_be_hidden()
     expect(page.locator("#model-endpoint-url-mode-group")).to_be_hidden()
-    expect(rows.nth(0).get_by_label("API Type", exact=True)).to_have_value("azure_openai_v1")
-    expect(rows.nth(1).get_by_label("API Type", exact=True)).to_have_value("anthropic")
+    expect(rows.nth(0).get_by_label("Request API", exact=True)).to_have_value("azure_openai_v1:chat_completions")
+    expect(rows.nth(1).get_by_label("Request API", exact=True)).to_have_value("anthropic:messages")
     rows.nth(0).get_by_label("API Path", exact=True).fill("/team-c/")
-    rows.nth(0).get_by_label("API Type", exact=True).select_option("azure_openai")
+    rows.nth(0).get_by_label("Request API", exact=True).select_option("azure_openai:chat_completions")
     rows.nth(0).get_by_label("Deployment Name", exact=True).fill("azure-deployment")
     rows.nth(0).get_by_label("API Version", exact=True).fill("2025-01-01-preview")
     expect(rows.nth(1).get_by_label("URL Handling", exact=True)).to_have_value("exact")
@@ -492,9 +488,36 @@ def test_explicit_model_routing_round_trip(capacity_ui):
     assert saved["auth"]["api_key_prefix"] == ""
     _edit_saved_endpoint(page)
     expect(rows.nth(0).get_by_label("API Version", exact=True)).to_have_value("2025-01-01-preview")
-    expect(rows.nth(1).get_by_label("API Type", exact=True)).to_have_value("anthropic")
+    expect(rows.nth(1).get_by_label("Request API", exact=True)).to_have_value("anthropic:messages")
     assert page.evaluate("window.routingXss || false") is False
     assert rows.locator("img[src=x]").count() == 0
+
+
+def test_saved_responses_inference_api_round_trips_without_save(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["routing_path_order"] = "connection_first"
+    endpoint["connection"]["endpoint"] = "https://gateway.example/shared"
+    endpoint["models"][0].update({
+        "api_type": "azure_openai_v1",
+        "inference_api": "responses",
+        "api_path": "foundry;rev=2",
+        "api_path_order": "model_first",
+        "url_mode": "auto",
+    })
+
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    expect(row.get_by_label("Request API", exact=True)).to_have_value("azure_openai_v1:responses")
+    row.get_by_role("button", name="Test Connection", exact=True).click()
+    expect(page.locator(".toast-body").first).to_be_visible()
+
+    assert len(api.test_payloads) == 1
+    assert api.test_payloads[0]["model"]["inference_api"] == "responses"
+    assert api.test_payloads[0]["model"]["api_type"] == "azure_openai_v1"
+    assert api.test_payloads[0]["model"]["api_path_order"] == "model_first"
+    assert "foundry;rev=2/shared/openai/v1/responses" in page.locator(".toast-container").inner_text()
 
 
 def test_custom_api_key_header_and_prefix_round_trip(capacity_ui):
@@ -639,7 +662,7 @@ def test_api_type_options_show_request_path_templates(capacity_ui, schema):
         api.endpoints[0]["models"][0].update({"api_type": "openai", "url_mode": "auto"})
     _open_editor(page, api)
     selector = (
-        page.locator("[data-model-row-id]").first.get_by_label("API Type", exact=True)
+        page.locator("[data-model-row-id]").first.get_by_label("Request API", exact=True)
         if schema == 2 else page.locator("#model-endpoint-api-type")
     )
     labels = {
@@ -649,12 +672,18 @@ def test_api_type_options_show_request_path_templates(capacity_ui, schema):
         "gemini": "Chat Completions (/v1beta/openai/chat/completions)",
     }
     if schema == 2:
+        labels["anthropic"] = "Anthropic Messages (/v1/messages)"
         labels["azure_openai_v1"] = "Chat Completions (/openai/v1/chat/completions)"
+        labels = {f"{key}:{'messages' if key == 'anthropic' else 'chat_completions'}": label for key, label in labels.items()}
+        labels.update({
+            "openai:responses": "Responses (/v1/responses)",
+            "azure_openai_v1:responses": "Responses (/openai/v1/responses)",
+        })
     expect(selector.locator("option")).to_have_count(len(labels))
     for value, label in labels.items():
         expect(selector.locator(f'option[value="{value}"]')).to_have_text(label)
-    expect(selector).to_have_value("openai")
-    assert selector.locator('option[value="responses"]').count() == 0
+    expect(selector).to_have_value("openai:chat_completions" if schema == 2 else "openai")
+    assert selector.locator('option[value="azure_openai:responses"]').count() == 0
     saved = _save(page, api)
     selected_type = saved["models"][0]["api_type"] if schema == 2 else saved["api_type"]
     assert selected_type == "openai"
@@ -683,11 +712,20 @@ def test_routing_preview_validation_and_mobile_layout(capacity_ui, width):
     assert "synthetic-key-not-for-preview" not in json.dumps(body)
     row.get_by_label("API Path", exact=True).fill("../invalid")
     expect(output).to_be_empty()
-    page.locator("#model-endpoint-save-btn").click()
+    row.get_by_role("button", name="Preview Route", exact=True).click()
     expect(output).to_contain_text("Invalid model routing")
+    assert len(api.preview_payloads) == 2
+    with page.expect_response(lambda response: response.request.method == "PATCH" and "/model-endpoints/" in response.url) as saved:
+        page.locator("#model-endpoint-save-btn").click()
+    assert saved.value.status == 400
+    error = page.locator("#modelEndpointModal").get_by_role("alert").filter(has_text="Invalid model routing")
+    expect(error).to_be_visible()
+    expect(error).to_be_focused()
     expect(page.locator("#modelEndpointModal")).to_be_visible()
-    assert not api.saved_payloads
+    assert len(api.preview_payloads) == 2 and not api.saved_payloads
+    assert api.endpoints[0]["models"][0]["api_path"] == "team"
     row.get_by_label("API Path", exact=True).fill("reviewed")
+    expect(error).to_be_hidden()
     row.get_by_role("button", name="Preview Route", exact=True).click()
     expect(output).to_contain_text("https://gateway.example/reviewed/shared/v1/messages")
     dimensions = page.locator("#modelEndpointModal .modal-body").evaluate(
@@ -740,7 +778,7 @@ def test_new_endpoints_use_explicit_routing_without_migrating_legacy(capacity_ui
     page.locator("#model-endpoint-add-model-btn").click()
     row = page.locator("[data-model-row-id]").first
     row.get_by_label("Model Name", exact=True).fill("manual-gateway-model")
-    row.get_by_label("API Type", exact=True).select_option("azure_openai_v1")
+    row.get_by_label("Request API", exact=True).select_option("azure_openai_v1:chat_completions")
     row.get_by_label("API Path", exact=True).fill("team")
     page.locator("#model-endpoint-save-btn").click()
     expect(page.locator("#modelEndpointModal")).to_be_hidden()
@@ -775,7 +813,7 @@ def test_model_library_preserves_explicit_routing_and_capabilities(capacity_ui):
     row = page.locator("[data-model-row-id]").first
     library = row.get_by_label("Model Library", exact=True)
     library.select_option("claude-sonnet-4-5-20250929")
-    expect(row.get_by_label("API Type", exact=True)).to_have_value("openai")
+    expect(row.get_by_label("Request API", exact=True)).to_have_value("openai:chat_completions")
     expect(row.get_by_label("URL Handling", exact=True)).to_have_value("exact")
     expect(row.get_by_label("API Path", exact=True)).to_have_value("team")
     expect(row.get_by_label("Model Name", exact=True)).to_have_value("private-deployment")
@@ -787,7 +825,7 @@ def test_model_library_preserves_explicit_routing_and_capabilities(capacity_ui):
     page.locator("#model-endpoint-add-model-btn").click()
     new_row = page.locator("[data-model-row-id]").nth(1)
     new_row.get_by_label("Model Library", exact=True).select_option("claude-sonnet-4-5-20250929")
-    expect(new_row.get_by_label("API Type", exact=True)).to_have_value("anthropic")
+    expect(new_row.get_by_label("Request API", exact=True)).to_have_value("anthropic:messages")
     expect(new_row.get_by_label("Model Name", exact=True)).to_have_value("claude-sonnet-4-5-20250929")
     expect(new_row.get_by_label("Anthropic Version", exact=True)).to_have_value("2023-06-01")
 
@@ -824,7 +862,7 @@ def test_genai_profile_discovery_and_case_sensitive_model_ids(capacity_ui):
     assert {model["modelName"] for model in saved["models"]} >= {"Authorized-ID", "authorized-id"}
     _edit_saved_endpoint(page)
     expect(page.get_by_label("Custom profile", exact=True)).to_have_value("genai_mil")
-    expect(rows.nth(0).get_by_label("API Type", exact=True).locator("option")).to_have_count(1)
+    expect(rows.nth(0).get_by_label("Request API", exact=True).locator("option")).to_have_count(1)
 
 
 def test_ca_bundle_selection_preserves_legacy_and_explicit_trust(capacity_ui):
@@ -893,7 +931,7 @@ def test_library_does_not_fill_azure_deployment_alias(capacity_ui):
     row = page.locator("[data-model-row-id]").first
     row.get_by_label("Model Library", exact=True).select_option("claude-sonnet-4-5-20250929")
     expect(row.get_by_label("Deployment Name", exact=True)).to_have_value("")
-    expect(row.get_by_label("API Type", exact=True)).to_have_value("azure_openai")
+    expect(row.get_by_label("Request API", exact=True)).to_have_value("azure_openai:chat_completions")
     expect(row.get_by_text("Optional catalog metadata", exact=False)).to_be_visible()
 
 
@@ -955,11 +993,12 @@ def test_non_custom_model_path_preview_and_save(capacity_ui):
     page, api = capacity_ui
     endpoint = api.endpoints[0]
     endpoint.update({"routing_schema_version": 2, "provider": "aoai"})
+    endpoint.pop("api_type")
     endpoint["connection"].update({"endpoint": "https://gateway.example/shared", "openai_api_version": "2024-05-01-preview"})
     endpoint["models"][0]["deploymentName"] = "claude-gateway"
     _open_editor(page, api)
     row = page.locator("[data-model-row-id]").first
-    assert row.get_by_label("API Type", exact=True).count() == 0
+    assert row.get_by_label("Request API", exact=True).count() == 0
     row.get_by_label("API Path", exact=True).fill("team")
     row.get_by_role("button", name="Preview Route", exact=True).click()
     expect(row.get_by_test_id("model-route-preview")).to_contain_text("https://gateway.example/team/shared/v1/messages")

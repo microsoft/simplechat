@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.261.430
+Version: 0.261.432
 Implemented in: 0.241.179; schema-v2 resolver in 0.261.041; live route adapters in 0.261.044
 Capability, async transport, and cancellation coverage added in: 0.261.046
 APIM revision path coverage added in: 0.261.056
 Shared editor control integration verified in: 0.261.057
 Anthropic completion reason normalization: 0.261.103
+Exact catalog capabilities through explicit Custom routing: 0.261.431
 
 This test ensures that Foundry model endpoint runtime calls infer Claude as
 Anthropic messages, OpenAI-compatible Foundry endpoints as /openai/v1, and
@@ -508,6 +509,23 @@ def test_schema_v2_versions_capabilities_and_cache_identity():
     assert route["api_version"] == "2024-01-01"
     endpoint["api_type"] = "openai"
     _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
+
+
+def test_schema_v2_exact_catalog_capabilities_survive_custom_routing():
+    routing = importlib.import_module("functions_model_endpoint_urls")
+    endpoint = _routing_fixture("anthropic")
+    endpoint["models"][0]["modelName"] = "claude-opus-4-6"
+
+    route = routing.resolve_model_endpoint_route(endpoint, endpoint["models"][0])
+
+    assert route["capabilities"]["processesText"] is True
+    assert route["capabilities"]["toolCalling"] is True
+    assert route["capabilities"]["supportsStreaming"] is True
+    assert route["capabilities"]["structuredOutput"] is False
+    endpoint["capabilities"] = {"toolCalling": False}
+    assert routing.resolve_model_endpoint_route(
+        endpoint, endpoint["models"][0]
+    )["capabilities"]["toolCalling"] is False
 
 
 def test_non_custom_explicit_routing_preserves_provider_contract():

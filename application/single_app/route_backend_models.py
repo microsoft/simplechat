@@ -1403,7 +1403,7 @@ def register_route_backend_models(bp):
         endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
         return jsonify({
             "endpoints": sanitize_model_endpoints_for_frontend(endpoints),
-            "custom_api_types": get_model_endpoint_provider_ui_options(),
+            "custom_api_types": get_model_endpoint_provider_ui_options(routing_schema_version=2),
             "revision": user_settings.get("_etag") or "",
         })
 
@@ -1446,6 +1446,12 @@ def register_route_backend_models(bp):
                 level=logging.WARNING,
             )
             return None, (jsonify({"error": exc.public_message, "error_code": exc.code}), 400)
+        except ModelEndpointValidationError as exc:
+            log_models_exception(
+                "Personal model routing validation failed", exc,
+                extra={"scope": "user"}, level=logging.WARNING,
+            )
+            return None, (jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400)
         try:
             validate_custom_model_endpoints(normalized, get_settings())
             validate_model_endpoint_ca_choices(normalized, get_settings())

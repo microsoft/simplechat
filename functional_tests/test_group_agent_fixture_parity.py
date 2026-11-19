@@ -1,7 +1,7 @@
 # test_group_agent_fixture_parity.py
 """
 Per-route shape parity between the M4C group agent UI fixture and the real routes.
-Version: 0.261.164
+Version: 0.261.437
 Implemented in: 0.261.161
 Group agents keep group knowledge only (agentWorkbench.ts knowledgeScopes): 0.261.164
 
@@ -27,9 +27,9 @@ with invented shapes, so this test replaces them with the real code for its own 
 - the stored agents and the create and update preparer run through the real
   ``sanitize_agent_payload``, so a record carries exactly the keys a real stored agent does. The
   preparer's knowledge, schema and delegation checks are left out; none of them adds a key;
-- the option endpoints are the real ``build_combined_model_endpoints`` and the options builder's
-  second sanitize pass, computed once in ``test_support/group_endpoint_harness.py``, which loads
-  the real settings module;
+- the option endpoints are resolved by the real scoped collector, redacted with the real
+  settings module, and filtered by the real chat capability predicate before supplying them
+  to the in-memory options harness;
 - the knowledge catalogue is the real ``build_assigned_knowledge_catalog`` with its real tag
   normalization. Document storage, current-version selection and screening are passthrough seams
   that neither add nor remove a catalogue key.
@@ -339,9 +339,8 @@ def real_option_endpoints():
     """The group agent options' model endpoints exactly as the real pipeline projects them.
 
     The global and group endpoints mirror the fixture's: a global Azure OpenAI connection with one
-    chat deployment, and a global and a group Foundry connection. They run through the real
-    ``build_combined_model_endpoints`` and the options builder's own capability filter and second
-    sanitize pass, in the endpoint harness that loads the real settings module.
+    chat deployment, and a global and a group Foundry connection. Precompute the real scoped
+    collection, redaction and chat filtering here because the group harness stubs those seams.
     """
     with group_endpoint_environment() as endpoint_env:
         endpoint_env.reset()
@@ -361,15 +360,12 @@ def real_option_endpoints():
             "ensure_governance_access": endpoint_env._ensure_governance_access,
             "get_group_model_endpoints": endpoint_env.modules.group.get_group_model_endpoints,
             "get_user_settings": settings_module.get_user_settings,
-            "sanitize_model_endpoints_for_frontend": settings_module.sanitize_model_endpoints_for_frontend,
-            "filter_model_endpoints_by_capability": ai_connections.filter_model_endpoints_by_capability,
+            "filter_governed_model_endpoints": lambda _user_id, records, _feature: records,
         }
-        execute_functions("route_backend_agents.py", {"build_combined_model_endpoints"}, namespace)
-        combined = namespace["build_combined_model_endpoints"](endpoint_env.settings, "owner", group_id=GROUP_A)
-        projected = settings_module.sanitize_settings_for_user({
-            "model_endpoints": ai_connections.filter_model_endpoints_by_capability(combined, preserve_empty=True),
-        }).get("model_endpoints", [])
-        return json.loads(json.dumps(projected))
+        execute_functions("route_backend_agents.py", {"collect_agent_model_endpoints"}, namespace)
+        combined = namespace["collect_agent_model_endpoints"](endpoint_env.settings, "owner", group_id=GROUP_A)
+        projected = settings_module.sanitize_settings_for_user({"model_endpoints": combined})["model_endpoints"]
+        return json.loads(json.dumps(ai_connections.filter_model_endpoints_by_capability(projected, preserve_empty=True)))
 
 
 @pytest.fixture
@@ -378,7 +374,7 @@ def modelled(environment, agent_payload, real_option_endpoints, monkeypatch):  #
     environment.settings.update(MODELLED_SETTINGS)
     environment.routes["_prepare_group_agent_payload"] = closer_prepare(agent_payload)
     monkeypatch.setattr(
-        sys.modules["route_backend_agents"], "build_combined_model_endpoints",
+        sys.modules["route_backend_agents"], "collect_agent_model_endpoints",
         lambda settings, user_id, group_id=None: deepcopy(real_option_endpoints),
     )
     environment.agent_payload = agent_payload

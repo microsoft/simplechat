@@ -19,7 +19,7 @@ ARG V2_UI_API_BASE=""
 # Uses the Azure Linux Node image to stay consistent with the Python stages below and to
 # avoid introducing a Docker Hub dependency, which matters for sovereign-cloud builds.
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/azurelinux/base/nodejs:20 AS v2uibuilder
+FROM mcr.microsoft.com/azurelinux/base/nodejs:24 AS v2uibuilder
 
 ARG V2_UI_API_BASE
 ENV VITE_API_BASE=${V2_UI_API_BASE}

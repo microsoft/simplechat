@@ -107,8 +107,8 @@ export function createModelRoutingEditor(model, { endpoint, registry, requestInp
     const editor = document.createElement("div");
     editor.className = "row g-2 mt-2";
     editor.dataset.modelRoutingEditor = "true";
-    editor.dataset.apiPathOrder = endpoint.routing_path_order
-        || model.api_path_order
+    editor.dataset.apiPathOrder = model.api_path_order
+        || endpoint.routing_path_order
         || "model_first";
     const custom = endpoint.provider === "custom";
     const controls = {};
@@ -169,11 +169,15 @@ export function createModelRoutingEditor(model, { endpoint, registry, requestInp
             return;
         }
         if (custom && !explicitChoice) {
-            controls.api_type.value = profile === "genai_mil" ? "openai" : entry.api_type;
+            const type = profile === "genai_mil" ? "openai" : entry.api_type;
+            const next = `${type}:${registry[type]?.defaultInferenceApi || "chat_completions"}`;
+            if ([...controls.request_api.options].some(option => option.value === next)) {
+                controls.request_api.value = next;
+            }
             controls.url_mode.value = entry.url_mode;
             syncType();
         }
-        if (custom && profile !== "genai_mil" && registry[controls.api_type.value]?.usesModelName && !requestInput.value.trim()) {
+        if (custom && profile !== "genai_mil" && registry[controls.request_api.value.split(":")[0]]?.usesModelName && !requestInput.value.trim()) {
             requestInput.value = entry.id;
         }
         const displayInput = row?.querySelector("[data-display-name-for]");
@@ -183,31 +187,16 @@ export function createModelRoutingEditor(model, { endpoint, registry, requestInp
     });
 
     if (custom) {
-        const options = profile === "genai_mil" ? [registry.openai] : Object.values(registry);
-        if (profile === "genai_mil" && model.api_type && model.api_type !== "openai" && registry[model.api_type]) {
-            options.push({ ...registry[model.api_type], label: `${registry[model.api_type].label} (not supported by GenAI.mil)` });
+        const type = model.api_type || "openai";
+        const operation = model.inference_api || registry[type]?.defaultInferenceApi || "chat_completions";
+        const selected = `${type}:${operation}`;
+        const options = Object.values(registry).flatMap(descriptor => descriptor.requestApiOptions || [])
+            .filter(option => profile !== "genai_mil" || option.value === "openai:chat_completions");
+        if (!options.some(option => option.value === selected)) {
+            options.push({ value: selected, label: "Unsupported saved request API - select a replacement" });
         }
-        addField("api_type", "API Type", model.api_type || "openai", options);
-        const selectedDescriptor = registry[model.api_type || "openai"];
-        const inferenceApis = selectedDescriptor?.supportedInferenceApis
-            || ["chat_completions"];
-        if (inferenceApis.length > 1) {
-            addField(
-                "inference_api",
-                "Chat API",
-                model.inference_api || selectedDescriptor?.defaultInferenceApi
-                    || "chat_completions",
-                inferenceApis.map((value) => ({
-                    value,
-                    label: value === "responses"
-                        ? "Responses"
-                        : value === "messages"
-                          ? "Messages"
-                          : "Chat Completions",
-                })),
-                "Choose the operation this model implements. Saved models keep this choice even if connection defaults change."
-            );
-        }
+        addField("request_api", "Request API", selected, options,
+            "Select the operation and URL layout this model uses. Preview Route shows the exact resulting request.");
         addField("url_mode", "URL Handling", model.url_mode || "auto", [
             { value: "auto", label: "Automatic (protocol default)" },
             { value: "api_base", label: "Use API base as entered" },
@@ -232,9 +221,7 @@ export function createModelRoutingEditor(model, { endpoint, registry, requestInp
         requestInput.setAttribute("aria-describedby", requestHelp.id);
         requestInput.parentElement.append(requestHelp);
         syncType = () => {
-            const descriptor = registry[controls.api_type.value];
-            editor.dataset.defaultInferenceApi =
-                descriptor?.defaultInferenceApi || "chat_completions";
+            const descriptor = registry[controls.request_api.value.split(":")[0]];
             requestLabel.textContent = descriptor?.usesModelName ? "Model Name" : "Deployment Name";
             requestHelp.textContent = descriptor?.usesModelName
                 ? "Required: the exact model identifier accepted by this API. Catalog selection never replaces an identifier you entered."
@@ -247,26 +234,9 @@ export function createModelRoutingEditor(model, { endpoint, registry, requestInp
                     controls[field].value = descriptor.defaultVersion || "";
                 }
             }
-            const inferenceControl = controls.inference_api;
-            if (inferenceControl) {
-                const supported = descriptor?.supportedInferenceApis
-                    || ["chat_completions"];
-                inferenceControl.replaceChildren(...supported.map((value) => new Option(
-                    value === "responses"
-                        ? "Responses"
-                        : value === "messages"
-                          ? "Messages"
-                          : "Chat Completions",
-                    value
-                )));
-                if (!supported.includes(inferenceControl.value)) {
-                    inferenceControl.value =
-                        descriptor?.defaultInferenceApi || supported[0];
-                }
-            }
             editor.dataset.identifierField = descriptor?.usesModelName ? "modelName" : "deploymentName";
         };
-        controls.api_type.addEventListener("change", () => {
+        controls.request_api.addEventListener("change", () => {
             explicitChoice = true;
             syncType();
         });
@@ -306,13 +276,11 @@ export function collectModelRouting(row, model) {
     if (catalogModelId || Object.prototype.hasOwnProperty.call(model, "catalogModelId")) {
         model.catalogModelId = catalogModelId || null;
     }
-    const apiType = value("api_type");
+    const [apiType, inferenceApi] = (value("request_api") || "").split(":");
     if (apiType) {
         model.api_type = apiType;
         model.url_mode = value("url_mode");
-        model.inference_api = value("inference_api")
-            || editor.dataset.defaultInferenceApi
-            || "chat_completions";
+        model.inference_api = inferenceApi;
         const requestModel = row.querySelector("input[data-request-model-for]")?.value.trim() || "";
         delete model.modelName;
         delete model.deploymentName;

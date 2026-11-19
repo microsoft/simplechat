@@ -818,20 +818,17 @@ def iter_synthetic_chat_message_chunks(message, model_id, function_invoke_attemp
 
 def iter_completed_chat_chunks(completion):
     message = completion.choices[0].message
-    parts = list(iter_synthetic_stream_text_chunks(message.content or "")) or [""]
-    for index, part in enumerate(parts):
-        final = index == len(parts) - 1
-        delta = {"content": part}
-        if final and message.tool_calls:
-            delta["tool_calls"] = [
-                {"index": position, **call.model_dump(exclude_none=True)}
-                for position, call in enumerate(message.tool_calls)
-            ]
-        yield ChatCompletionChunk(
-            id=completion.id, model=completion.model, created=completion.created, object="chat.completion.chunk",
-            choices=[{"index": 0, "delta": delta, "finish_reason": completion.choices[0].finish_reason if final else None}],
-            usage=completion.usage if final else None,
-        )
+    delta = {"content": message.content or ""}
+    if message.tool_calls:
+        delta["tool_calls"] = [
+            {"index": position, **call.model_dump(exclude_none=True)}
+            for position, call in enumerate(message.tool_calls)
+        ]
+    yield ChatCompletionChunk(
+        id=completion.id, model=completion.model, created=completion.created, object="chat.completion.chunk",
+        choices=[{"index": 0, "delta": delta, "finish_reason": completion.choices[0].finish_reason}],
+        usage=completion.usage,
+    )
 
 
 class _ResponsesSyncEventStream:
@@ -1426,11 +1423,13 @@ class OpenAIStyleChatCompletionClient:
             request_kwargs.pop("stream_options", None)
         try:
             if self._inference_api == "responses":
+                # The SDK timeout is a transport option, not part of the Responses JSON body.
+                transport_options = {"timeout": request_kwargs.pop("timeout")} if "timeout" in request_kwargs else {}
                 responses_kwargs = responses_request(request_kwargs)
                 if request_kwargs.get("stream"):
                     responses_kwargs["stream"] = True
                     raw_response = self._client.responses.create(
-                        **responses_kwargs
+                        **responses_kwargs, **transport_options
                     )
                     response = (
                         _ResponsesSyncEventStream(raw_response)
@@ -1441,7 +1440,7 @@ class OpenAIStyleChatCompletionClient:
                     )
                 else:
                     response = responses_completion(
-                        self._client.responses.create(**responses_kwargs)
+                        self._client.responses.create(**responses_kwargs, **transport_options)
                     )
             else:
                 response = self._client.chat.completions.create(**request_kwargs)

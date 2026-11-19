@@ -97,6 +97,14 @@ class ModelEndpointProvider:
 
     def to_ui_option(self) -> dict:
         """Return non-secret configuration metadata for the global editors."""
+        operation_labels = {
+            MODEL_ENDPOINT_INFERENCE_API_RESPONSES: (
+                "Responses (/openai/v1/responses)"
+                if self.api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1
+                else "Responses (/v1/responses)"
+            ),
+            MODEL_ENDPOINT_INFERENCE_API_MESSAGES: "Anthropic Messages (/v1/messages)",
+        }
         return {
             "value": self.api_type,
             "label": self.display_name,
@@ -112,6 +120,10 @@ class ModelEndpointProvider:
             "routingSchemaVersion": self.routing_schema_version,
             "defaultInferenceApi": self.default_inference_api,
             "supportedInferenceApis": list(self.supported_inference_apis),
+            "requestApiOptions": [
+                {"value": f"{self.api_type}:{operation}", "label": operation_labels.get(operation, self.display_name)}
+                for operation in self.supported_inference_apis
+            ],
             "supportsStreaming": self.supports_streaming,
             "supportsTools": self.supports_tools,
             "supportsStreamOptions": self.supports_stream_options,

@@ -5192,6 +5192,13 @@ document.addEventListener('DOMContentLoaded', () => {
             trigger.getAttribute('data-open-admin-tab'),
             trigger.getAttribute('data-open-admin-section') || ''
         );
+        if (trigger.id === 'edit-embedding-model') {
+            const state = sharedCapabilityStates.embeddings;
+            const choice = state.data?.choices[sharedCapabilityChoiceIndex('embeddings')];
+            if (choice) window.dispatchEvent(new CustomEvent('simplechat:edit-embedding-model', {
+                detail: { endpointId: choice.endpoint_id, modelId: choice.model_id },
+            }));
+        }
     });
 
     window.addEventListener("popstate", activateTabFromHash);
@@ -5643,6 +5650,9 @@ function renderSharedCapabilityModels(capability) {
     const test = document.getElementById(state.testId);
     if (test) test.disabled = state.busy || selectedIndex < 0 || !data?.enabled;
     const selectedChoice = data?.choices[selectedIndex];
+    if (capability === 'embeddings') {
+        document.getElementById('edit-embedding-model')?.classList.toggle('d-none', !selectedChoice || state.busy);
+    }
     const support = selectedChoice?.capability;
     const supportElement = document.getElementById(`${prefix}-model-capability`);
     if (supportElement) {
@@ -5657,6 +5667,7 @@ function renderSharedCapabilityModels(capability) {
         policyElement.textContent = selectedChoice ? [
             Number.isSafeInteger(dimensions) && dimensions > 0 ? `${dimensions.toLocaleString()} dimensions` : 'Dimensions not configured',
             Number.isSafeInteger(policy?.max_input_tokens) && policy.max_input_tokens > 0 ? `${policy.max_input_tokens.toLocaleString()} input tokens per text` : 'Input token limit not configured',
+            selectedChoice.embedding_request_url ? `Effective embedding route: POST ${selectedChoice.embedding_request_url}` : '',
         ].filter(Boolean).join(' · ') : '';
     }
     const emptyMessage = !data ? '' : !data.choices.length

@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_defaults_api.py
 """
 Functional tests for embedding defaults and administrator save boundaries.
-Version: 0.261.392
+Version: 0.261.436
 Implemented in: 0.261.106
 
 Mount the actual Flask handlers and pure profile/preflight collaborators with
@@ -32,14 +32,20 @@ from functions_ai_connection_migration import (
     build_embedding_connection_migration,
     preserve_legacy_embedding_form_settings,
 )
-from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
+from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, embedding_transport, resolve_embedding_profile
 from functions_model_capabilities import ModelTokenBudgetError, normalize_model_budget_overrides
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
-from functions_model_endpoint_validation import ModelEndpointValidationError, validate_custom_model_endpoint, validate_custom_model_endpoints
+from functions_model_endpoint_types import routing_schema_version
+from functions_model_endpoint_urls import normalize_model_endpoint_routing
+from functions_model_endpoint_validation import (
+    ModelEndpointValidationError, validate_custom_model_endpoint, validate_custom_model_endpoint_url,
+    validate_custom_model_endpoints,
+)
 from functions_keyvault_errors import KeyVaultSecretStorageError
 from admin_settings_secret_utils import is_admin_settings_redacted_secret
 from content_screening.contracts import ScreeningError
 from test_app_settings_store_consistency import AppSettingsStore, FakeCosmos, SettingsConflictError
+from model_endpoint_profiles import merge_profile_credential_approval
 
 
 CAPABILITY_URL = "/api/v2/admin/capability-models/embeddings"
@@ -133,6 +139,7 @@ class AdminApiHarness:
         }
         self.writes = []
         self.events = []
+        self.credential_cleanup = []
         self.flashes = []
         self.inspections = []
         self.fence_calls = []
@@ -223,12 +230,19 @@ class AdminApiHarness:
             "update_settings": update_settings,
             "log_event": lambda *_args, **_kwargs: None,
             "resolve_embedding_profile": resolve_embedding_profile,
+            "embedding_transport": embedding_transport,
+            "ModelBinding": connections.ModelBinding,
+            "routing_schema_version": routing_schema_version,
+            "normalize_model_endpoint_routing": normalize_model_endpoint_routing,
+            "merge_profile_credential_approval": merge_profile_credential_approval,
+            "SettingsConflictError": SettingsConflictError,
             "ModelEndpointValidationError": ModelEndpointValidationError,
             "KeyVaultSecretStorageError": KeyVaultSecretStorageError,
             "ModelTokenBudgetError": ModelTokenBudgetError,
             "normalize_model_budget_overrides": normalize_model_budget_overrides,
             "validate_custom_model_endpoints": validate_custom_model_endpoints,
             "validate_custom_model_endpoint": validate_custom_model_endpoint,
+            "validate_custom_model_endpoint_url": validate_custom_model_endpoint_url,
             "get_model_endpoint_provider_ui_options": get_model_endpoint_provider_ui_options,
             "is_admin_settings_redacted_secret": is_admin_settings_redacted_secret,
             "AzureError": AzureError,
@@ -247,7 +261,7 @@ class AdminApiHarness:
                 for endpoint in endpoints
             ],
             "keyvault_model_endpoint_save_helper": stage_secret,
-            "keyvault_model_endpoint_cleanup_helper": lambda *_args, **_kwargs: self.events.append("cleanup"),
+            "keyvault_model_endpoint_cleanup_helper": self.capture_credential_cleanup,
             "keyvault_model_endpoint_delete_helper": lambda *_args, **_kwargs: self.events.append("delete"),
             "normalize_admin_settings_updates": lambda updates, _current: (copy.deepcopy(updates), {}, []),
             "get_admin_settings_api_secret_fields": lambda: [],
@@ -306,6 +320,10 @@ class AdminApiHarness:
         self.app = Flask(__name__)
         self.app.register_blueprint(self.bp)
         self.client = Client(self.app, self.app.response_class)
+
+    def capture_credential_cleanup(self, discard, retain, *_args, **_kwargs):
+        self.events.append("cleanup")
+        self.credential_cleanup.append(tuple((item or {}).get("auth", {}).get("api_key") for item in (discard, retain)))
 
     def activate(self):
         self.settings[connections.EMBEDDING_SELECTION_KEY] = selection()
@@ -390,8 +408,11 @@ class EmbeddingDefaultApiTests(unittest.TestCase):
         self.assertTrue(all(choice["model_id"] == "embedding" for choice in response.json["choices"]))
         self.assertTrue(all(choice["embedding_policy"]["dimensions"] == 1536 for choice in response.json["choices"]))
         self.assertIsNone(response.json["migration"])
+        selected = next(choice for choice in response.json["choices"] if choice["endpoint_id"] == "one")
+        self.assertEqual(selected["embedding_request_url"], "https://private-one.openai.azure.com/openai/v1/embeddings")
+        self.assertNotIn("embedding_request_url", next(choice for choice in response.json["choices"] if choice["endpoint_id"] == "two"))
         for private_value in (
-            "synthetic-api-secret", "private-one.openai", "private-prefix-secret",
+            "synthetic-api-secret", "private-two.openai", "private-prefix-secret",
             "private-query-secret", "private-model-revision",
         ):
             self.assertNotIn(private_value, response.get_data(as_text=True))
@@ -456,7 +477,10 @@ class EmbeddingDefaultApiTests(unittest.TestCase):
         self.assertEqual(512, choice["embedding_policy"]["max_input_tokens"])
         self.assertEqual(set(generic_choice["embedding_policy"]), set(choice["embedding_policy"]))
         self.assertNotIn("private-legacy", response.get_data(as_text=True))
-        self.assertNotIn("legacy-limit.openai.azure.com", response.get_data(as_text=True))
+        self.assertEqual(choice["embedding_request_url"], (
+            "https://legacy-limit.openai.azure.com/openai/deployments/legacy-limited/embeddings"
+            "?api-version=2024-05-01-preview"
+        ))
         self.assertEqual(before, self.api.settings)
         self.assertEqual([], self.api.writes)
         self.assertEqual([], self.api.inspections)
@@ -702,6 +726,31 @@ class EmbeddingEndpointSaveTests(unittest.TestCase):
         self.api = AdminApiHarness()
         self.api.activate()
 
+    def test_equivalent_model_override_keeps_default_profile_and_stored_secret(self):
+        baseline = copy.deepcopy(self.api.settings[EMBEDDING_VECTOR_PROFILE_KEY])
+        endpoint = copy.deepcopy(self.api.settings["model_endpoints"][0])
+        # Express the existing effective route on this model without changing it.
+        endpoint["models"][0]["embedding_operation"] = {
+            "api": "openai", "endpoint": endpoint["connection"]["endpoint"],
+        }
+        response = self.api.client.patch(
+            f"{ENDPOINT_URL}/one", json={"models": endpoint["models"], "auth": {"api_key": ""}},
+        )
+        self.assertEqual(200, response.status_code, response.json)
+        self.assertEqual(baseline, self.api.settings[EMBEDDING_VECTOR_PROFILE_KEY])
+        self.assertEqual(selection(), self.api.settings[connections.EMBEDDING_SELECTION_KEY])
+        self.assertEqual("synthetic-api-secret", self.api.settings["model_endpoints"][0]["auth"]["api_key"])
+        self.assertEqual(endpoint["models"][0]["embedding_operation"], response.json["endpoint"]["models"][0]["embedding_operation"])
+        self.assertEqual([], self.api.inspections)
+
+    def test_invalid_nondefault_model_override_cannot_stage_credentials(self):
+        endpoint = copy.deepcopy(self.api.settings["model_endpoints"][1])
+        endpoint["models"][0]["embedding_operation"] = {"api": "openai", "api_version": "2025-01-01"}
+        response = self.api.client.patch(f"{ENDPOINT_URL}/two", json={"models": endpoint["models"]})
+        self.assertEqual(400, response.status_code, response.json)
+        self.assertNotIn("stage", self.api.events)
+        self.assertEqual([], self.api.writes)
+
     def test_removed_disabled_or_unpublished_default_is_cleared_but_baseline_remains(self):
         for change in ("delete", "disable_endpoint", "delete_model", "unpublish", "disable_model"):
             with self.subTest(change=change):
@@ -800,7 +849,8 @@ class EmbeddingEndpointSaveTests(unittest.TestCase):
         response = self.api.client.patch(f"{ENDPOINT_URL}/one", json={"auth": {"api_key": "new-secret"}})
         self.assertEqual(409, response.status_code)
         self.assertIn("stage", self.api.events)
-        self.assertNotIn("cleanup", self.api.events)
+        # A failed write discards the staged replacement, not the live key.
+        self.assertEqual(self.api.credential_cleanup, [("new-secret", "synthetic-api-secret")])
         self.assertNotIn("delete", self.api.events)
         self.assertEqual(before, self.api.settings)
 

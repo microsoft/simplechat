@@ -1,7 +1,7 @@
 # test_ai_connection_text_consumers.py
 """Behavioral regression tests for shared AI Connection text-consumer guards.
 
-Version: 0.261.429
+Version: 0.261.437
 Implemented in: 0.261.105
 Canonical endpoint protocol and strict credential regressions: 0.261.106
 Custom request identity and strict hydration merge coverage: 0.261.113
@@ -493,7 +493,7 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         settings = {"model_endpoints": [image, project], "enable_multi_model_endpoints": False}
         original = deepcopy(settings)
         helpers = load_boundaries("route_backend_agents.py", {
-            "build_combined_model_endpoints", "get_global_agent_settings",
+            "collect_agent_model_endpoints", "build_combined_model_endpoints", "get_global_agent_settings",
         }, {
             "get_settings": lambda: settings,
             "get_global_agents": lambda: [],
@@ -516,7 +516,7 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         # The real Key Vault reminder helper both editor option builders share is loaded
         # with the builder, so the test exercises the block the route actually returns.
         helpers = load_boundaries("functions_workspace_authoring.py", {
-            "build_agent_editor_options", "build_secret_reminder_defaults",
+            "_project_agent_editor_endpoints", "build_agent_editor_options", "build_secret_reminder_defaults",
         }, {
             "ensure_editor_options_access": lambda user, settings: True,
             "ensure_editor_access": Mock(),

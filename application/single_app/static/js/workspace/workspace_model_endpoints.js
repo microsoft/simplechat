@@ -1248,6 +1248,9 @@ async function saveEndpoint() {
             body: JSON.stringify(endpointRequestBody(endpointData, existingEndpoint))
         });
         const result = await response.json().catch(() => ({}));
+        if (response.status === 400 && result.code === "invalid_custom_endpoint" && payload.routing_schema_version === 2) {
+            throw new ModelRoutingValidationError(result.error || "Review the model routing before saving.");
+        }
         if (!response.ok || !result.endpoint) {
             throw new Error(result.error || "Unable to save this model connection.");
         }

@@ -1,8 +1,9 @@
 # test_ai_connection_embedding_runtime.py
 """
 Functional coverage for embedding profiles and provider-independent inference.
-Version: 0.261.122
+Version: 0.261.436
 Implemented in: 0.261.106
+Model-owned embedding routes verified in: 0.261.436
 
 Exercise the actual profile resolver, SDK wire format, response validation, and
 retry boundaries with synthetic credentials and no Azure or provider requests.
@@ -19,6 +20,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import httpx
+import pytest
 from azure.core.exceptions import ClientAuthenticationError
 
 
@@ -83,6 +85,34 @@ class EmbeddingRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.settings = custom_settings()
         self.profile = resolve_embedding_profile(self.settings)
+
+    def test_model_route_override_preserves_inherited_identity_and_isolates_other_models(self):
+        endpoint = self.settings["model_endpoints"][0]
+        inherited = {"endpoint": "https://embedding.example.test/legacy/v1", "api": "openai"}
+        endpoint["connection"]["operation_settings"] = {"embeddings": inherited}
+        original = resolve_embedding_profile(self.settings)
+        endpoint["models"][0]["embedding_operation"] = copy.deepcopy(inherited)
+        replacement = resolve_embedding_profile(self.settings)
+        self.assertEqual(replacement.base_url, original.base_url)
+        self.assertEqual(replacement.profile_id, original.profile_id)
+
+        alternate = copy.deepcopy(endpoint["models"][0])
+        alternate.update(id="other", deploymentName="other-embed", embedding_operation={
+            "endpoint": "https://embedding.example.test/sibling/v1", "api": "openai",
+        })
+        endpoint["models"].append(alternate)
+        other = resolve_embedding_profile({
+            **self.settings,
+            EMBEDDING_SELECTION_KEY: {**self.settings[EMBEDDING_SELECTION_KEY], "model_id": "other"},
+        })
+        self.assertEqual(other.base_url, "https://embedding.example.test/sibling/v1/")
+        self.assertEqual(other.deployment, "other-embed")
+        self.assertNotEqual(other.profile_id, original.profile_id)
+        self.assertEqual(resolve_embedding_profile(self.settings).profile_id, original.profile_id)
+        endpoint["models"][0]["embedding_operation"] = {}
+        self.assertNotEqual(resolve_embedding_profile(self.settings).profile_id, original.profile_id)
+        del endpoint["models"][0]["embedding_operation"]
+        self.assertEqual(resolve_embedding_profile(self.settings).profile_id, original.profile_id)
 
     def client(self, handler):
         return runtime._EmbeddingOpenAIClient(
@@ -254,13 +284,17 @@ class EmbeddingRuntimeTests(unittest.TestCase):
             SecretReturnType=types.SimpleNamespace(VALUE="value"),
             keyvault_model_endpoint_get_helper=helper,
         )
-        with patch.dict(sys.modules, {
-            "functions_keyvault": vault,
-            "functions_model_endpoint_runtime": load_guarded_endpoint_runtime(),
-        }), patch(
-            "socket.getaddrinfo",
-            return_value=[(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443))],
-        ):
+        guarded = load_guarded_endpoint_runtime()
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setitem(sys.modules, "functions_keyvault", vault)
+            monkeypatch.setitem(sys.modules, "functions_model_endpoint_runtime", guarded)
+            monkeypatch.setitem(sys.modules, "functions_settings", types.SimpleNamespace(
+                resolve_model_endpoint_ca_trust=lambda *args: "",
+            ))
+            monkeypatch.setattr(
+                "socket.getaddrinfo",
+                lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443))],
+            )
             with runtime.build_embedding_connection_client(self.profile.binding, self.settings) as client:
                 self.assertEqual(str(client.base_url), self.profile.base_url)
                 self.assertEqual(client.auth_headers, {"Authorization": "Bearer hydrated-synthetic-key"})
@@ -270,6 +304,49 @@ class EmbeddingRuntimeTests(unittest.TestCase):
         self.assertEqual(helper.call_args.kwargs["scope"], "global")
         self.assertTrue(helper.call_args.kwargs["strict"])
         self.assertEqual(self.settings["model_endpoints"][0]["auth"]["api_key"], "synthetic-key")
+
+    def test_explicit_mixed_embedding_posts_to_the_composed_model_base(self):
+        endpoint = self.settings["model_endpoints"][0]
+        endpoint.update(provider="custom", routing_schema_version=2, routing_path_order="connection_first")
+        endpoint["models"][0].update(
+            api_type="azure_openai", inference_api="chat_completions", api_path="vectors;rev=2",
+            url_mode="auto", api_version="2024-10-21",
+        )
+        endpoint["models"].append({
+            "id": "chat", "modelName": "messages-test", "api_type": "anthropic",
+            "inference_api": "messages", "api_path": "messages/v1", "url_mode": "api_base",
+        })
+        self.settings[EMBEDDING_SELECTION_KEY]["provider"] = "custom"
+        request_url = "https://embedding.example.test/gateway/v1/vectors;rev=2/openai/deployments/embed-prod/embeddings?api-version=2024-10-21"
+        profile = resolve_embedding_profile(self.settings)
+        captured = []
+
+        def respond(request):
+            captured.append(request)
+            return httpx.Response(200, json=response_body([[0.1, 0.2, 0.3]]))
+
+        guarded = load_guarded_endpoint_runtime()
+        vault = types.SimpleNamespace(
+            SecretReturnType=types.SimpleNamespace(VALUE="value"),
+            keyvault_model_endpoint_get_helper=lambda endpoint, *args, **kwargs: endpoint,
+        )
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setitem(sys.modules, "functions_keyvault", vault)
+            monkeypatch.setitem(sys.modules, "functions_model_endpoint_runtime", guarded)
+            monkeypatch.setitem(sys.modules, "functions_settings", types.SimpleNamespace(
+                resolve_model_endpoint_ca_trust=lambda *args: "",
+            ))
+            monkeypatch.setattr(guarded, "validate_custom_model_endpoint_url", lambda url, **kwargs: url)
+            monkeypatch.setattr(guarded, "build_custom_openai_sync_http_client", lambda **kwargs:
+                httpx.Client(transport=httpx.MockTransport(respond), follow_redirects=False)
+            )
+            with runtime.build_embedding_connection_client(profile.binding, self.settings) as client:
+                client.embeddings.create(input=["synthetic text"], model=profile.deployment)
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(str(captured[0].url), request_url)
+        self.assertEqual(json.loads(captured[0].content)["model"], "embed-prod")
+        self.assertEqual(captured[0].headers["api-key"], "synthetic-key")
+        self.assertNotIn("Authorization", captured[0].headers)
 
     def test_apim_import_preserves_the_explicit_legacy_chunk_budget(self):
         for deployment in ("text-embedding-3-small", "internal-gateway-embedding"):

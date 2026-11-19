@@ -70,14 +70,18 @@ export function retryQuestion(messages: ChatMessage[], message: ChatMessage): Ch
     const thread = messageThreadId(message);
     const turn = messageOrchestrationTurn(message);
     if (thread || turn) {
-        return messages.find((candidate) => candidate.role === 'user' && (
+        const matched = messages.find((candidate) => candidate.role === 'user' && (
             thread
                 ? messageThreadId(candidate) === thread && currentAttempt(candidate) === currentAttempt(message)
                 : messageOrchestrationTurn(candidate) === turn
         ));
+        if (matched) return matched;
     }
-    const before = messages.slice(0, messages.findIndex((candidate) => candidate.id === message.id));
-    return before.reverse().find((candidate) => candidate.role === 'user');
+    const messageIndex = messages.findIndex((candidate) => candidate.id === message.id);
+    if (messageIndex < 0) return undefined;
+    return messages.slice(0, messageIndex).reverse().find((candidate) =>
+        candidate.role === 'user' && candidate.conversation_id === message.conversation_id
+    );
 }
 
 export function beginRetryPresentation(

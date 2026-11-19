@@ -394,6 +394,16 @@ html[data-font-size='xl'] {
         overflow: hidden;
     }
 
+    /* Native popups can ignore the closed select's background. Theme the rows directly. */
+    select :is(option, optgroup) {
+        background-color: var(--surface-solid);
+        color: var(--text-1);
+    }
+
+    select :is(option, optgroup):disabled {
+        color: var(--text-3);
+    }
+
     /* The ambient mesh. Fixed and non-interactive so it never affects layout or hit
        testing, and painted once rather than per-surface. */
     body::before {

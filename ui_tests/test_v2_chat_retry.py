@@ -1,8 +1,8 @@
 # test_v2_chat_retry.py
 """
 Browser coverage for saved model, agent, and orchestration retry attempts.
-Version: 0.261.320
-Implemented in: 0.261.317
+Version: 0.261.432
+Implemented in: 0.261.431
 
 Runs the real message list, composer, stores, and controller with production CSS.
 Only HTTP and streaming provider responses are replaced. No live service is called.
@@ -114,6 +114,12 @@ class RetryApi(PlanningApi):
     def handle(self, route):
         request = route.request
         path = urlsplit(request.url).path
+        if path == "/api/action-recovery/context":
+            route.fulfill(json={"csrf_token": "retry-fixture-csrf"})
+            return
+        if path == "/api/chat/action-health":
+            route.fulfill(json={"state": "ready"})
+            return
         preparation = path.endswith("/retry") or path.endswith("/regenerate")
         if preparation and (path.startswith("/api/message/") or "/orchestration/messages/" in path):
             self.requests.append({"path": path, "method": request.method, "body": request.post_data_json})
@@ -260,6 +266,20 @@ def test_retry_hides_answer_immediately_and_reuses_saved_selections_in_place(ret
             assert request[key] == value
     assert request["web_search_enabled"] is True
     assert request["selected_document_ids"] == ["original-document"]
+
+
+def test_immediate_retry_finds_question_when_new_answer_arrived_first(retry_ui):
+    page, api = retry_ui
+    question = api.attempts[1][0]
+    question["metadata"].pop("thread_info", None)
+    question["metadata"]["response_attempt"] = {"kind": "chat", "state": "completed"}
+    start(page, api)
+
+    page.get_by_role("button", name="Retry", exact=True).first.click()
+
+    expect(page.get_by_text("The regenerated answer.", exact=True)).to_be_visible()
+    assert chat_state(page)["error"] is None
+    assert len(api.calls("/api/chat/stream")) == 1
 
 
 def test_earlier_retry_does_not_follow_the_conversation_tail(retry_ui):

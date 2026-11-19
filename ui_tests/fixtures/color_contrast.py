@@ -1,9 +1,12 @@
 # color_contrast.py
 """Browser contrast measurement against the actual composited ancestor surfaces.
 
-Version: 0.261.305
+Version: 0.261.438
 Implemented in: 0.261.305
+Native popup contrast coverage extended in: 0.261.438
 """
+
+from playwright.sync_api import Locator, expect
 
 CONTRAST_RATIO_SCRIPT = """
 (element, property) => {
@@ -43,3 +46,25 @@ CONTRAST_RATIO_SCRIPT = """
     return (light + 0.05) / (dark + 0.05);
 }
 """
+
+
+def assert_readable_native_menu(select: Locator) -> None:
+    """Check popup rows themselves; a native popup may ignore the select's background."""
+    expect(select).to_be_enabled()
+    select.click()
+    try:
+        rows = select.locator("optgroup:enabled, option:enabled").evaluate_all(f"""elements => {{
+            const contrast = {CONTRAST_RATIO_SCRIPT};
+            const context = document.createElement('canvas').getContext('2d', {{willReadFrequently: true}});
+            return elements.map(row => {{
+                const background = getComputedStyle(row).backgroundColor;
+                context.clearRect(0, 0, 1, 1);
+                context.fillStyle = background;
+                context.fillRect(0, 0, 1, 1);
+                const opaque = context.getImageData(0, 0, 1, 1).data[3] === 255;
+                return {{label: row.label, background, opaque, ratio: opaque ? contrast(row, 'color') : 0}};
+            }});
+        }}""")
+    finally:
+        select.press("Escape")
+    assert rows and all(row["opaque"] and row["ratio"] >= 4.5 for row in rows), rows

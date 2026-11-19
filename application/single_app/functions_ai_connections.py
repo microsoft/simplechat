@@ -110,6 +110,8 @@ class ModelBinding:
 
     @property
     def operation_settings(self):
+        if self.capability == EMBEDDINGS_CAPABILITY and "embedding_operation" in self.model:
+            return self.model["embedding_operation"]
         return get_connection_operation_settings(self.endpoint, self.capability)
 
 
@@ -272,7 +274,8 @@ def resolve_model_capability(model, capability, provider="aoai", *, endpoint=Non
             connection = endpoint if isinstance(endpoint, Mapping) else {}
             auth = connection.get("auth") or {}
             auth_type = str(auth.get("type") or "api_key").strip().lower()
-            if get_model_endpoint_api_type(connection) not in ("openai", "azure_openai") or auth_type not in ("api_key", "key", "bearer"):
+            route_model = model if isinstance(model, dict) and model.get("api_type") else None
+            if get_model_endpoint_api_type(connection, route_model) not in ("openai", "azure_openai") or auth_type not in ("api_key", "key", "bearer"):
                 return _support(
                     False, "provider",
                     "Embeddings require a Custom OpenAI or Azure OpenAI API connection with API key or bearer authentication.",

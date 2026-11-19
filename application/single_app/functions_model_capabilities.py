@@ -508,19 +508,63 @@ def _explicit_routing_capabilities(model, endpoint):
         raise ValueError("Unsupported model API type.")
     gateway = _read_declared_capabilities(endpoint)
     selected = _read_declared_capabilities(model)
+    catalog = get_model_catalog_capabilities(model) or {}
+
+    def declared_or_catalog(name, default=None):
+        if name in selected:
+            return selected[name]
+        if name in gateway:
+            return gateway[name]
+        value = catalog.get(name)
+        return value if isinstance(value, bool) else default
+
+    def route_supports(name, transport_default, *, catalog_required=False):
+        catalog_value = catalog.get(name)
+        catalog_support = catalog_value if isinstance(catalog_value, bool) else None
+        if catalog_required and catalog_support is None:
+            supported = selected.get(name) is True and gateway.get(name) is True
+        else:
+            supported = catalog_support is not False
+        return (
+            transport_default is True
+            and supported
+            and gateway.get(name, True) is True
+            and selected.get(name, True) is True
+        )
+
     capabilities = dict.fromkeys(CAPABILITY_FIELD_NAMES, False)
-    for name, supported in {
+    for name, transport_default in {
         "processesText": True,
         "generatesText": True,
         CAPABILITY_SUPPORTS_STREAMING: descriptor.supports_streaming,
-    }.items():
-        capabilities[name] = supported and gateway.get(name, True) and selected.get(name, True)
-    for name, supported in {
         CAPABILITY_TOOL_CALLING: descriptor.supports_tools,
         CAPABILITY_PROCESSES_IMAGES: True,
         CAPABILITY_STRUCTURED_OUTPUT: descriptor.protocol != "anthropic",
     }.items():
-        capabilities[name] = supported and gateway.get(name) is True and selected.get(name) is True
+        capabilities[name] = route_supports(
+            name,
+            transport_default,
+            catalog_required=name in {
+                CAPABILITY_TOOL_CALLING,
+                CAPABILITY_PROCESSES_IMAGES,
+                CAPABILITY_STRUCTURED_OUTPUT,
+            },
+        )
+    for name in CAPABILITY_FIELD_NAMES:
+        if capabilities[name] or name in {
+            "processesText",
+            "generatesText",
+            CAPABILITY_SUPPORTS_STREAMING,
+            CAPABILITY_TOOL_CALLING,
+            CAPABILITY_PROCESSES_IMAGES,
+            CAPABILITY_STRUCTURED_OUTPUT,
+        }:
+            continue
+        capabilities[name] = (
+            declared_or_catalog(name, False) is True
+            and gateway.get(name, True) is True
+            and selected.get(name, True) is True
+        )
     return capabilities
 
 
