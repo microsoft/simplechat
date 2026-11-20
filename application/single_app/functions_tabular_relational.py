@@ -27,6 +27,7 @@ from functions_tabular_transformations import (
     get_tabular_transformation_source_references,
     normalize_tabular_transformation_spec,
     read_formatted_number,
+    tabular_number_readings,
 )
 
 
@@ -62,6 +63,7 @@ RELATIONAL_EXPRESSION_GRAMMAR = (
     "A numeric operand is a number or text that writes one: a currency symbol, commas between groups "
     "of three digits, a minus sign or parentheses for a negative, and a trailing percent sign (divided "
     "by 100) are read. Comparing text that writes a number with a number needs value_type number. "
+    "The decimal mark is a point unless the dataset declares the column in comma_decimal_columns. "
     "A division whose exact quotient does not terminate must be the direct value of a round expression. "
     "A numeric output must be exactly representable as a JSON number; otherwise round it or declare "
     "type string."
@@ -107,6 +109,15 @@ def relational_spec_schema():
                 "Optional assertion of the complete ordered native header, including unused columns. "
                 "This is not a projection or a list of columns needed by the calculation. "
                 "Omit it when the complete header is not known; use a project step to select fields."
+            ),
+        },
+        "comma_decimal_columns": {
+            "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": True, "items": _COLUMN,
+            "description": (
+                "Native headers of this dataset whose text cells write numbers with a decimal comma "
+                "(1.250,00). Each such cell is read under that convention before any step; every "
+                "other column is read with a decimal point. Declare a column only when its cells "
+                "are written that way."
             ),
         },
     }, ["alias", "document_id"])
@@ -1096,11 +1107,34 @@ def calculate_relational_sources(spec, datasets, *, limits, cancel_requested=Non
             _require(not selected.get("columns") or list(columns) == selected["columns"], "relational_schema_changed")
             qualified = tuple(f"{alias}.{name}" for name in columns)
             _require(all(len(name) <= 128 for name in qualified), "relational_column_limit")
+            comma_decimal = frozenset(selected.get("comma_decimal_columns") or ())
+            undeclared = _missing_columns_error(
+                qualified, [f"{alias}.{name}" for name in sorted(comma_decimal - set(columns))],
+                "comma_decimal_column", budget.prefixes, {},
+            )
+            if undeclared is not None:
+                raise undeclared
             rows = []
             for number, values in raw_rows:
                 budget.check()
                 _require(isinstance(number, int) and not isinstance(number, bool) and number >= 1)
                 _require(set(values) == set(columns), "relational_schema_changed")
+                if comma_decimal:
+                    # The declared reading, applied once. Text that writes no number at all is
+                    # left as it is. Text that writes a number only with a decimal point
+                    # contradicts the declaration, and is never read the other way instead.
+                    values = dict(values)
+                    for name in comma_decimal:
+                        point, declared = tabular_number_readings(values[name])
+                        if declared is not None:
+                            values[name] = format(declared, "f")
+                        elif point is not None:
+                            contradiction = TabularTransformationEvaluationError("Numeric value is invalid")
+                            contradiction.detail = {
+                                "check": "dataset_read", "role": "comma_decimal_column",
+                                "category": "declared_decimal_mark", "expected_type": "number",
+                            }
+                            raise contradiction
                 budget.append(rows, RelationalRow(
                     {f"{alias}.{name}": values[name] for name in columns},
                     ((alias, selected["document_id"], sheet or "", number),),
@@ -1112,6 +1146,7 @@ def calculate_relational_sources(spec, datasets, *, limits, cancel_requested=Non
             "dataset": alias, "document_id": selected["document_id"], "sheet": sheet,
             "row_count": len(rows), "columns": list(columns),
             "selection": {name: selected[name] for name in ("header_row", "cell_range", "table_id") if name in selected},
+            **({"comma_decimal_columns": sorted(comma_decimal)} if comma_decimal else {}),
             "schema_sha256": hashlib.sha256(json.dumps(list(columns)).encode()).hexdigest(),
         })
     diagnostics = []

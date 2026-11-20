@@ -86,21 +86,58 @@ _PRECISE_DECIMAL_CONTEXT = Context(
 _DECIMAL_TEXT_PATTERN = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 
 
-_GROUPED_DIGITS_PATTERN = re.compile(r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]*)?|\.[0-9]+")
-TABULAR_VALUE_KINDS = ("number", "numeric_text", "blank", "boolean", "date_text", "text", "other")
+_GROUP_SPACES = " \u00a0\u202f"
+# Digits as each convention writes them: groups of exactly three, then the decimal mark.
+_GROUPED_DIGITS_PATTERNS = {
+    ".": re.compile(r"(?:[0-9]{1,3}(?:[, \u00a0\u202f][0-9]{3})+|[0-9]+)(?:\.[0-9]*)?|\.[0-9]+"),
+    ",": re.compile(r"(?:[0-9]{1,3}(?:[. \u00a0\u202f][0-9]{3})+|[0-9]+)(?:,[0-9]*)?|,[0-9]+"),
+}
+# ISO 4217 alphabetic codes in circulation. A closed published list, read as a currency symbol is.
+ISO_CURRENCY_CODES = frozenset("""
+AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP BYN
+BZD CAD CDF CHF CLP CNY COP CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS
+GIP GMD GNF GTQ GYD HKD HNL HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW
+KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD
+NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD
+SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES
+VND VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWG
+""".split())
+TABULAR_VALUE_KINDS = (
+    "number", "numeric_text", "comma_decimal_text", "blank", "boolean", "date_text", "text", "other",
+)
 
 
-def read_formatted_number(text):
+def _leading_currency(body):
+    if unicodedata.category(body[0]) == "Sc":
+        return 1
+    if body[:3] in ISO_CURRENCY_CODES and not body[3:4].isalpha():
+        return 3
+    return 0
+
+
+def _trailing_currency(body):
+    if unicodedata.category(body[-1]) == "Sc":
+        return 1
+    if body[-3:] in ISO_CURRENCY_CODES and not body[-4:-3].isalpha():
+        return 3
+    return 0
+
+
+def read_formatted_number(text, decimal_mark="."):
     """The number a piece of text writes with presentation marks, or None when it writes none.
 
-    A formatted number is still a number. Accepted, each at most once: one currency symbol
-    before or after the digits, commas between complete groups of three digits, a negative
-    written as a leading minus, a trailing minus or surrounding parentheses, and a trailing
-    percent sign, which divides by one hundred as a percent-formatted cell does. The decimal
-    mark is a point. Anything else is not read as a number: "1.250,00", "1,25", "USD 5" and
-    "about 5" stay text, because each has more than one reading or none.
+    A formatted number is still a number. Accepted, each at most once: one currency symbol or
+    ISO 4217 code before or after the digits, a mark between complete groups of three digits, a
+    negative written as a leading minus, a trailing minus or surrounding parentheses, and a
+    trailing percent sign, which divides by one hundred as a percent-formatted cell does.
+
+    ``decimal_mark`` is the convention the text is read under. With a point, groups are parted
+    by a comma or a space ("1,250.00"). With a comma, by a point or a space ("1.250,00"). One
+    cell cannot say which convention it follows, "1,250" being 1250 under one and 1.25 under the
+    other, so the caller states it: a point unless a calculation declares the column otherwise.
+    Text that writes no number under the stated convention is not read: "about 5", "N/A".
     """
-    if not isinstance(text, str):
+    if not isinstance(text, str) or decimal_mark not in _GROUPED_DIGITS_PATTERNS:
         return None
     body = text.strip()
     if not body or len(body) > TABULAR_TRANSFORMATION_MAX_NUMERIC_TEXT_LENGTH:
@@ -122,23 +159,41 @@ def read_formatted_number(text):
                     return None
                 negative = True
             signed, body = True, body[1:].lstrip()
-        elif unicodedata.category(body[0]) == "Sc" and not currency:
-            currency, body = True, body[1:].lstrip()
+        elif not currency and _leading_currency(body):
+            currency, body = True, body[_leading_currency(body):].lstrip()
         else:
             break
-    if body and unicodedata.category(body[-1]) == "Sc":
+    if body and _trailing_currency(body):
         if currency:
             return None
-        currency, body = True, body[:-1].rstrip()
-    if (currency and percent) or not _GROUPED_DIGITS_PATTERN.fullmatch(body):
+        currency, body = True, body[:-_trailing_currency(body)].rstrip()
+    if (currency and percent) or not _GROUPED_DIGITS_PATTERNS[decimal_mark].fullmatch(body):
         return None
+    for mark in _GROUP_SPACES + ("," if decimal_mark == "." else "."):
+        body = body.replace(mark, "")
     try:
-        number = Decimal(body.replace(",", ""))
+        number = Decimal(body.replace(",", "."))
     except InvalidOperation:
         return None
     if percent:
         number = number.scaleb(-2)
     return -number if negative else number
+
+
+def tabular_number_readings(value):
+    """The number a text cell writes with a decimal point, and with a decimal comma."""
+    if not isinstance(value, str):
+        return None, None
+    text = value.strip()
+    if not text or len(text) > TABULAR_TRANSFORMATION_MAX_NUMERIC_TEXT_LENGTH:
+        return None, None
+    point = read_formatted_number(text)
+    if point is None and _DECIMAL_TEXT_PATTERN.fullmatch(text):
+        try:
+            point = Decimal(text)
+        except InvalidOperation:
+            point = None
+    return point, read_formatted_number(text, ",")
 
 
 def tabular_value_kind(value):
@@ -153,10 +208,11 @@ def tabular_value_kind(value):
         text = value.strip()
         if not text:
             return "blank"
-        if len(text) <= TABULAR_TRANSFORMATION_MAX_NUMERIC_TEXT_LENGTH and (
-            _DECIMAL_TEXT_PATTERN.fullmatch(text) or read_formatted_number(text) is not None
-        ):
+        point, comma = tabular_number_readings(text)
+        if point is not None:
             return "numeric_text"
+        if comma is not None:
+            return "comma_decimal_text"
         try:
             date.fromisoformat(text[:10])
         except ValueError:

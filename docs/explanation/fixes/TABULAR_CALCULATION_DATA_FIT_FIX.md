@@ -1,6 +1,6 @@
 # A calculation that did not fit the data failed without being told why
 
-Fixed in version: **0.261.470**
+Fixed in version: **0.261.470**, extended in **0.261.471**
 
 ## Issue
 
@@ -42,17 +42,33 @@ reason for a corrected program (three model calls at most). Three things were mi
 `read_formatted_number` reads text that writes a number with presentation marks. Accepted,
 each at most once:
 
-- one currency symbol (any Unicode currency symbol) before or after the digits;
-- commas between complete groups of three digits;
+- one currency symbol (any Unicode currency symbol) or ISO 4217 code (`USD 5`, `5 EUR`),
+  before or after the digits (codes from 0.261.471);
+- commas or spaces between complete groups of three digits;
 - a negative written as a leading minus, a trailing minus or surrounding parentheses;
 - a trailing percent sign, which divides by one hundred, as a percent-formatted cell does.
 
-The decimal mark is a point. Text with more than one reading, or none, is still not a number:
-`1.250,00`, `1,25`, `12,34,567`, `USD 5`, `about 5`, `N/A`. The reader is used wherever a number
-is required: arithmetic, aggregates, number-typed comparisons, numeric output fields
+The decimal mark is a point unless a calculation declares otherwise (next section). Text that
+writes no number is still not one: `12,34,567`, `about 5`, `N/A`, `USDA 5`. The reader is used
+wherever a number is required: arithmetic, aggregates, number-typed comparisons, numeric output fields
 (`_parse_decimal_value`) and allocation and cumulative values (`_decimal` in
 `functions_tabular_relational.py`). It is not applied to untyped comparisons or to join keys,
 so an identifier is never turned into a number.
+
+### Decimal commas, declared per column and checked (0.261.471)
+
+People here receive material from Europe, where `1.250,00` is one thousand two hundred and
+fifty. One cell cannot say which convention it follows: `1,250` is 1250 under one and 1.25
+under the other. A column can, and the calculation states it:
+
+- A dataset in the program may list `comma_decimal_columns`. Text cells of those columns are
+  read with a decimal comma (groups parted by a point or a space) before any step runs.
+- The declaration is checked against every cell of the column. A cell written with a decimal
+  point (`1,250.00`, `12.5`) contradicts it and stops the calculation; it is never read the
+  other way instead. Text that writes no number (`N/A`) is not a contradiction.
+- A declared column that does not exist is refused, naming it to the author.
+- The declaration is recorded with the result (`coverage.sources[].comma_decimal_columns`).
+- Nothing is inferred from a file name, a currency or a locale.
 
 ### Every column's value kinds (`functions_tabular_merge.py`)
 
@@ -62,8 +78,25 @@ kinds come from `tabular_value_kind`, which uses the same reader as the calculat
 counted as `numeric_text` is one a sum accepts and a cell counted as `text` is one that stops
 it.
 
-These are counts, never rows or cell values, so their size does not depend on the number of
-rows: a table of 50,000 rows adds only the digits of the counts (tested). The prepared context
+From 0.261.471 the profile also carries what the author needs to choose and to handle what it
+finds:
+
+- `comma_decimal_text`: cells that write a number only with a decimal comma. A column where
+  these appear and `numeric_text` does not is a comma-decimal column.
+- `two_readings`: cells that write one number with a decimal point and a different one with a
+  decimal comma (`1,250`). A column made only of these is ambiguous, and says so here instead
+  of being read one way silently.
+- `text_values`: for a column that holds numbers and also text, each distinct text value and
+  how many cells hold it (`N/A` 5, `pending` 2), so a calculation can name them and set them
+  aside. A column of text alone is counted and not listed.
+
+The list is bounded, and each bound is reported in the profile instead of applied silently:
+at most 50 distinct values per column (`text_values_not_listed`:
+`more_distinct_values_than_listed`), values up to 120 characters (`text_longer_than_listed`
+counts the rest), and 24 KB for one table (`table_limit`).
+
+The kind counts are counts, never rows or cell values, so their size does not depend on the
+number of rows: a table of 50,000 rows adds only the digits of the counts (tested). The prepared context
 keeps its existing 96 KB ceiling, above which preparation fails instead of sending more.
 
 ### Evaluation findings return to the author (`functions_orchestration_native_results.py`)
@@ -103,7 +136,11 @@ unchanged.
 
 ## Validation
 
-- `test_tabular_formatted_numbers_and_column_profile.py`: 30 passed. Formatted numbers are
+- `test_tabular_formatted_numbers_and_column_profile.py`: 49 passed (0.261.471), including
+  ISO codes, a declared comma-decimal column, a contradicted declaration, the listed text
+  values and each of their bounds. Tabular, relational, native-result and planner-contract
+  files together: 465 passed.
+- At 0.261.470 the same file had 30 passed. Formatted numbers are
   read and summed exactly; ambiguous text is refused; the profile and the calculation agree
   cell by cell; the profile of 50,000 rows is under 1 KB.
 - `test_orchestration_relational_results.py`: a well-formed program that fails on the data is
@@ -117,6 +154,8 @@ unchanged.
 
 - **Not run against a live model or the deployed application.** Whether the model, given the
   value kinds and the finding, writes a program that fits is the thing the next rerun shows.
+- `test_tabular_row_orchestration_scale.py` has 3 failures and then does not finish; both are
+  the same on the commit before 0.261.470.
 - The four runs where the model call itself failed (`model_failed`) are not explained.
 - Saved steps from earlier versions fingerprint differently because the language description
   changed, so their checkpoints are not reused; they run again.
