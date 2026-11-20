@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.474)**
+### **(v0.261.475)**
 
 #### Bug Fixes
 
@@ -12,6 +12,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The Bicep and Terraform deployers now declare all 75 containers the app uses. Bicep was missing 11 (`conversation_handoffs`, `support_exports`, `orchestration_runs`, `orchestration_run_steps`, `document_access_index`, `content_screening`, `key_vault_secret_reminders`, `bitbucket_connections`, `action_credential_state`, `m365_connections`, `m365_execution_runs`), and Terraform was also missing `custom_pages`, `governance_policies` and `governance_item_policies` (deployers version 1.0.41).
     *   New `deployers/Grant-CosmosContainerCreatePermission.ps1` lets an admin grant the identity a narrow custom role (container read and write only) for deployments where it does not have Contributor on the Cosmos account. It supports `-WhatIf` and `-UseBuiltInRole`.
     *   (Ref: `functions_cosmos_container_provisioning.py`, `config.py`, `cosmosDb.bicep`, `main.json`, `terraform/main.tf`, `deploy-simplechat.ps1`, `Grant-CosmosContainerCreatePermission.ps1`, `test_cosmos_container_arm_provisioning.py`, `COSMOS_CONTAINER_CREATION_MANAGED_IDENTITY_FIX.md`)
+
+### **(v0.261.474)**
+
+#### Bug Fixes
+
+*   **Model Catalog Updates Now Ship With Their Publisher Keys**
+    *   Admin Settings > Model Catalog no longer warns on every deployment that the publisher verification key is not configured. The production and development publisher public keys are bundled with SimpleChat, so a deployment receives them through an ordinary upgrade; administrators have nothing to install.
+    *   When the official catalog is signed with a newer publisher key, or needs a newer application version, **Check for updates** shows **Upgrade SimpleChat to get catalog updates** instead of a generic verification failure. Uploading such a package gives the same explanation, and the installed catalog keeps working meanwhile. Releases without a bundled key can now run the check and are told to upgrade.
+    *   V2 no longer draws a second, unlabelled switch for `enable_model_catalog_online_updates`; **Allow online catalog update checks** is the only control.
+    *   Publishers whose Key Vault cannot be reached from GitHub-hosted runners can sign with a `CATALOG_SIGNING_KEY` secret on the protected publishing environment. `scripts/publish_model_catalog.py` adds `generate-key` (local key pair, public half into the trust map, private half outside the repository) and `trust-key` (imports a Key Vault key's public half). The workflow refuses an environment that configures both a vault key and a secret, and checks that the secret matches the bundled public key before signing.
+    *   (Ref: `model_catalog_package.py`, `model_catalog_updates.py`, `scripts/publish_model_catalog.py`, `.github/workflows/publish-model-catalog.yml`, `model_catalog_trusted_keys.json`, `model_catalog_development_trusted_keys.json`, `admin_settings_fields.py`, `ModelCatalogUpdates.tsx`, `model_catalog_updates.js`, `MODEL_CATALOG_PUBLISHER_KEY_SETUP_FIX.md`, [#1967](https://github.com/microsoft/simplechat/pull/1967))
 
 ### **(v0.261.473)**
 

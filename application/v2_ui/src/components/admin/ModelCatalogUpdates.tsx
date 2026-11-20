@@ -18,7 +18,16 @@ interface UpdateStatus {
     discoveryUrl: string;
     installed: Manifest;
     canRollback: boolean;
-    check?: { status: string; attemptedAt: string; downloadUrl?: string; digest?: string };
+    check?: {
+        status: string;
+        attemptedAt: string;
+        downloadUrl?: string;
+        digest?: string;
+        /** Set when status is `upgrade_required`: `publisher_key`, `minimum_version` or `format`. */
+        reason?: string;
+        message?: string;
+        minimumAppVersion?: string;
+    };
 }
 
 interface Preview {
@@ -99,13 +108,13 @@ export function ModelCatalogUpdates({ onApplied, locked }: { onApplied: () => vo
                             if (!saved) setStatus(previous);
                         }}
                     />
-                    {!status.publisherConfigured && <p className="text-sm text-warn">Publisher verification key is not configured. Install the trusted public key before publishing or importing packages.</p>}
+                    {!status.publisherConfigured && <p className="text-sm text-warn">Catalog updates are unavailable in this release. Signed packages are verified with a publisher key that ships inside SimpleChat, and this build does not include one yet. Upgrading to a release that includes the key turns updates on; there is nothing to configure here.</p>}
                     <div className="flex flex-wrap items-center gap-3">
-                        <GlassButton type="button" size="sm" variant="subtle" disabled={!status.onlineEnabled || !status.publisherConfigured}
+                        <GlassButton type="button" size="sm" variant="subtle" disabled={!status.onlineEnabled}
                             onClick={() => void run('check')}>Check for updates</GlassButton>
                         <label className="min-w-0 text-sm">
                             Upload signed package
-                            <input type="file" accept=".json,application/json" className="block max-w-full text-xs" disabled={!status.publisherConfigured}
+                            <input type="file" accept=".json,application/json" className="block max-w-full text-xs"
                                 onChange={async (event) => {
                                     const file = event.target.files?.[0];
                                     if (!file) return;
@@ -125,9 +134,15 @@ export function ModelCatalogUpdates({ onApplied, locked }: { onApplied: () => vo
                             onClick={() => void run('rollback-preview')}>Preview rollback</GlassButton>
                         <GlassButton type="button" size="sm" variant="subtle" onClick={() => void run()}>Reload update status</GlassButton>
                     </div>
+                    {status.check?.status === 'upgrade_required' && (
+                        <p role="status" className="max-w-[72ch] text-sm text-warn">
+                            <strong>Upgrade SimpleChat to get catalog updates.</strong>{' '}
+                            {status.check.message || 'The latest official catalog needs a newer version of SimpleChat. Deploy the latest SimpleChat release, then check again.'}
+                        </p>
+                    )}
                     {status.check && (
                         <div className="space-y-2 text-xs">
-                            <p>Last check: {status.check.status} · {status.check.attemptedAt}</p>
+                            <p>Last check: {status.check.status === 'upgrade_required' ? 'upgrade required' : status.check.status} · {status.check.attemptedAt}</p>
                             {status.check.downloadUrl && <p className="break-all">Download URL: {status.check.downloadUrl}</p>}
                             {status.check.status === 'available' && <GlassButton type="button" size="sm" onClick={() => void run('preview', { digest: status.check?.digest })}>Preview available update</GlassButton>}
                         </div>

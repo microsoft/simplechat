@@ -133,10 +133,10 @@ The page used to say that groups relying on the fallback scan "still" needed the
 linked to it. The classic page cannot render those switches any better, and the link addressed a
 section where the classic page reads a tab, so it did not work. The note now says only that the
 switches are listed by their setting name, have no description yet, and save exactly as stored.
-The fallback scan currently draws twelve `enable_*` keys with no declared field
-(`enable_analysis_deliverable_contract_telemetry`, `enable_collaborative_conversations`,
-`enable_model_catalog_online_updates` and the `enable_tabular_*` rollout flags); none has a classic
-control either.
+The fallback scan currently draws eleven `enable_*` keys with no declared field
+(`enable_analysis_deliverable_contract_telemetry`, `enable_collaborative_conversations` and the
+`enable_tabular_*` rollout flags); none has a classic control either. Since 0.261.474,
+`enable_model_catalog_online_updates` is suppressed: the Catalog updates card owns it.
 
 ## Usage
 

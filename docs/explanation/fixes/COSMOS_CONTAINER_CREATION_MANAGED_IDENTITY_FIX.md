@@ -17,7 +17,7 @@ The app identity already had the right permission in a different place: the depl
 
 ## Version
 
-Fixed in **0.261.474**. Deployers version **1.0.41**.
+Fixed in **0.261.475**. Deployers version **1.0.41**.
 
 ## Technical Details
 

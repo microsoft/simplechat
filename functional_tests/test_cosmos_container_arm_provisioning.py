@@ -2,8 +2,8 @@
 # test_cosmos_container_arm_provisioning.py
 """
 Functional test for Cosmos container creation under managed identity.
-Version: 0.261.474
-Implemented in: 0.261.474
+Version: 0.261.475
+Implemented in: 0.261.475
 
 This test ensures that every Cosmos container the app creates is declared in the
 Bicep and Terraform deployers, that the app falls back to Azure Resource Manager
