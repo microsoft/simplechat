@@ -2,6 +2,9 @@
 """Operation-time wiring for support exports; no resource initialization on import."""
 
 import logging
+import os
+import threading
+import time
 import uuid
 
 from azure.identity import AzureAuthorityHosts, DefaultAzureCredential
@@ -20,7 +23,8 @@ from functions_notifications import create_notification
 from functions_orchestration_attempts import exclude_superseded_orchestration_attempts
 from functions_saved_analysis import sanitize_saved_analysis_messages
 from functions_settings import get_settings
-from support_export_contracts import SupportExportError, digest, fail, iso, normalize_configuration, utc_now
+from support_export_contracts import SupportExportError, digest, effective_configuration, fail, iso, normalize_overrides, utc_now
+from support_export_discovery import detect_configuration, lookup_app_insights_resource_id
 from support_export_service import SupportExportService
 from support_export_sources import SupportExportSources, build_support_monitor_client
 from support_export_store import SupportExportStore
@@ -128,6 +132,42 @@ def _visible_messages(messages, owner_id):
     return exclude_superseded_orchestration_attempts(active)
 
 
+_DETECTION_LOCK = threading.Lock()
+_DETECTION_CACHE = {"key": None, "value": None, "expires": 0.0}
+_DETECTION_FOUND_SECONDS = 6 * 60 * 60
+_DETECTION_MISSING_SECONDS = 5 * 60
+
+
+def _detected_sources(credential_for, *, need_app_lookup):
+    """Detect source resources from this deployment, caching the Resource Graph lookup.
+
+    Environment parsing is cheap; only the instrumentation-key lookup touches Azure, so its
+    answer is cached per process (briefly when nothing was found, so fixing access is noticed).
+    """
+    environment = dict(os.environ)
+    if not need_app_lookup:
+        return detect_configuration(environment)
+
+    def lookup(key, cloud):
+        cache_key = (key, cloud)
+        with _DETECTION_LOCK:
+            if _DETECTION_CACHE["key"] == cache_key and _DETECTION_CACHE["expires"] > time.monotonic():
+                return _DETECTION_CACHE["value"]
+        try:
+            value = lookup_app_insights_resource_id(key, cloud, credential_for(cloud))
+        except Exception as exc:
+            audit_support_export("app_insights_lookup_failed", error_type=type(exc).__name__)
+            value = ""
+        with _DETECTION_LOCK:
+            _DETECTION_CACHE.update(
+                key=cache_key, value=value,
+                expires=time.monotonic() + (_DETECTION_FOUND_SECONDS if value else _DETECTION_MISSING_SECONDS),
+            )
+        return value
+
+    return detect_configuration(environment, lookup=lookup)
+
+
 def get_support_export_service():
     settings = get_settings()
     blobs = None
@@ -136,16 +176,30 @@ def get_support_export_service():
         blob_service = config.build_enhanced_citations_blob_service_client(settings)
         blobs = blob_service.get_container_client("support-exports")
     store = SupportExportStore(config.cosmos_support_exports_container, blobs)
-    configuration = normalize_configuration(store.configuration() or {
-        "cloud": "public", "app_resource_id": "", "site_resource_id": "",
-    })
+    overrides = normalize_overrides(store.configuration() or {})
+    credentials = {}
+
+    def credential_for(cloud):
+        if cloud not in credentials:
+            government = cloud == "usgovernment"
+            authority = AzureAuthorityHosts.AZURE_GOVERNMENT if government else AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+            credentials[cloud] = DefaultAzureCredential(authority=authority)
+        return credentials[cloud]
+
+    detected = _detected_sources(
+        credential_for, need_app_lookup=not overrides["app_resource_id"],
+    )
+    configuration = effective_configuration(overrides, detected)
     monitor = None
     credential = None
-    if configuration["app_resource_id"] or configuration["site_resource_id"]:
-        government = configuration.get("cloud") == "usgovernment"
-        authority = AzureAuthorityHosts.AZURE_GOVERNMENT if government else AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
-        credential = DefaultAzureCredential(authority=authority)
-        monitor = build_support_monitor_client(configuration, credential)
+    try:
+        if configuration["app_resource_id"] or configuration["site_resource_id"]:
+            credential = credential_for(configuration["cloud"])
+            monitor = build_support_monitor_client(configuration, credential)
+    except Exception:
+        for item in credentials.values():
+            item.close()
+        raise
     sources = SupportExportSources({
         "users": config.cosmos_user_settings_container,
         "conversations": config.cosmos_conversations_container, "messages": config.cosmos_messages_container,
@@ -163,8 +217,8 @@ def get_support_export_service():
                 monitor.close()
         finally:
             try:
-                if credential is not None:
-                    credential.close()
+                for item in credentials.values():
+                    item.close()
             finally:
                 if blob_service is not None:
                     blob_service.close()
@@ -173,7 +227,7 @@ def get_support_export_service():
         store, sources, version=config.VERSION, model_info=_model_info, inspect_ai=_inspect_ai,
         notify=_notify, audit=audit_support_export,
         storage_binding=digest({"container": blobs.url if blobs is not None else ""}),
-        close_resources=close_resources,
+        close_resources=close_resources, detected=detected,
     )
 
 

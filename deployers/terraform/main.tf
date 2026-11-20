@@ -720,6 +720,7 @@ resource "azurerm_linux_web_app" "app" {
     "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"        = azuread_application_password.app_registration_secret.value
     "APPINSIGHTS_INSTRUMENTATIONKEY"                  = azurerm_application_insights.ai.instrumentation_key
     "APPLICATIONINSIGHTS_CONNECTION_STRING"           = azurerm_application_insights.ai.connection_string
+    "APPLICATIONINSIGHTS_RESOURCE_ID"                 = azurerm_application_insights.ai.id
     "APPINSIGHTS_PROFILERFEATURE_VERSION"             = "1.0.0"
     "APPINSIGHTS_SNAPSHOTFEATURE_VERSION"             = "1.0.0"
     "APPLICATIONINSIGHTS_CONFIGURATION_CONTENT"       = ""

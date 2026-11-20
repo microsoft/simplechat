@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.473)**
+
+#### Bug Fixes
+
+*   **Support Log Export Finds Its Own Sources**
+    *   Support Log Export no longer asks admins to pick the Azure cloud or paste the Application Insights and App Service resource IDs. The cloud comes from `AZURE_ENVIRONMENT`, the App Service ID from App Service's own platform variables (deployment slots included), and the Application Insights ID from the new `APPLICATIONINSIGHTS_RESOURCE_ID` app setting or, when that is absent, an Azure Resource Graph lookup by the connection string's instrumentation key.
+    *   "Source and storage setup" shows each resolved value and where it came from. The input fields moved under "Override detected values", where a blank field means "use the detected value"; the cloud selector only appears when `AZURE_ENVIRONMENT` cannot name a supported cloud.
+    *   Saved resource IDs keep working as overrides. A previously defaulted Azure Commercial cloud no longer overrides a US Government deployment.
+    *   The Bicep, Terraform and Azure CLI deployers now set `APPLICATIONINSIGHTS_RESOURCE_ID` (deployers version 1.0.40).
+    *   (Ref: `support_export_discovery.py`, `support_export_contracts.py`, `support_export_service.py`, `functions_support_exports.py`, `SupportExportPanel.tsx`, `support-exports.js`, `test_admin_support_export_source_detection.py`, `SUPPORT_EXPORT_SOURCE_DETECTION_FIX.md`)
+
 ### **(v0.261.454)**
 
 #### Bug Fixes
