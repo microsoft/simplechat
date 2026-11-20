@@ -2,8 +2,8 @@
 # test_request_intent_side_effect_gate.py
 """
 Functional test for the shared request-intent decision that gates side-effect actions.
-Version: 0.261.475
-Implemented in: 0.261.475
+Version: 0.261.476
+Implemented in: 0.261.476
 
 This test ensures that keyword detectors only nominate file exports and background runs,
 that an explicit opt-out or a model verdict decides whether they start, that each
@@ -339,7 +339,7 @@ def test_action_entry_points_are_wired():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.261.475")
+    assert_app_version_at_least("0.261.476")
     tests = [
         test_opt_out_is_deterministic_and_per_action,
         test_ordinary_messages_are_untouched,

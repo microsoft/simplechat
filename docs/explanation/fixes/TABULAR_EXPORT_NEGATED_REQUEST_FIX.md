@@ -11,7 +11,7 @@ A user sent a prompt, with a spreadsheet attached, that ended "Do not generate J
 - v0.250.154 added a negation pattern for "do not / don't / never". Other phrasings still started an export: "must not generate JSON", "rather than as a JSON file", "JSON output is not permitted", "Step 5D will generate the JSON".
 - The fixed message was saved as the assistant's reply in the first person. Later turns read it as a promise the model had made.
 
-**Fixed in version:** 0.261.475
+**Fixed in version:** 0.261.476
 
 ## Technical Details
 

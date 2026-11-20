@@ -348,6 +348,61 @@ var cosmosContainers = [
     partitionKeyPath: '/user_id'
     defaultTtl: null
   }
+  {
+    name: 'conversation_handoffs'
+    partitionKeyPath: '/destination_conversation_id'
+    defaultTtl: null
+  }
+  {
+    name: 'support_exports'
+    partitionKeyPath: '/partition_key'
+    defaultTtl: -1
+  }
+  {
+    name: 'orchestration_runs'
+    partitionKeyPath: '/conversation_id'
+    defaultTtl: null
+  }
+  {
+    name: 'orchestration_run_steps'
+    partitionKeyPath: '/run_id'
+    defaultTtl: null
+  }
+  {
+    name: 'document_access_index'
+    partitionKeyPath: '/scope_key'
+    defaultTtl: null
+  }
+  {
+    name: 'content_screening'
+    partitionKeyPath: '/partition_key'
+    defaultTtl: null
+  }
+  {
+    name: 'key_vault_secret_reminders'
+    partitionKeyPath: '/scope_key'
+    defaultTtl: null
+  }
+  {
+    name: 'bitbucket_connections'
+    partitionKeyPath: '/user_id'
+    defaultTtl: -1
+  }
+  {
+    name: 'action_credential_state'
+    partitionKeyPath: '/user_id'
+    defaultTtl: -1
+  }
+  {
+    name: 'm365_connections'
+    partitionKeyPath: '/user_id'
+    defaultTtl: -1
+  }
+  {
+    name: 'm365_execution_runs'
+    partitionKeyPath: '/user_id'
+    defaultTtl: -1
+  }
 ]
 
 // Import diagnostic settings configurations

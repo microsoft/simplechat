@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.475)**
+### **(v0.261.476)**
 
 #### Bug Fixes
 
@@ -19,6 +19,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The message shown when a background export or analysis starts now reads as an application status ("The app started a background job to generate the complete JSON for all 826 rows") instead of the assistant agreeing to do it.
     *   The background export card has an **Answer in chat instead** button that cancels the run and answers the same request in chat. Classic interface only.
     *   (Ref: `route_backend_chats.py`, `chat-messages.js`, `ui_tests/test_chat_background_generated_export_status.py`)
+
+### **(v0.261.475)**
+
+#### Bug Fixes
+
+*   **Missing Cosmos Containers Are Created Under Managed Identity**
+    *   With managed identity, Cosmos DB refuses to create containers through its data-plane endpoint, so a release that added a container failed to start after `azd deploy` unless `azd provision` had created it first. When that refusal happens, the app now creates the missing container through Azure Resource Manager with the same partition key, TTL and indexing policy, using the Contributor role the deployers already give its identity.
+    *   The app finds the Cosmos account's subscription and resource group from `AZURE_SUBSCRIPTION_ID` and `AZURE_RESOURCE_GROUP`, which the Terraform and Azure CLI deployers now set as Bicep already did. When they are absent, as on an older deployment updated only with `azd deploy`, it uses its own App Service subscription and resource group, so nobody has to supply them.
+    *   The Bicep and Terraform deployers now declare all 75 containers the app uses. Bicep was missing 11 (`conversation_handoffs`, `support_exports`, `orchestration_runs`, `orchestration_run_steps`, `document_access_index`, `content_screening`, `key_vault_secret_reminders`, `bitbucket_connections`, `action_credential_state`, `m365_connections`, `m365_execution_runs`), and Terraform was also missing `custom_pages`, `governance_policies` and `governance_item_policies` (deployers version 1.0.41).
+    *   New `deployers/Grant-CosmosContainerCreatePermission.ps1` lets an admin grant the identity a narrow custom role (container read and write only) for deployments where it does not have Contributor on the Cosmos account. It supports `-WhatIf` and `-UseBuiltInRole`.
+    *   (Ref: `functions_cosmos_container_provisioning.py`, `config.py`, `cosmosDb.bicep`, `main.json`, `terraform/main.tf`, `deploy-simplechat.ps1`, `Grant-CosmosContainerCreatePermission.ps1`, `test_cosmos_container_arm_provisioning.py`, `COSMOS_CONTAINER_CREATION_MANAGED_IDENTITY_FIX.md`)
 
 ### **(v0.261.474)**
 
