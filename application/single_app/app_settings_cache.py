@@ -58,6 +58,7 @@ initialize_stream_session_cache = None
 set_stream_session_meta = None
 get_stream_session_meta = None
 append_stream_session_event = None
+append_stream_session_events_batch = None
 get_stream_session_events = None
 delete_stream_session_cache = None
 get_user_ui_settings_cache = None
@@ -527,6 +528,91 @@ def _append_stream_session_event_fallback(cache_key, event_text, ttl_seconds=Non
         }
 
 
+def _append_stream_session_events_batch_fallback(cache_key, event_texts, ttl_seconds=None, log_event_func=None):
+    """Append multiple events in a single Cosmos read-modify-write instead of one per event.
+
+    Mirrors `_append_stream_session_event_fallback` exactly, except it extends the
+    payload by the whole batch per round trip. Used by chat streaming, which buffers
+    several chunks before flushing, so this keeps one Cosmos round trip per flush
+    instead of one per streamed token.
+    """
+    event_texts = [text for text in (event_texts or []) if text is not None]
+    if not event_texts:
+        return
+
+    expiration_timestamp = _get_expiration_timestamp(ttl_seconds)
+    cache_entry_key = _get_stream_session_events_key(cache_key)
+    doc_id = _build_cosmos_cache_doc_id(cache_entry_key)
+    container = _get_cosmos_cache_container()
+    events_payload = None
+
+    for _ in range(STREAM_SESSION_APPEND_MAX_ATTEMPTS):
+        now = datetime.utcnow()
+        expires_at = None
+        if ttl_seconds is not None:
+            expires_at = now + timedelta(seconds=max(int(ttl_seconds), 0))
+        try:
+            document = container.read_item(item=doc_id, partition_key=doc_id)
+            events_payload = list(document.get('payload') or [])
+            events_payload.extend(event_texts)
+            document['payload'] = events_payload
+            document['updated_at'] = now.isoformat()
+            document['expires_at'] = _serialize_datetime(expires_at)
+            container.replace_item(
+                item=doc_id,
+                body=document,
+                etag=document.get('_etag'),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except AzureError as ex:
+            status_code = getattr(ex, 'status_code', None)
+            if status_code in {404, 409, 412}:
+                if status_code == 404:
+                    try:
+                        container.create_item({
+                            'id': doc_id,
+                            'type': COSMOS_CACHE_ENTRY_DOC_TYPE,
+                            'cache_key': cache_entry_key,
+                            'payload': list(event_texts),
+                            'created_at': now.isoformat(),
+                            'updated_at': now.isoformat(),
+                            'expires_at': _serialize_datetime(expires_at),
+                        })
+                    except AzureError as create_error:
+                        if getattr(create_error, 'status_code', None) in {409, 412}:
+                            continue
+                        ex = create_error
+                    else:
+                        events_payload = list(event_texts)
+                        break
+                else:
+                    continue
+            _logger.warning("[ASC] Cosmos stream event batch append failed for %s: %s", cache_key, ex)
+            if callable(log_event_func):
+                log_event_func(
+                    "[ASC] Cosmos stream event batch append failed.",
+                    extra={'cache_key': cache_key, 'error': str(ex), 'status_code': status_code},
+                    level=logging.WARNING,
+                )
+            break
+        else:
+            break
+    else:
+        events_payload = None
+
+    if not isinstance(events_payload, list):
+        with _app_cache_lock:
+            entry = APP_STREAM_SESSION_EVENTS.get(cache_key)
+            events_payload = list(entry.get('value') or []) if entry and not _is_expired(entry) else []
+            events_payload.extend(event_texts)
+
+    with _app_cache_lock:
+        APP_STREAM_SESSION_EVENTS[cache_key] = {
+            'value': events_payload,
+            'expires_at': expiration_timestamp,
+        }
+
+
 def _get_stream_session_events_fallback(cache_key, start_index=0, log_event_func=None):
     start = int(start_index or 0)
     cached = _get_cosmos_cache_entry(
@@ -606,7 +692,8 @@ def _delete_user_ui_settings_cache_fallback(user_id, log_event_func=None):
 def _assign_fallback_cache_functions(log_event_func=None):
     global update_settings_cache, get_settings_cache
     global initialize_stream_session_cache, set_stream_session_meta, get_stream_session_meta
-    global append_stream_session_event, get_stream_session_events, delete_stream_session_cache
+    global append_stream_session_event, append_stream_session_events_batch
+    global get_stream_session_events, delete_stream_session_cache
     global get_user_ui_settings_cache, set_user_ui_settings_cache, delete_user_ui_settings_cache
     global get_app_settings_cache_version
     global get_governance_cache_version, bump_governance_cache_version
@@ -640,6 +727,14 @@ def _assign_fallback_cache_functions(log_event_func=None):
         _append_stream_session_event_fallback(
             cache_key,
             event_text,
+            ttl_seconds=ttl_seconds,
+            log_event_func=log_event_func,
+        )
+    )
+    append_stream_session_events_batch = lambda cache_key, event_texts, ttl_seconds=None: (
+        _append_stream_session_events_batch_fallback(
+            cache_key,
+            event_texts,
             ttl_seconds=ttl_seconds,
             log_event_func=log_event_func,
         )
@@ -687,7 +782,8 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
     global APP_USER_UI_SETTINGS_CACHE, APP_STREAM_SESSION_METADATA, APP_STREAM_SESSION_EVENTS
     global APP_GOVERNANCE_CACHE_VERSION, APP_GOVERNANCE_SHARED_VERSION_CACHE
     global initialize_stream_session_cache, set_stream_session_meta, get_stream_session_meta
-    global append_stream_session_event, get_stream_session_events, delete_stream_session_cache
+    global append_stream_session_event, append_stream_session_events_batch
+    global get_stream_session_events, delete_stream_session_cache
     global get_user_ui_settings_cache, set_user_ui_settings_cache, delete_user_ui_settings_cache
     global get_app_settings_cache_version
     global get_governance_cache_version, bump_governance_cache_version
@@ -795,6 +891,29 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
                     log_event_func=log_event,
                 )
 
+        def append_stream_session_events_batch_redis(cache_key, event_texts, ttl_seconds=None):
+            event_texts = [text for text in (event_texts or []) if text is not None]
+            if not event_texts:
+                return
+            try:
+                metadata_key = get_stream_session_metadata_key(cache_key)
+                events_key = get_stream_session_events_key(cache_key)
+                pipeline = redis_client.pipeline()
+                pipeline.rpush(events_key, *event_texts)
+                if ttl_seconds is not None:
+                    pipeline.expire(events_key, int(ttl_seconds))
+                    if redis_client.exists(metadata_key):
+                        pipeline.expire(metadata_key, int(ttl_seconds))
+                pipeline.execute()
+            except Exception as ex:
+                _log_cache_fallback('append_stream_session_events_batch', ex, log_event_func=log_event)
+                _append_stream_session_events_batch_fallback(
+                    cache_key,
+                    event_texts,
+                    ttl_seconds=ttl_seconds,
+                    log_event_func=log_event,
+                )
+
         def get_stream_session_events_redis(cache_key, start_index=0):
             try:
                 cached_events = redis_client.lrange(
@@ -884,6 +1003,7 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
         set_stream_session_meta = set_stream_session_meta_redis
         get_stream_session_meta = get_stream_session_meta_redis
         append_stream_session_event = append_stream_session_event_redis
+        append_stream_session_events_batch = append_stream_session_events_batch_redis
         get_stream_session_events = get_stream_session_events_redis
         delete_stream_session_cache = delete_stream_session_cache_redis
         get_user_ui_settings_cache = get_user_ui_settings_cache_redis
@@ -1047,6 +1167,11 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
         append_stream_session_event = lambda cache_key, event_text, ttl_seconds=None: (
             _append_stream_session_event_fallback(
                 cache_key, event_text, ttl_seconds=ttl_seconds, log_event_func=log_event,
+            )
+        )
+        append_stream_session_events_batch = lambda cache_key, event_texts, ttl_seconds=None: (
+            _append_stream_session_events_batch_fallback(
+                cache_key, event_texts, ttl_seconds=ttl_seconds, log_event_func=log_event,
             )
         )
         get_stream_session_events = lambda cache_key, start_index=0: _get_stream_session_events_fallback(

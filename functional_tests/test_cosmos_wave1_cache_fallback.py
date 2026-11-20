@@ -133,8 +133,8 @@ class InMemoryRedisPipeline:
         self.operations.append(('expire', (key, seconds)))
         return self
 
-    def rpush(self, key, value):
-        self.operations.append(('rpush', (key, value)))
+    def rpush(self, key, *values):
+        self.operations.append(('rpush', (key, *values)))
         return self
 
     def execute(self):
@@ -178,8 +178,8 @@ class InMemoryRedis:
     def expire(self, key, seconds):
         return self.exists(key)
 
-    def rpush(self, key, value):
-        self.values.setdefault(key, []).append(value)
+    def rpush(self, key, *values):
+        self.values.setdefault(key, []).extend(values)
         return len(self.values[key])
 
     def lrange(self, key, start, end):
@@ -341,6 +341,93 @@ def test_redis_stream_session_initialization_preserves_existing_events():
     ]
 
 
+def test_stream_event_batch_fallback_appends_all_events_in_one_round_trip():
+    """A single batched append must land every event, in order, via one Cosmos write."""
+    container = FakeCosmosContainer()
+    cache_module = _load_cache_module()
+    cache_module.configure_app_cache({"enable_redis_cache": False}, dependencies=_dependencies(
+        cache_module, container, RaisingRedis,
+    ))
+
+    cache_key = "chat-stream:batch-test"
+    cache_module.initialize_stream_session_cache(cache_key, {"active": True}, ttl_seconds=60)
+    cache_module.append_stream_session_events_batch(
+        cache_key,
+        ["data: one\n\n", "data: two\n\n", "data: three\n\n"],
+        ttl_seconds=60,
+    )
+
+    assert cache_module.get_stream_session_events(cache_key) == [
+        "data: one\n\n",
+        "data: two\n\n",
+        "data: three\n\n",
+    ]
+
+
+def test_stream_event_batch_fallback_merges_with_prior_single_appends():
+    """Batched appends must extend (not replace) events already written one at a time."""
+    container = FakeCosmosContainer()
+    cache_module = _load_cache_module()
+    cache_module.configure_app_cache({"enable_redis_cache": False}, dependencies=_dependencies(
+        cache_module, container, RaisingRedis,
+    ))
+
+    cache_key = "chat-stream:batch-merge-test"
+    cache_module.initialize_stream_session_cache(cache_key, {"active": True}, ttl_seconds=60)
+    cache_module.append_stream_session_event(cache_key, "data: first\n\n", ttl_seconds=60)
+    cache_module.append_stream_session_events_batch(
+        cache_key,
+        ["data: second\n\n", "data: third\n\n"],
+        ttl_seconds=60,
+    )
+
+    assert cache_module.get_stream_session_events(cache_key) == [
+        "data: first\n\n",
+        "data: second\n\n",
+        "data: third\n\n",
+    ]
+
+
+def test_stream_event_batch_fallback_ignores_empty_batch():
+    """Flushing an empty batch must be a safe no-op, not an error or a blank write."""
+    container = FakeCosmosContainer()
+    cache_module = _load_cache_module()
+    cache_module.configure_app_cache({"enable_redis_cache": False}, dependencies=_dependencies(
+        cache_module, container, RaisingRedis,
+    ))
+
+    cache_key = "chat-stream:batch-empty-test"
+    cache_module.initialize_stream_session_cache(cache_key, {"active": True}, ttl_seconds=60)
+    cache_module.append_stream_session_events_batch(cache_key, [], ttl_seconds=60)
+
+    assert cache_module.get_stream_session_events(cache_key) == []
+
+
+def test_redis_stream_event_batch_append_lands_all_events_in_order():
+    """The Redis-backed batch append must RPUSH every event, in order, via one pipeline."""
+    cache_module = _load_cache_module()
+    cache_module.configure_app_cache({
+        "enable_redis_cache": True,
+        "redis_url": "simplechat.redis.cache.windows.net",
+        "redis_key": "test-key",
+        "redis_auth_type": "key",
+    }, dependencies=_dependencies(cache_module, FakeCosmosContainer(), InMemoryRedis))
+
+    cache_key = "chat-stream:redis-batch-test"
+    metadata = {"conversation_id": "redis-batch-test", "active": True}
+    cache_module.initialize_stream_session_cache(cache_key, metadata, ttl_seconds=60)
+    cache_module.append_stream_session_events_batch(
+        cache_key,
+        ["data: alpha\n\n", "data: beta\n\n"],
+        ttl_seconds=60,
+    )
+
+    assert cache_module.get_stream_session_events(cache_key) == [
+        "data: alpha\n\n",
+        "data: beta\n\n",
+    ]
+
+
 if __name__ == "__main__":
     tests = [
         test_redis_runtime_failure_falls_back_to_cosmos_settings,
@@ -349,6 +436,10 @@ if __name__ == "__main__":
         test_stream_event_fallback_is_shared_between_workers,
         test_stream_event_fallback_retries_concurrent_append,
         test_redis_stream_session_initialization_preserves_existing_events,
+        test_stream_event_batch_fallback_appends_all_events_in_one_round_trip,
+        test_stream_event_batch_fallback_merges_with_prior_single_appends,
+        test_stream_event_batch_fallback_ignores_empty_batch,
+        test_redis_stream_event_batch_append_lands_all_events_in_order,
     ]
     results = []
     for test in tests:
