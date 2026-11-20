@@ -3,8 +3,9 @@
 """
 Functional test for chat OpenAI client timeouts, stream disconnect grace-period
 cancellation, document-action total deadlines, and dedicated chat-stream workers.
-Version: 0.261.387
+Version: 0.261.473
 Implemented in: 0.261.387
+Throttled cancellation polling compatibility implemented in: 0.261.473
 
 This test ensures that:
 1. Model endpoint and legacy AzureOpenAI clients are constructed with bounded
@@ -144,7 +145,7 @@ def test_disconnect_grace_period_auto_cancellation():
     # Detach again and let grace window expire
     session.mark_consumer_detached(reason="client_disconnect")
     clock["now"] = clock["now"] + timedelta(seconds=61)
-    assert session.is_cancel_requested(), "Detached stream should auto-cancel after grace period"
+    assert session.is_cancel_requested(force=True), "Detached stream should auto-cancel after grace period"
     assert session.get_cancel_reason() == "client_disconnect_timeout"
 
     # 2. Grace period of 0 cancels immediately on client disconnect

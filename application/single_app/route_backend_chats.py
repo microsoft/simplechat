@@ -8974,6 +8974,16 @@ def _extract_sse_event_payload(event_text):
         return None
 
 
+def _get_batchable_stream_content(event_text):
+    """Return content from an ordinary assistant delta, otherwise None."""
+    payload = _extract_sse_event_payload(event_text)
+    if not isinstance(payload, dict) or set(payload) != {'content'}:
+        return None
+
+    content = payload.get('content')
+    return content if isinstance(content, str) and content else None
+
+
 def _refresh_m365_pending_action_event(event_text, viewer_user_id, conversation_id):
     """Replay IDs through current authorization/state, not cached card snapshots."""
     payload = _extract_sse_event_payload(event_text)
@@ -9012,6 +9022,7 @@ class ActiveConversationStreamSession:
     """Keep an in-flight stream replayable for reconnecting consumers."""
 
     HEARTBEAT_EVENT = ': keep-alive\n\n'
+    CANCEL_POLL_INTERVAL_SECONDS = 0.25
 
     def __init__(
         self,
@@ -9029,6 +9040,10 @@ class ActiveConversationStreamSession:
         self.disconnect_grace_seconds = max(0, int(disconnect_grace_seconds if disconnect_grace_seconds is not None else 60))
         self.cache_key = f'{user_id}:{conversation_id}'
         self._condition = threading.Condition()
+        self._cancel_poll_lock = threading.Lock()
+        self._last_cancel_poll_at = 0.0
+        self._last_cancel_requested = False
+        self._last_cancel_reason = ''
         self._accepting_events = True
         self._analysis_message_id = analysis_message_id
         self._terminal_replacement = None
@@ -9177,6 +9192,10 @@ class ActiveConversationStreamSession:
         metadata['cancel_requested_at'] = metadata.get('cancel_requested_at') or _utcnow_iso()
         metadata['status'] = STREAM_STATUS_CANCEL_REQUESTED
         self._persist_metadata(metadata)
+        with self._cancel_poll_lock:
+            self._last_cancel_poll_at = time.monotonic()
+            self._last_cancel_requested = True
+            self._last_cancel_reason = normalized_reason
 
         with self._condition:
             self._condition.notify_all()
@@ -9195,23 +9214,49 @@ class ActiveConversationStreamSession:
         )
         return self.get_status_snapshot()
 
-    def is_cancel_requested(self):
+    def is_cancel_requested(self, force=False):
+        now_monotonic = time.monotonic()
+        with self._cancel_poll_lock:
+            if (
+                not force
+                and now_monotonic - self._last_cancel_poll_at
+                < self.CANCEL_POLL_INTERVAL_SECONDS
+            ):
+                return self._last_cancel_requested
+
         metadata = self._get_metadata()
+        cancel_requested = False
+        cancel_reason = ''
         if not metadata or metadata.get('status') in TERMINAL_STREAM_STATUSES:
-            return False
-        if metadata.get('cancel_requested'):
-            return True
-        if self._has_disconnect_grace_expired(metadata):
+            pass
+        elif metadata.get('cancel_requested'):
+            cancel_requested = True
+            cancel_reason = str(metadata.get('cancel_reason') or '')
+        elif self._has_disconnect_grace_expired(metadata):
             self.request_cancel(reason='client_disconnect_timeout')
-            return True
-        return False
+            refreshed_metadata = self._get_metadata()
+            cancel_requested = bool(refreshed_metadata.get('cancel_requested'))
+            cancel_reason = str(refreshed_metadata.get('cancel_reason') or '')
+
+        with self._cancel_poll_lock:
+            self._last_cancel_poll_at = time.monotonic()
+            self._last_cancel_requested = cancel_requested
+            self._last_cancel_reason = cancel_reason
+        return cancel_requested
 
     def get_cancel_reason(self):
+        with self._cancel_poll_lock:
+            if self._last_cancel_requested and self._last_cancel_reason:
+                return self._last_cancel_reason
         metadata = self._get_metadata()
         return str(metadata.get('cancel_reason') or 'user_requested')
 
     def get_terminal_replacement(self):
         return self._terminal_replacement or self._get_metadata().get("terminal_replacement")
+
+    def is_accepting_events(self):
+        with self._condition:
+            return self._accepting_events
 
     def _log_outcome(self, metadata):
         status = metadata.get("status")
@@ -9309,12 +9354,14 @@ class ActiveConversationStreamSession:
         else:
             metadata['status'] = STREAM_STATUS_STARTED
 
-        app_settings_cache.append_stream_session_event(
+        persisted = app_settings_cache.append_stream_session_event_and_meta(
             self.cache_key,
             event_text,
+            metadata,
             ttl_seconds=self.session_ttl_seconds,
         )
-        self._persist_metadata(metadata)
+        if persisted is False:
+            return False
 
         if first_content_emitted:
             log_event(
@@ -15557,6 +15604,12 @@ def register_route_backend_chats(bp):
         content_check_settings = get_settings()
         retry_question = getattr(g, 'chat_retry_question', None)
         retry_terminal_seen = False
+        replay_batch_interval_seconds = 0.25
+        pending_replay_content = []
+        pending_replay_event_count = 0
+        received_replay_content_event_count = 0
+        persisted_replay_batch_count = 0
+        last_replay_flush_at = time.monotonic()
         destination_lease = getattr(g, 'chat_destination_lease', None) if has_request_context() else None
         if has_request_context():
             g.chat_destination_lease = None
@@ -15565,8 +15618,35 @@ def register_route_backend_chats(bp):
             or (getattr(g, 'conversation_id', None) if has_request_context() else None)
         )
 
+        def flush_replay_content(force=False):
+            nonlocal pending_replay_content, pending_replay_event_count
+            nonlocal persisted_replay_batch_count, last_replay_flush_at
+            if not stream_session or not pending_replay_content:
+                return True
+
+            now_monotonic = time.monotonic()
+            if (
+                not force
+                and now_monotonic - last_replay_flush_at
+                < replay_batch_interval_seconds
+            ):
+                return True
+
+            combined_content = ''.join(pending_replay_content)
+            batched_event = f"data: {json.dumps({'content': combined_content})}\n\n"
+            if not stream_session.publish(batched_event):
+                return False
+
+            pending_replay_content = []
+            pending_replay_event_count = 0
+            persisted_replay_batch_count += 1
+            last_replay_flush_at = now_monotonic
+            return True
+
         def publish_background_event(event_text):
             nonlocal stream_user_message_id, retry_terminal_seen
+            nonlocal pending_replay_event_count
+            nonlocal received_replay_content_event_count
             if event_text is None:
                 return False
 
@@ -15604,6 +15684,20 @@ def register_route_backend_chats(bp):
                     retry_terminal_seen = True
                 event_text = f"data: {json.dumps(payload)}\n\n"
 
+            batchable_content = _get_batchable_stream_content(event_text)
+            if batchable_content is not None:
+                if stream_session and not stream_session.is_accepting_events():
+                    return False
+                pushed = stream_bridge.push(event_text)
+                pending_replay_content.append(batchable_content)
+                pending_replay_event_count += 1
+                received_replay_content_event_count += 1
+                if not flush_replay_content():
+                    return False
+                return pushed
+
+            if not flush_replay_content(force=True):
+                return False
             if stream_session:
                 if not stream_session.publish(event_text):
                     return False
@@ -15678,15 +15772,40 @@ def register_route_backend_chats(bp):
                         if event_iterator is not None and callable(getattr(event_iterator, 'close', None)):
                             event_iterator.close()
                     finally:
-                        if retry_question and not retry_terminal_seen:
-                            publish_background_event(build_stream_error_event(
-                                'This response was interrupted before it completed. Reload before retrying.',
-                                interrupted=True, error_code='retry_stream_incomplete',
-                            ))
-                        if stream_session:
-                            stream_session.close()
-                        _release_chat_destination_lease(destination_lease, destination_conversation_id)
-                        stream_bridge.finish()
+                        try:
+                            if retry_question and not retry_terminal_seen:
+                                publish_background_event(build_stream_error_event(
+                                    'This response was interrupted before it completed. Reload before retrying.',
+                                    interrupted=True, error_code='retry_stream_incomplete',
+                                ))
+                            if stream_session:
+                                flush_replay_content(force=True)
+                                log_event(
+                                    '[STREAMING] Replay batching completed',
+                                    extra={
+                                        'conversation_id': destination_conversation_id,
+                                        'user_id': viewer_user_id,
+                                        'received_replay_content_event_count': (
+                                            received_replay_content_event_count
+                                        ),
+                                        'persisted_replay_batch_count': (
+                                            persisted_replay_batch_count
+                                        ),
+                                        'pending_replay_event_count': pending_replay_event_count,
+                                        'replay_batch_interval_ms': int(
+                                            replay_batch_interval_seconds * 1000
+                                        ),
+                                    },
+                                    level=logging.INFO,
+                                )
+                        finally:
+                            if stream_session:
+                                stream_session.close()
+                            _release_chat_destination_lease(
+                                destination_lease,
+                                destination_conversation_id,
+                            )
+                            stream_bridge.finish()
 
         stream_worker = pin_catalog_task(stream_worker)
         executor = current_app.extensions.get('executor')

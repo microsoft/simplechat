@@ -18,7 +18,7 @@ from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
 from azure.cosmos import ContainerProxy
 from redis import Redis
-from redis.exceptions import RedisError
+from redis.exceptions import RedisError, WatchError
 
 from app_settings_store import AppSettingsStore, SETTINGS_REVISION_FIELD
 
@@ -58,6 +58,7 @@ initialize_stream_session_cache = None
 set_stream_session_meta = None
 get_stream_session_meta = None
 append_stream_session_event = None
+append_stream_session_event_and_meta = None
 get_stream_session_events = None
 delete_stream_session_cache = None
 get_user_ui_settings_cache = None
@@ -527,6 +528,28 @@ def _append_stream_session_event_fallback(cache_key, event_text, ttl_seconds=Non
         }
 
 
+def _append_stream_session_event_and_meta_fallback(
+    cache_key,
+    event_text,
+    metadata,
+    ttl_seconds=None,
+    log_event_func=None,
+):
+    _append_stream_session_event_fallback(
+        cache_key,
+        event_text,
+        ttl_seconds=ttl_seconds,
+        log_event_func=log_event_func,
+    )
+    _set_stream_session_meta_fallback(
+        cache_key,
+        metadata,
+        ttl_seconds=ttl_seconds,
+        log_event_func=log_event_func,
+    )
+    return True
+
+
 def _get_stream_session_events_fallback(cache_key, start_index=0, log_event_func=None):
     start = int(start_index or 0)
     cached = _get_cosmos_cache_entry(
@@ -606,7 +629,8 @@ def _delete_user_ui_settings_cache_fallback(user_id, log_event_func=None):
 def _assign_fallback_cache_functions(log_event_func=None):
     global update_settings_cache, get_settings_cache
     global initialize_stream_session_cache, set_stream_session_meta, get_stream_session_meta
-    global append_stream_session_event, get_stream_session_events, delete_stream_session_cache
+    global append_stream_session_event, append_stream_session_event_and_meta
+    global get_stream_session_events, delete_stream_session_cache
     global get_user_ui_settings_cache, set_user_ui_settings_cache, delete_user_ui_settings_cache
     global get_app_settings_cache_version
     global get_governance_cache_version, bump_governance_cache_version
@@ -642,6 +666,17 @@ def _assign_fallback_cache_functions(log_event_func=None):
             event_text,
             ttl_seconds=ttl_seconds,
             log_event_func=log_event_func,
+        )
+    )
+    append_stream_session_event_and_meta = (
+        lambda cache_key, event_text, metadata, ttl_seconds=None: (
+            _append_stream_session_event_and_meta_fallback(
+                cache_key,
+                event_text,
+                metadata,
+                ttl_seconds=ttl_seconds,
+                log_event_func=log_event_func,
+            )
         )
     )
     get_stream_session_events = lambda cache_key, start_index=0: _get_stream_session_events_fallback(
@@ -687,7 +722,8 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
     global APP_USER_UI_SETTINGS_CACHE, APP_STREAM_SESSION_METADATA, APP_STREAM_SESSION_EVENTS
     global APP_GOVERNANCE_CACHE_VERSION, APP_GOVERNANCE_SHARED_VERSION_CACHE
     global initialize_stream_session_cache, set_stream_session_meta, get_stream_session_meta
-    global append_stream_session_event, get_stream_session_events, delete_stream_session_cache
+    global append_stream_session_event, append_stream_session_event_and_meta
+    global get_stream_session_events, delete_stream_session_cache
     global get_user_ui_settings_cache, set_user_ui_settings_cache, delete_user_ui_settings_cache
     global get_app_settings_cache_version
     global get_governance_cache_version, bump_governance_cache_version
@@ -755,8 +791,7 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
                 pipeline.set(metadata_key, json.dumps(metadata))
                 if ttl_seconds is not None:
                     pipeline.expire(metadata_key, int(ttl_seconds))
-                    if redis_client.exists(events_key):
-                        pipeline.expire(events_key, int(ttl_seconds))
+                    pipeline.expire(events_key, int(ttl_seconds))
                 pipeline.execute()
             except Exception as ex:
                 _log_cache_fallback('set_stream_session_meta', ex, log_event_func=log_event)
@@ -783,8 +818,7 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
                 pipeline.rpush(events_key, event_text)
                 if ttl_seconds is not None:
                     pipeline.expire(events_key, int(ttl_seconds))
-                    if redis_client.exists(metadata_key):
-                        pipeline.expire(metadata_key, int(ttl_seconds))
+                    pipeline.expire(metadata_key, int(ttl_seconds))
                 pipeline.execute()
             except Exception as ex:
                 _log_cache_fallback('append_stream_session_event', ex, log_event_func=log_event)
@@ -794,6 +828,98 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
                     ttl_seconds=ttl_seconds,
                     log_event_func=log_event,
                 )
+
+        def append_stream_session_event_and_meta_redis(
+            cache_key,
+            event_text,
+            metadata,
+            ttl_seconds=None,
+        ):
+            event_key = get_stream_session_events_key(cache_key)
+            metadata_key = get_stream_session_metadata_key(cache_key)
+            ttl = int(ttl_seconds) if ttl_seconds is not None else None
+
+            for attempt in range(STREAM_SESSION_APPEND_MAX_ATTEMPTS):
+                try:
+                    with redis_client.pipeline() as pipeline:
+                        pipeline.watch(metadata_key)
+                        current_raw = pipeline.get(metadata_key)
+                        current_metadata = json.loads(current_raw) if current_raw else {}
+                        if current_metadata.get('active') is False:
+                            return False
+
+                        merged_metadata = dict(metadata or {})
+                        current_detached = bool(current_metadata.get('consumer_detached'))
+                        incoming_detached = bool(merged_metadata.get('consumer_detached'))
+                        coordination_fields = (
+                            'cancel_reason',
+                            'cancel_requested_at',
+                            'consumer_detached',
+                            'detach_count',
+                            'last_detached_at',
+                            'detach_reason',
+                            'reattach_count',
+                            'last_reattach_at',
+                        )
+                        for field in coordination_fields:
+                            if field in current_metadata:
+                                merged_metadata[field] = current_metadata[field]
+                        merged_metadata['cancel_requested'] = bool(
+                            current_metadata.get('cancel_requested')
+                            or merged_metadata.get('cancel_requested')
+                        )
+                        if not merged_metadata.get('canceled_at'):
+                            merged_metadata['canceled_at'] = current_metadata.get('canceled_at')
+
+                        if (
+                            merged_metadata.get('active') is not False
+                            and (
+                                current_metadata.get('cancel_requested')
+                                or current_detached != incoming_detached
+                            )
+                        ):
+                            for field in ('status', 'active'):
+                                if field in current_metadata:
+                                    merged_metadata[field] = current_metadata[field]
+
+                        pipeline.multi()
+                        pipeline.rpush(event_key, event_text)
+                        pipeline.set(metadata_key, json.dumps(merged_metadata))
+                        if ttl is not None:
+                            pipeline.expire(event_key, ttl)
+                            pipeline.expire(metadata_key, ttl)
+                        pipeline.execute()
+                        return True
+                except WatchError as ex:
+                    if attempt + 1 >= STREAM_SESSION_APPEND_MAX_ATTEMPTS:
+                        _log_cache_fallback(
+                            'append_stream_session_event_and_meta',
+                            ex,
+                            log_event_func=log_event,
+                        )
+                        return _append_stream_session_event_and_meta_fallback(
+                            cache_key,
+                            event_text,
+                            metadata,
+                            ttl_seconds=ttl_seconds,
+                            log_event_func=log_event,
+                        )
+                    continue
+                except Exception as ex:
+                    _log_cache_fallback(
+                        'append_stream_session_event_and_meta',
+                        ex,
+                        log_event_func=log_event,
+                    )
+                    return _append_stream_session_event_and_meta_fallback(
+                        cache_key,
+                        event_text,
+                        metadata,
+                        ttl_seconds=ttl_seconds,
+                        log_event_func=log_event,
+                    )
+
+            return False
 
         def get_stream_session_events_redis(cache_key, start_index=0):
             try:
@@ -884,6 +1010,9 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
         set_stream_session_meta = set_stream_session_meta_redis
         get_stream_session_meta = get_stream_session_meta_redis
         append_stream_session_event = append_stream_session_event_redis
+        append_stream_session_event_and_meta = (
+            append_stream_session_event_and_meta_redis
+        )
         get_stream_session_events = get_stream_session_events_redis
         delete_stream_session_cache = delete_stream_session_cache_redis
         get_user_ui_settings_cache = get_user_ui_settings_cache_redis
@@ -1047,6 +1176,17 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
         append_stream_session_event = lambda cache_key, event_text, ttl_seconds=None: (
             _append_stream_session_event_fallback(
                 cache_key, event_text, ttl_seconds=ttl_seconds, log_event_func=log_event,
+            )
+        )
+        append_stream_session_event_and_meta = (
+            lambda cache_key, event_text, metadata, ttl_seconds=None: (
+                _append_stream_session_event_and_meta_fallback(
+                    cache_key,
+                    event_text,
+                    metadata,
+                    ttl_seconds=ttl_seconds,
+                    log_event_func=log_event,
+                )
             )
         )
         get_stream_session_events = lambda cache_key, start_index=0: _get_stream_session_events_fallback(
