@@ -79,10 +79,23 @@ No prompt, plan, fence or setting was changed.
   cannot yet say which part.
   From 0.261.469 it can: `[ORCHESTRATION_RUNS] Execution binding parts.` is logged when a
   run's binding is saved (`binding_outcome` `saved`) and when it is found changed (`changed`),
-  with a 12-character hash per part (`part_plan`, `part_model`, `part_memory_digest`,
-  `part_agent_catalog_digest`, `part_action_catalog_digest`, `part_settings_digest`,
-  `part_final_response`) and per request input (`input_*`). Comparing the two lines for one
-  run names the part. This was added because a run resumed after waiting on a background
+  with a 12-character hash per part (`binding_part_plan`, `binding_part_model`,
+  `binding_part_memory_digest`, `binding_part_agent_catalog_digest`,
+  `binding_part_action_catalog_digest`, `binding_part_settings_digest`,
+  `binding_part_final_response`) and per request input (`binding_input_*`). Comparing the two
+  lines for one run names the part.
+  **On 0.261.469 to 0.261.472 this did not work.** The log sanitizer
+  (`_build_logger_extra` in `functions_appinsights.py`) keeps a text value only under a key it
+  knows, and none of these keys was known, so every hash reached Application Insights as its
+  length (12). Two runs resumed after waiting failed with `recovery_changed` in the 0.261.472
+  rerun and their log lines could not name the part. The same was true of
+  `correction_category` and `correction_origin` (0.261.470) and of the output lists and
+  `task_status` in `Step outputs do not match the plan.` (0.261.472). The tests had replaced
+  `log_event`, so they checked what was passed to it and not what it kept. From 0.261.473 the
+  sanitizer keeps these fields, each only in its closed form (a 12-character hash, a
+  snake_case code, or a comma-separated list of output names), the parts are named
+  `binding_part_*` and `binding_input_*` so one rule covers them, and the tests pass each
+  field through the sanitizer itself. This was added because a run resumed after waiting on a background
   export still failed with `recovery_changed` on 0.261.468 (2 runs in one conversation), so a
   second part of the binding changes on that path. The resume refusal now also carries
   `execution_binding_changed` as its rule. No content is logged.

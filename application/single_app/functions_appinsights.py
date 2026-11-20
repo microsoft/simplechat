@@ -160,7 +160,19 @@ LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "nativeleftcategory", "nativerightcategory",
     # Planning shape diagnostics and the progress ledger: registry and server codes only.
     "bindingproblem", "misplacedargument", "recovery", "progressoutcome",
+    # Whether a run's binding was saved or found changed, what a calculation's author was
+    # told, and a step's status when its outputs did not match the plan.
+    "bindingoutcome", "correctioncategory", "correctionorigin", "taskstatus",
 })
+# Comma-separated output names from a capability contract; any other text is dropped.
+LOGGER_WORKFLOW_CODE_LIST_KEYS = frozenset({
+    "declaredoutputs", "producedoutputs", "outputsnotproduced", "outputsofanotherkind",
+    "outputsnotallowed",
+})
+LOGGER_WORKFLOW_CODE_LIST_RE = re.compile(r"(?:[a-z][a-z0-9_]{0,79}(?:,[a-z][a-z0-9_]{0,79}){0,31})?")
+# One short hash per part of a run's execution binding (binding_part_*, binding_input_*).
+LOGGER_BINDING_PART_KEY_PREFIXES = ("bindingpart", "bindinginput")
+LOGGER_BINDING_PART_RE = re.compile(r"[0-9a-f]{12}")
 
 
 def configure_diagnostic_context_provider(provider):
@@ -422,6 +434,12 @@ def _build_logger_extra(
                         logger_extra[normalized_key] = value
                 elif diagnostic_key in LOGGER_WORKFLOW_CODE_KEYS:
                     if re.fullmatch(r"[a-z][a-z0-9_]{0,79}", value):
+                        logger_extra[normalized_key] = value
+                elif diagnostic_key in LOGGER_WORKFLOW_CODE_LIST_KEYS:
+                    if LOGGER_WORKFLOW_CODE_LIST_RE.fullmatch(value):
+                        logger_extra[normalized_key] = value
+                elif diagnostic_key.startswith(LOGGER_BINDING_PART_KEY_PREFIXES):
+                    if LOGGER_BINDING_PART_RE.fullmatch(value):
                         logger_extra[normalized_key] = value
                 elif diagnostic_key == "applicationversion":
                     if _is_application_version(value):
