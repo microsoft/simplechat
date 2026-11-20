@@ -227,13 +227,12 @@ def context_state(context):
     return state
 
 
-def context_binding(context, plan, settings):
-    """Hash runtime bindings; never persist identity, credentials or memory prompts."""
+def _context_binding_payload(context, plan, settings):
     model = getattr(context, 'model_context', None) or {}
     inputs = {key: getattr(context, key, None) for key in INPUT_FIELDS}
     if getattr(context, 'analysis_result_contexts', None):
         inputs['analysis_result_contexts'] = context.analysis_result_contexts
-    payload = {
+    return {
         'plan': effective_plan(plan),
         'inputs': inputs,
         'model': {key: model.get(key) for key in ('model_id', 'endpoint_id', 'provider', 'model_deployment')},
@@ -244,7 +243,29 @@ def context_binding(context, plan, settings):
         'plan_contract_version': 2,
         'final_response': plan.get('final_response'),
     }
-    return fingerprint(payload)
+
+
+def context_binding(context, plan, settings):
+    """Hash runtime bindings; never persist identity, credentials or memory prompts."""
+    return fingerprint(_context_binding_payload(context, plan, settings))
+
+
+def context_binding_parts(context, plan, settings):
+    """A short hash of each part of the binding, so a changed binding can name its part.
+
+    The binding is one hash; when it differs nothing says what differed. These are hashes of
+    the same values the binding covers, one per part and one per request input. No content.
+    """
+    payload = _context_binding_payload(context, plan, settings)
+    parts = {
+        f'part_{name}': value for name, value in payload.items()
+        if name not in ('inputs', 'plan_contract_version')
+    }
+    parts.update({f'input_{name}': value for name, value in payload['inputs'].items()})
+    return {
+        name: (value if name.endswith('_digest') else fingerprint(value))[:12]
+        for name, value in parts.items()
+    }
 
 
 def _legacy_tabular_capability_inputs(schema):

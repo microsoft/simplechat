@@ -77,5 +77,14 @@ No prompt, plan, fence or setting was changed.
   to differ, by the code and by the empty-memory case that succeeded. If another part also
   differs on a live run, the same log line will still say `execution_binding_changed`; it
   cannot yet say which part.
+  From 0.261.469 it can: `[ORCHESTRATION_RUNS] Execution binding parts.` is logged when a
+  run's binding is saved (`binding_outcome` `saved`) and when it is found changed (`changed`),
+  with a 12-character hash per part (`part_plan`, `part_model`, `part_memory_digest`,
+  `part_agent_catalog_digest`, `part_action_catalog_digest`, `part_settings_digest`,
+  `part_final_response`) and per request input (`input_*`). Comparing the two lines for one
+  run names the part. This was added because a run resumed after waiting on a background
+  export still failed with `recovery_changed` on 0.261.468 (2 runs in one conversation), so a
+  second part of the binding changes on that path. The resume refusal now also carries
+  `execution_binding_changed` as its rule. No content is logged.
 - What a second attempt then does with these failures (mostly `result_invalid` in tabular
   analysis) has not been observed, because no second attempt has run for them.

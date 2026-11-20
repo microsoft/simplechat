@@ -2,7 +2,7 @@
 # test_orchestration_server_continuation.py
 """
 Functional test for the server-side next attempt after a failed orchestration run.
-Version: 0.261.468
+Version: 0.261.469
 Implemented in: 0.261.462
 
 This test ensures that a failed attempt is followed by its next one on the server, after the
@@ -151,6 +151,34 @@ def test_reading_unchanged_memory_again_does_not_change_the_binding(modules, mon
     empty = {"audience": {"kind": "personal"}, "status": "empty", "citations": [], "context_messages": []}
     from functions_orchestration_checkpoints import _memory_fingerprint
     assert _memory_fingerprint(empty) == fingerprint(empty) and _memory_fingerprint(None) == fingerprint({})
+
+
+def test_a_changed_binding_can_name_the_part_that_changed(modules):
+    """The binding is one hash; its parts are logged so a mismatch says which part differs."""
+    import types
+
+    from functions_orchestration_checkpoints import INPUT_FIELDS, context_binding, context_binding_parts
+
+    plan = {"steps": [], "final_response": None}
+    saved = types.SimpleNamespace(
+        user_message="Private request text.", model_context={"model_id": "m1"},
+        action_catalog=[{"id": "a1"}], allowed_user_urls=["https://example.test/private"],
+    )
+    resumed = types.SimpleNamespace(**{**vars(saved), "action_catalog": []})
+    before, after = (context_binding_parts(item, plan, {}) for item in (saved, resumed))
+    assert context_binding(saved, plan, {}) != context_binding(resumed, plan, {})
+    assert {name for name in before if before[name] != after[name]} == {"part_action_catalog_digest"}
+    # Every part of the binding is covered, each request input separately, and none is content.
+    assert set(before) == {
+        "part_plan", "part_model", "part_memory_digest", "part_agent_catalog_digest",
+        "part_action_catalog_digest", "part_settings_digest", "part_final_response",
+        *(f"input_{name}" for name in INPUT_FIELDS),
+    }
+    assert all(len(value) == 12 and int(value, 16) >= 0 for value in before.values())
+    assert "Private" not in json.dumps(before) and "example.test" not in json.dumps(before)
+    changed = types.SimpleNamespace(**{**vars(saved), "user_message": "Another request."})
+    after = context_binding_parts(changed, plan, {})
+    assert {name for name in before if before[name] != after[name]} == {"input_user_message"}
 
 
 def test_a_refused_next_attempt_logs_which_check_refused_it(modules):
