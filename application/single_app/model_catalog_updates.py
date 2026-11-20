@@ -13,7 +13,7 @@ import requests
 
 from cosmos_document_utils import normalize_cosmos_document
 from model_catalog_package import (
-    CATALOG_REPOSITORY, DISCOVERY_URL, MAX_PACKAGE_BYTES, CatalogUpdateError,
+    CATALOG_REPOSITORY, DISCOVERY_URL, MAX_PACKAGE_BYTES, CatalogUpdateError, CatalogUpgradeRequired,
     package_url, read_json, trusted_keys, verify_package,
 )
 
@@ -235,8 +235,8 @@ class CatalogUpdates:
         def start(settings):
             if settings.get(ONLINE) is not True:
                 raise CatalogUpdateError("Enable online catalog access before contacting GitHub.")
-            if not self._keys():
-                raise CatalogUpdateError("The publisher verification key has not been configured.")
+            # A release with no bundled key may still check: the official package then
+            # reports that this deployment needs an upgrade, which is the useful answer.
             last = (settings.get(CHECK) or {}).get("attemptedAt")
             if last:
                 try:
@@ -249,6 +249,7 @@ class CatalogUpdates:
             return settings
 
         self.store.write(start)
+        url = None
         try:
             discovery = read_json(self.download(DISCOVERY_URL, 8192), 8192)
             if not isinstance(discovery, dict) or set(discovery) != {"commit", "filename"}:
@@ -272,6 +273,20 @@ class CatalogUpdates:
                     "status": "available", "attemptedAt": now.isoformat(),
                     "downloadUrl": url, "digest": preview["digest"], "manifest": preview["manifest"],
                 }
+        except CatalogUpgradeRequired as exc:
+            # The official feed has something this release cannot accept. That is a
+            # result to show the administrator, not a failed check.
+            self.log_event("[MODELS] Catalog update requires an application upgrade.", level=logging.WARNING, extra={
+                "reason": exc.reason, "actor": actor,
+            })
+            result = {
+                "status": "upgrade_required", "attemptedAt": now.isoformat(),
+                "reason": exc.reason, "message": exc.public_message,
+            }
+            if url:
+                result["downloadUrl"] = url
+            if exc.minimum_app_version:
+                result["minimumAppVersion"] = exc.minimum_app_version
         except (requests.RequestException, CatalogUpdateError) as exc:
             self.log_event("[MODELS] Catalog update check failed.", level=logging.WARNING, extra={
                 "error_type": type(exc).__name__, "actor": actor,

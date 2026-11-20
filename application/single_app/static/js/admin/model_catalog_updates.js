@@ -89,15 +89,15 @@ export function mountCatalogUpdates(root, { request, onApplied, canApply = () =>
         switchRow.append(toggle, label);
         root.append(switchRow);
         if (!status.publisherConfigured) {
-            root.append(node("p", "Publisher verification key is not configured. Install the trusted public key before publishing or importing packages.", "alert alert-warning"));
+            root.append(node("p", "Catalog updates are unavailable in this release. Signed packages are verified with a publisher key that ships inside SimpleChat, and this build does not include one yet. Upgrading to a release that includes the key turns updates on; there is nothing to configure here.", "alert alert-warning"));
         }
         const controls = node("div", undefined, "sc-catalog-toolbar");
-        controls.append(button("Check for updates", () => void run("check"), !status.onlineEnabled || !status.publisherConfigured));
+        controls.append(button("Check for updates", () => void run("check"), !status.onlineEnabled));
         const uploadLabel = node("label", "Upload signed package", "sc-catalog-field");
         const file = node("input");
         file.type = "file";
         file.accept = ".json,application/json";
-        file.disabled = busy || !status.publisherConfigured;
+        file.disabled = busy;
         file.addEventListener("change", async () => {
             const selected = file.files?.[0];
             if (!selected) return;
@@ -120,8 +120,17 @@ export function mountCatalogUpdates(root, { request, onApplied, canApply = () =>
         controls.append(uploadLabel, button("Preview rollback", () => void run("rollback-preview"), !status.canRollback));
         controls.append(button("Reload update status", () => void run()));
         root.append(controls);
+        if (status.check?.status === "upgrade_required") {
+            const upgrade = node("div", undefined, "alert alert-warning");
+            upgrade.setAttribute("role", "status");
+            upgrade.append(
+                node("strong", "Upgrade SimpleChat to get catalog updates. "),
+                node("span", status.check.message || "The latest official catalog needs a newer version of SimpleChat. Deploy the latest SimpleChat release, then check again."),
+            );
+            root.append(upgrade);
+        }
         if (status.check) {
-            root.append(node("p", `Last check: ${status.check.status} | ${status.check.attemptedAt}`, "text-break"));
+            root.append(node("p", `Last check: ${status.check.status === "upgrade_required" ? "upgrade required" : status.check.status} | ${status.check.attemptedAt}`, "text-break"));
             if (status.check.downloadUrl) root.append(node("p", `Download URL: ${status.check.downloadUrl}`, "text-break"));
             if (status.check.status === "available") {
                 root.append(button("Preview available update", () => void run("preview", { digest: status.check.digest })));
