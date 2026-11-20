@@ -1,6 +1,6 @@
 # Model Catalog Publisher Key Setup Fix
 
-**Version:** 0.261.473 (upgrade alert added in 0.261.474, secret-based signing in 0.261.475)
+**Version:** 0.261.474
 
 ## Issue
 
@@ -34,7 +34,7 @@ looked unrelated to **Allow online catalog update checks**.
 | `static/js/admin/model_catalog_updates.js`, `v2_ui/.../ModelCatalogUpdates.tsx` | Warning now says catalog updates are unavailable in this release, that the key ships inside SimpleChat, and that there is nothing to configure. |
 | Docs | Publisher setup step 2, admin catalog page, V2 section links note. |
 
-## Upgrade alert for deployments behind a key change (0.261.474)
+## Upgrade alert for deployments behind a key change
 
 Publisher keys are replaced only through an application release, so a deployment running
 an older release cannot verify packages signed with a newer key. Previously that ended in a
@@ -52,7 +52,7 @@ generic "Unable to verify" failure.
 - Classic and V2 show **Upgrade SimpleChat to get catalog updates** with that message.
 - Uploading a package signed with an unknown key returns the same explanation.
 
-## Signing with an environment secret (0.261.475)
+## Signing with an environment secret
 
 The publisher vault has public network access disabled by policy and no private endpoint,
 so neither a workstation nor a GitHub-hosted runner can read or sign with a Key Vault key.

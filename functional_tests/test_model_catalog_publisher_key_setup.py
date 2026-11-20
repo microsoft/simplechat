@@ -9,7 +9,7 @@ This test ensures that the publisher's Key Vault public key can be written into 
 bundled trust map in one step (so it ships with every upgrade), that a bad key leaves
 the map untouched, that the online-update setting is drawn only by the Catalog
 updates card, and that the admin warning no longer asks administrators to install a
-key they cannot install. Since 0.261.474 it also covers publishers whose vaults are
+key they cannot install. It also covers publishers whose vaults are
 unreachable from GitHub: a locally generated key pair whose private half is a protected
 environment secret, and signing with that secret.
 """
