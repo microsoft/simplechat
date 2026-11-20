@@ -2,7 +2,7 @@
 # test_orchestration_server_continuation.py
 """
 Functional test for the server-side next attempt after a failed orchestration run.
-Version: 0.261.473
+Version: 0.261.474
 Implemented in: 0.261.462
 
 This test ensures that a failed attempt is followed by its next one on the server, after the
@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import time
+import types
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -196,13 +197,89 @@ def test_a_changed_binding_can_name_the_part_that_changed(modules):
     assert not {"sc_binding_part_plan", "sc_binding_input_user_message", "sc_binding_outcome"} & set(dropped)
 
 
+def test_a_role_gated_action_is_outside_the_binding_and_still_gated(modules):
+    """A run that waits is resumed by a worker with no role claims; that must not refuse it.
+
+    On 0.261.473 both refused resumes named the action catalog as the only changed part. The
+    request's catalog lists a role-gated action for a caller who holds the role and the
+    worker's never does, so the binding differed whatever the plan used.
+    """
+    from functions_action_catalog import _is_control_center_action
+    from functions_orchestration_checkpoints import (
+        bound_action_catalog, context_binding, context_binding_parts, role_gated_action,
+    )
+
+    plan = {"steps": [], "final_response": None}
+    ordinary = {"action_ref": "global:a1", "id": "a1", "type": "openapi"}
+    gated = {"action_ref": "global:cc", "id": "cc", "type": "control_center"}
+    assert role_gated_action(gated) and not role_gated_action(ordinary)
+    # The binding and the catalog must agree on which actions are role-gated.
+    for action in (ordinary, gated, {"type": " Control_Center "}, {"type": None}, {}, None):
+        assert role_gated_action(action) == _is_control_center_action(action)
+    request = types.SimpleNamespace(user_message="Request.", action_catalog=[ordinary, gated])
+    worker = types.SimpleNamespace(user_message="Request.", action_catalog=[ordinary])
+    assert context_binding(request, plan, {}) == context_binding(worker, plan, {})
+    assert context_binding_parts(request, plan, {}) == context_binding_parts(worker, plan, {})
+    # The gate is not the binding: the worker's context still does not list the action, and
+    # execution validates every action step against that list.
+    assert bound_action_catalog(request) == [ordinary] and gated not in worker.action_catalog
+    # Any other action added, removed or changed is still a changed binding.
+    for changed in ([], [ordinary, {**ordinary, "action_ref": "global:a2", "id": "a2"}],
+                    [{**ordinary, "description": "Changed."}]):
+        other = types.SimpleNamespace(user_message="Request.", action_catalog=changed)
+        assert context_binding(request, plan, {}) != context_binding(other, plan, {})
+    telemetry = importlib.import_module("functions_appinsights")
+    logged = telemetry._build_logger_extra("[ORCHESTRATION_RUNS] Execution binding parts.", {
+        "action_count": 2, "role_gated_action_count": 1, "agent_count": 0,
+    })
+    assert (logged["sc_action_count"], logged["sc_role_gated_action_count"]) == (2, 1)
+
+
+def test_a_partial_analysis_logs_why_as_codes_only(monkeypatch):
+    """A partial analysis is the first cause of several downstream failures; say why."""
+    results = importlib.import_module("functions_orchestration_analysis_results")
+    telemetry = importlib.import_module("functions_appinsights")
+    logged = []
+    monkeypatch.setattr(
+        results, "log_event",
+        lambda message, extra=None, **_kwargs: logged.append(telemetry._build_logger_extra(message, extra)),
+    )
+    producer = types.SimpleNamespace(
+        run_id="PRIVATE_RUN", conversation_id="PRIVATE_CONVERSATION", step_id="PRIVATE_STEP",
+        capability_id="document_analyze",
+    )
+    results._log_partial_analysis(producer, {
+        "execution": {"status": "succeeded"},
+        "validation": {
+            "status": "partial", "presentation_status": "ready",
+            "coverage": {"status": "complete", "assigned_work_units": 3, "completed_work_units": 3,
+                         "failed_work_units": 0, "pending_work_units": 0},
+            "issues": [{"code": "requirement_unresolved", "message": "PRIVATE issue text"},
+                       {"code": "requirement_unresolved"}, {"code": "evidence_missing"}, "PRIVATE"],
+            "checks": [{"name": "evidence_matching", "status": "passed"},
+                       {"name": "requirement_coverage", "status": "partial"}],
+            "limitations": ["PRIVATE limitation"] * 5,
+        },
+    }, 12, False)
+    detail = logged[0]
+    assert detail["sc_validation_status"] == "partial" and detail["sc_execution_status"] == "succeeded"
+    assert detail["sc_coverage_status"] == "complete" and detail["sc_presentation_status"] == "ready"
+    assert detail["sc_validation_issue_codes"] == "evidence_missing,requirement_unresolved"
+    assert detail["sc_validation_checks_not_passed"] == "requirement_coverage"
+    assert (detail["sc_validation_issue_count"], detail["sc_limitation_count"]) == (3, 5)
+    assert (detail["sc_record_count"], detail["sc_completed_work_units"]) == (12, 3)
+    assert detail["sc_public_records_available"] is False
+    assert "PRIVATE" not in json.dumps(detail)
+
+
 def test_new_diagnostic_fields_reach_the_log_and_only_as_codes():
     """A field the sanitizer does not know is logged as a length, which diagnoses nothing."""
     telemetry = importlib.import_module("functions_appinsights")
     logged = telemetry._build_logger_extra("[ORCHESTRATION_NATIVE] Calculation program returned to its author.", {
         "correction_category": "numeric_value_is_empty_or_boolean", "correction_origin": "evaluation",
-        "calls_used": 1, "calls_limit": 3,
+        "correction_check": "step_evaluation", "calls_used": 1, "calls_limit": 3,
     })
+    assert logged["sc_correction_check"] == "step_evaluation"
     assert logged["sc_correction_category"] == "numeric_value_is_empty_or_boolean"
     assert logged["sc_correction_origin"] == "evaluation" and logged["sc_calls_used"] == 1
     logged = telemetry._build_logger_extra("[ORCHESTRATION_EXECUTOR] Step outputs do not match the plan.", {

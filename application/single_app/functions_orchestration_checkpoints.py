@@ -23,6 +23,7 @@ from datetime import datetime
 from azure.core import MatchConditions
 from azure.cosmos import exceptions
 
+from functions_control_center_dashboard import CONTROL_CENTER_ACTION_TYPE
 from functions_orchestration_invocation_capture import OrchestrationInvocationControlError
 from functions_orchestration_schema import build_failure, step_input_specs
 from functions_orchestration_registry import build_planner_capability_projection, get_capability
@@ -227,6 +228,31 @@ def context_state(context):
     return state
 
 
+def role_gated_action(action):
+    """Whether the action catalog lists this action only for a caller holding an app role.
+
+    The same test the catalog applies before it checks the caller's roles
+    (``_is_control_center_action`` in functions_action_catalog.py).
+    """
+    action_type = action.get('type') if isinstance(action, dict) else None
+    return isinstance(action_type, str) and action_type.strip().lower() == CONTROL_CENTER_ACTION_TYPE
+
+
+def bound_action_catalog(context):
+    """The actions a run is bound to: those whose listing does not depend on a role claim.
+
+    A run that waits is resumed by a background worker, which holds no role claims and so is
+    never offered a role-gated action. Binding to those entries refused every such resume for a
+    caller who holds the role, whatever the plan used. The gate itself is unchanged: a plan
+    step naming an action its context does not list is rejected when the plan is validated
+    for execution, before any step runs.
+    """
+    return [
+        action for action in (getattr(context, 'action_catalog', None) or [])
+        if not role_gated_action(action)
+    ]
+
+
 def _context_binding_payload(context, plan, settings):
     model = getattr(context, 'model_context', None) or {}
     inputs = {key: getattr(context, key, None) for key in INPUT_FIELDS}
@@ -238,7 +264,7 @@ def _context_binding_payload(context, plan, settings):
         'model': {key: model.get(key) for key in ('model_id', 'endpoint_id', 'provider', 'model_deployment')},
         'memory_digest': _memory_fingerprint(getattr(context, 'memory_context', None)),
         'agent_catalog_digest': fingerprint(getattr(context, 'agent_catalog', []) or []),
-        'action_catalog_digest': fingerprint(getattr(context, 'action_catalog', []) or []),
+        'action_catalog_digest': fingerprint(bound_action_catalog(context)),
         'settings_digest': _execution_settings_fingerprint(settings),
         'plan_contract_version': 2,
         'final_response': plan.get('final_response'),
