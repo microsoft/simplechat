@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.474)**
+### **(v0.261.475)**
 
 #### Bug Fixes
 
@@ -19,6 +19,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The message shown when a background export or analysis starts now reads as an application status ("The app started a background job to generate the complete JSON for all 826 rows") instead of the assistant agreeing to do it.
     *   The background export card has an **Answer in chat instead** button that cancels the run and answers the same request in chat. Classic interface only.
     *   (Ref: `route_backend_chats.py`, `chat-messages.js`, `ui_tests/test_chat_background_generated_export_status.py`)
+
+### **(v0.261.474)**
+
+#### Bug Fixes
+
+*   **Model Catalog Updates Now Ship With Their Publisher Keys**
+    *   Admin Settings > Model Catalog no longer warns on every deployment that the publisher verification key is not configured. The production and development publisher public keys are bundled with SimpleChat, so a deployment receives them through an ordinary upgrade; administrators have nothing to install.
+    *   When the official catalog is signed with a newer publisher key, or needs a newer application version, **Check for updates** shows **Upgrade SimpleChat to get catalog updates** instead of a generic verification failure. Uploading such a package gives the same explanation, and the installed catalog keeps working meanwhile. Releases without a bundled key can now run the check and are told to upgrade.
+    *   V2 no longer draws a second, unlabelled switch for `enable_model_catalog_online_updates`; **Allow online catalog update checks** is the only control.
+    *   Publishers whose Key Vault cannot be reached from GitHub-hosted runners can sign with a `CATALOG_SIGNING_KEY` secret on the protected publishing environment. `scripts/publish_model_catalog.py` adds `generate-key` (local key pair, public half into the trust map, private half outside the repository) and `trust-key` (imports a Key Vault key's public half). The workflow refuses an environment that configures both a vault key and a secret, and checks that the secret matches the bundled public key before signing.
+    *   (Ref: `model_catalog_package.py`, `model_catalog_updates.py`, `scripts/publish_model_catalog.py`, `.github/workflows/publish-model-catalog.yml`, `model_catalog_trusted_keys.json`, `model_catalog_development_trusted_keys.json`, `admin_settings_fields.py`, `ModelCatalogUpdates.tsx`, `model_catalog_updates.js`, `MODEL_CATALOG_PUBLISHER_KEY_SETUP_FIX.md`, [#1967](https://github.com/microsoft/simplechat/pull/1967))
 
 ### **(v0.261.473)**
 

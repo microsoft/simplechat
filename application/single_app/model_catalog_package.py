@@ -51,6 +51,21 @@ class CatalogUpdateError(ValueError):
         self.public_message = message
 
 
+class CatalogUpgradeRequired(CatalogUpdateError):
+    """A genuine-looking package this application version cannot accept until it is upgraded.
+
+    ``reason`` is ``publisher_key`` (signed with a key this release does not bundle),
+    ``minimum_version`` (the catalog needs a newer application) or ``format``.
+    Publisher keys are only ever replaced through an application release, so an
+    unknown key on the official feed means this deployment is behind.
+    """
+
+    def __init__(self, message, reason, minimum_app_version=None):
+        super().__init__(message)
+        self.reason = reason
+        self.minimum_app_version = minimum_app_version
+
+
 def _unique_object(pairs):
     result = {}
     for key, value in pairs:
@@ -162,7 +177,10 @@ def verify_package(raw, app_version, *, keys=None, channel=None):
     if not isinstance(manifest, dict) or set(manifest) != MANIFEST_FIELDS:
         raise CatalogUpdateError("The signed catalog manifest is invalid.")
     if manifest["formatVersion"] != 1 or type(manifest["formatVersion"]) is not int:
-        raise CatalogUpdateError("This catalog package format requires an application upgrade.")
+        raise CatalogUpgradeRequired(
+            "This catalog package format needs a newer version of SimpleChat. "
+            "Deploy the latest SimpleChat release, then try again.", "format",
+        )
     if manifest["algorithm"] != "RS256":
         raise CatalogUpdateError("The catalog signature algorithm is unsupported.")
     channel = CATALOG_CHANNEL if channel is None else channel
@@ -170,8 +188,15 @@ def verify_package(raw, app_version, *, keys=None, channel=None):
         raise CatalogUpdateError("The signed catalog is not for this application's catalog channel.")
     key_id = manifest["keyId"]
     keys = trusted_keys(channel=channel) if keys is None else keys
-    if not isinstance(key_id, str) or key_id not in keys:
-        raise CatalogUpdateError("The catalog publisher key is not trusted by this application.")
+    if not isinstance(key_id, str):
+        raise CatalogUpdateError("The signed catalog manifest is invalid.")
+    if key_id not in keys:
+        raise CatalogUpgradeRequired(
+            "This catalog was signed with a publisher key that this version of SimpleChat "
+            "does not include. Official catalogs move to a new key only through a SimpleChat "
+            "release, so deploy the latest SimpleChat release, then try again. "
+            "The installed catalog keeps working until then.", "publisher_key",
+        )
     try:
         public_key = serialization.load_pem_public_key(keys[key_id].encode("ascii"))
         if not isinstance(public_key, rsa.RSAPublicKey) or public_key.key_size < 3072:
@@ -198,7 +223,11 @@ def verify_package(raw, app_version, *, keys=None, channel=None):
     ):
         raise CatalogUpdateError("The catalog publication metadata is invalid.")
     if version_tuple(manifest["minimumAppVersion"]) > version_tuple(app_version):
-        raise CatalogUpdateError("Upgrade SimpleChat before installing this catalog.")
+        raise CatalogUpgradeRequired(
+            f"This catalog needs SimpleChat {manifest['minimumAppVersion']} or later. "
+            "Deploy the latest SimpleChat release, then try again.",
+            "minimum_version", manifest["minimumAppVersion"],
+        )
     document = validate_catalog(read_json(payload_raw, MAX_PAYLOAD_BYTES))
     if type(manifest["schemaVersion"]) is not int or manifest["schemaVersion"] != document["schemaVersion"]:
         raise CatalogUpdateError("The catalog schema does not match the signed manifest.")

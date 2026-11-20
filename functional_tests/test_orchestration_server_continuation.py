@@ -2,7 +2,7 @@
 # test_orchestration_server_continuation.py
 """
 Functional test for the server-side next attempt after a failed orchestration run.
-Version: 0.261.469
+Version: 0.261.473
 Implemented in: 0.261.462
 
 This test ensures that a failed attempt is followed by its next one on the server, after the
@@ -10,6 +10,7 @@ browser's response has ended and without any request from a page, and that nothi
 when the setting is off.
 """
 
+import importlib
 import json
 import os
 import sys
@@ -167,18 +168,55 @@ def test_a_changed_binding_can_name_the_part_that_changed(modules):
     resumed = types.SimpleNamespace(**{**vars(saved), "action_catalog": []})
     before, after = (context_binding_parts(item, plan, {}) for item in (saved, resumed))
     assert context_binding(saved, plan, {}) != context_binding(resumed, plan, {})
-    assert {name for name in before if before[name] != after[name]} == {"part_action_catalog_digest"}
+    assert {name for name in before if before[name] != after[name]} == {"binding_part_action_catalog_digest"}
     # Every part of the binding is covered, each request input separately, and none is content.
     assert set(before) == {
-        "part_plan", "part_model", "part_memory_digest", "part_agent_catalog_digest",
-        "part_action_catalog_digest", "part_settings_digest", "part_final_response",
-        *(f"input_{name}" for name in INPUT_FIELDS),
+        "binding_part_plan", "binding_part_model", "binding_part_memory_digest",
+        "binding_part_agent_catalog_digest", "binding_part_action_catalog_digest",
+        "binding_part_settings_digest", "binding_part_final_response",
+        *(f"binding_input_{name}" for name in INPUT_FIELDS),
     }
     assert all(len(value) == 12 and int(value, 16) >= 0 for value in before.values())
     assert "Private" not in json.dumps(before) and "example.test" not in json.dumps(before)
     changed = types.SimpleNamespace(**{**vars(saved), "user_message": "Another request."})
     after = context_binding_parts(changed, plan, {})
-    assert {name for name in before if before[name] != after[name]} == {"input_user_message"}
+    assert {name for name in before if before[name] != after[name]} == {"binding_input_user_message"}
+    # The parts must survive the log sanitizer, which keeps only allowlisted text: on 0.261.472
+    # every part reached the log as a length, so a changed binding still could not name its part.
+    telemetry = importlib.import_module("functions_appinsights")
+    logged = telemetry._build_logger_extra("[ORCHESTRATION_RUNS] Execution binding parts.", {
+        **before, "stage": "execution_binding", "binding_outcome": "changed",
+    })
+    assert logged["sc_binding_outcome"] == "changed"
+    assert {name: logged[f"sc_{name}"] for name in before} == before
+    dropped = telemetry._build_logger_extra("Parts.", {
+        "binding_part_plan": "Private text", "binding_input_user_message": "0123456789abcdef",
+        "binding_outcome": "Private text",
+    })
+    assert not {"sc_binding_part_plan", "sc_binding_input_user_message", "sc_binding_outcome"} & set(dropped)
+
+
+def test_new_diagnostic_fields_reach_the_log_and_only_as_codes():
+    """A field the sanitizer does not know is logged as a length, which diagnoses nothing."""
+    telemetry = importlib.import_module("functions_appinsights")
+    logged = telemetry._build_logger_extra("[ORCHESTRATION_NATIVE] Calculation program returned to its author.", {
+        "correction_category": "numeric_value_is_empty_or_boolean", "correction_origin": "evaluation",
+        "calls_used": 1, "calls_limit": 3,
+    })
+    assert logged["sc_correction_category"] == "numeric_value_is_empty_or_boolean"
+    assert logged["sc_correction_origin"] == "evaluation" and logged["sc_calls_used"] == 1
+    logged = telemetry._build_logger_extra("[ORCHESTRATION_EXECUTOR] Step outputs do not match the plan.", {
+        "task_status": "partial", "declared_outputs": "findings,records,report",
+        "produced_outputs": "findings", "outputs_not_produced": "records,report",
+        "outputs_of_another_kind": "", "outputs_not_allowed": "",
+    })
+    assert logged["sc_task_status"] == "partial" and logged["sc_declared_outputs"] == "findings,records,report"
+    assert logged["sc_outputs_not_produced"] == "records,report" and logged["sc_outputs_of_another_kind"] == ""
+    dropped = telemetry._build_logger_extra("Outputs.", {
+        "declared_outputs": "Private text, more", "outputs_not_produced": "a;b",
+        "correction_category": "Private text", "task_status": "Private text",
+    })
+    assert not [name for name in dropped if not name.endswith("_length") and name not in ("sc_message",)]
 
 
 def test_a_refused_next_attempt_logs_which_check_refused_it(modules):

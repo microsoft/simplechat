@@ -1,10 +1,16 @@
 # publish_model_catalog.py
-"""Build, Key Vault-sign and publish a catalog from a protected Actions job."""
+"""Build, sign and publish a catalog from a protected Actions job.
+
+Signing uses either an Azure Key Vault key (CATALOG_VAULT_KEY_URL) or a private key
+held as the protected environment's CATALOG_SIGNING_KEY secret, for publishers whose
+vaults cannot be reached from GitHub-hosted runners.
+"""
 
 import argparse
 import base64
 from datetime import datetime, timezone
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -16,7 +22,7 @@ APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP))
 
 from model_catalog_package import (
-    CHANNEL_BRANCHES, MAX_PACKAGE_BYTES, MAX_PAYLOAD_BYTES, REVISION_PATTERN,
+    DEVELOPMENT_TRUST_PATH, TRUST_PATH, CHANNEL_BRANCHES, MAX_PACKAGE_BYTES, MAX_PAYLOAD_BYTES, REVISION_PATTERN,
     canonical_bytes, package_url, read_json, trusted_keys, validate_catalog, verify_package, version_tuple,
 )
 
@@ -74,11 +80,44 @@ def build_candidate(source_commit, output, channel="production"):
     return manifest
 
 
-def sign_candidate(output, key_id, vault_key_url, app_version, channel="production"):
+def _sign_with_vault(vault_key_url, manifest_raw):
     # Publisher-only dependencies must not enter the application bootstrap graph.
     from azure.identity import DefaultAzureCredential
     from azure.keyvault.keys.crypto import CryptographyClient, SignatureAlgorithm
 
+    credential = DefaultAzureCredential()
+    try:
+        with CryptographyClient(vault_key_url, credential) as client:
+            return client.sign(
+                SignatureAlgorithm.rs256, hashlib.sha256(manifest_raw).digest(),
+            ).signature
+    finally:
+        credential.close()
+
+
+def _sign_with_secret(signing_key_pem, key_id, channel, manifest_raw):
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+    try:
+        private_key = serialization.load_pem_private_key(signing_key_pem.encode("ascii"), password=None)
+    except (ValueError, TypeError, UnicodeError):
+        # Never include the secret or the parser's detail in the message.
+        raise ValueError("CATALOG_SIGNING_KEY is not an unencrypted PEM private key.") from None
+    if not isinstance(private_key, rsa.RSAPrivateKey) or private_key.key_size < 3072:
+        raise ValueError("CATALOG_SIGNING_KEY must be an RSA key of at least 3,072 bits.")
+    trusted = trusted_keys(channel=channel).get(key_id)
+    if trusted is None:
+        raise ValueError(f"Key ID {key_id} is not in the {channel} trust map shipped with the application.")
+    trusted_numbers = serialization.load_pem_public_key(trusted.encode("ascii")).public_numbers()
+    if trusted_numbers != private_key.public_key().public_numbers():
+        raise ValueError(f"CATALOG_SIGNING_KEY does not match the trusted public key for {key_id}.")
+    return private_key.sign(manifest_raw, padding.PKCS1v15(), hashes.SHA256())
+
+
+def sign_candidate(output, key_id, vault_key_url, app_version, channel="production", *, signing_key_pem=None):
+    if bool(vault_key_url) == bool(signing_key_pem):
+        raise ValueError("Configure exactly one of CATALOG_VAULT_KEY_URL or the CATALOG_SIGNING_KEY secret.")
     manifest = read_json((output / "candidate.json").read_bytes())
     if manifest["channel"] != channel or channel not in CHANNEL_BRANCHES:
         raise ValueError("The candidate channel differs from the signing job.")
@@ -92,14 +131,10 @@ def sign_candidate(output, key_id, vault_key_url, app_version, channel="producti
         raise ValueError("Candidate contents changed after preparation.")
     if payload_raw != (APP / "static" / "json" / "model_capabilities.json").read_bytes():
         raise ValueError("The candidate differs from the reviewed catalog source.")
-    credential = DefaultAzureCredential()
-    try:
-        with CryptographyClient(vault_key_url, credential) as client:
-            signature = client.sign(
-                SignatureAlgorithm.rs256, hashlib.sha256(manifest_raw).digest(),
-            ).signature
-    finally:
-        credential.close()
+    if vault_key_url:
+        signature = _sign_with_vault(vault_key_url, manifest_raw)
+    else:
+        signature = _sign_with_secret(signing_key_pem, key_id, channel, manifest_raw)
     package = canonical_bytes({
         "manifest": base64.b64encode(manifest_raw).decode("ascii"),
         "payload": base64.b64encode(payload_raw).decode("ascii"),
@@ -284,13 +319,131 @@ def require_staging_validation(output, app_version):
         raise ValueError("The successful Staging run did not validate these catalog bytes.")
 
 
+def public_key_pem(n, e):
+    """Return the SubjectPublicKeyInfo PEM for an RSA key's modulus and exponent."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    numbers = rsa.RSAPublicNumbers(int.from_bytes(e, "big"), int.from_bytes(n, "big"))
+    key = numbers.public_key()
+    if key.key_size < 3072:
+        raise ValueError("The publisher key must be an RSA key of at least 3,072 bits.")
+    return key.public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+
+
+def add_trusted_key(key_id, pem, channel="production"):
+    """Write one public key into the channel's bundled trust map and re-verify the map."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", key_id or ""):
+        raise ValueError("The key ID must be 1-64 letters, digits, dots, dashes or underscores.")
+    path = TRUST_PATH if channel == "production" else DEVELOPMENT_TRUST_PATH
+    original = path.read_bytes()
+    keys = read_json(original, 32 * 1024)
+    if key_id in keys and keys[key_id] != pem:
+        raise ValueError(f"Key ID {key_id} is already trusted with different key material. Use a new key ID to rotate.")
+    keys[key_id] = pem
+    path.write_text(json.dumps(keys, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        # Re-reads the file: rejects a development key that reuses production material.
+        trusted_keys(channel=channel)
+    except Exception:
+        path.write_bytes(original)
+        raise
+    return path
+
+
+def generate_signing_key(key_id, private_key_out, channel="production"):
+    """Create a publisher key pair locally: public half into the trust map, private half to a file.
+
+    The private file is for loading into the protected GitHub environment's
+    CATALOG_SIGNING_KEY secret and then deleting. It is refused inside the repository
+    so it cannot be committed by accident, and never overwrites an existing file.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    target = Path(private_key_out).expanduser().resolve()
+    repository = APP.parents[1].resolve()
+    if target == repository or repository in target.parents:
+        raise ValueError("Write the private key outside the repository so it cannot be committed.")
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    private_pem = private_key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption(),
+    )
+    public_pem = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+    # Mode "xb" refuses to replace an existing key file.
+    with open(target, "xb") as handle:
+        handle.write(private_pem)
+    try:
+        os.chmod(target, 0o600)
+    except OSError:
+        pass
+    try:
+        trust_path = add_trusted_key(key_id, public_pem, channel)
+    except Exception:
+        target.unlink()
+        raise
+    return trust_path, target
+
+
+def trust_vault_key(key_id, vault_key_url, channel="production"):
+    """Read the public half of the publisher's Key Vault key and bundle it with the app.
+
+    Only the public key leaves the vault. The URL must name a key version, because
+    the signing job signs with that exact version.
+    """
+    # Publisher-only dependencies must not enter the application bootstrap graph.
+    from azure.identity import DefaultAzureCredential
+    from azure.keyvault.keys import KeyClient, KeyVaultKeyIdentifier
+
+    identifier = KeyVaultKeyIdentifier(vault_key_url)
+    if not identifier.version:
+        raise ValueError("The Key Vault key URL must include the key version that signs packages.")
+    credential = DefaultAzureCredential()
+    try:
+        client = KeyClient(identifier.vault_url, credential)
+        try:
+            key = client.get_key(identifier.name, identifier.version).key
+        finally:
+            client.close()
+    finally:
+        credential.close()
+    if key.kty not in ("RSA", "RSA-HSM"):
+        raise ValueError("The publisher key must be an RSA key.")
+    return add_trusted_key(key_id, public_key_pem(key.n, key.e), channel)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["prepare", "sign-publish", "record-validation"])
+    parser.add_argument("command", choices=["prepare", "sign-publish", "record-validation", "trust-key", "generate-key"])
     parser.add_argument("--channel", choices=list(CHANNEL_BRANCHES), default="production")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--source-commit")
+    parser.add_argument("--key-id", help="trust-key: stable ID written into the trust map (CATALOG_KEY_ID)")
+    parser.add_argument("--vault-key-url", help="trust-key: versioned Key Vault key URL (CATALOG_VAULT_KEY_URL)")
+    parser.add_argument("--private-key-out", help="generate-key: file outside the repository for the private key")
     args = parser.parse_args()
+    if args.command == "generate-key":
+        if not args.key_id or not args.private_key_out:
+            parser.error("generate-key requires --key-id and --private-key-out")
+        trust_path, private_path = generate_signing_key(args.key_id, args.private_key_out, args.channel)
+        print(f"Trusted {args.key_id} in {trust_path.relative_to(APP.parents[1])}. Commit it and ship it in a release.")
+        print(
+            f"Private key written to {private_path}. Load it into the CATALOG_SIGNING_KEY secret of the "
+            f"{PUBLISHING_POLICIES[args.channel][1]} environment, then delete the file."
+        )
+        return
+    if args.command == "trust-key":
+        if not args.key_id or not args.vault_key_url:
+            parser.error("trust-key requires --key-id and --vault-key-url")
+        path = trust_vault_key(args.key_id, args.vault_key_url, args.channel)
+        print(f"Trusted {args.key_id} in {path.relative_to(APP.parents[1])}. Commit it and ship it in a release.")
+        return
+    if args.output is None:
+        parser.error("--output is required for this command")
     if args.command == "prepare":
         policy = "validation" if os.environ.get("GITHUB_REF") == "refs/heads/Staging" else args.channel
         require_publishing_approval(policy)
@@ -305,9 +458,10 @@ def main():
         if args.channel == "production":
             require_staging_validation(args.output, os.environ["CATALOG_APP_VERSION"])
         filename = sign_candidate(
-            args.output, os.environ["CATALOG_KEY_ID"], os.environ["CATALOG_VAULT_KEY_URL"],
+            args.output, os.environ["CATALOG_KEY_ID"], os.environ.get("CATALOG_VAULT_KEY_URL"),
             os.environ["CATALOG_APP_VERSION"],
             args.channel,
+            signing_key_pem=os.environ.pop("CATALOG_SIGNING_KEY", None),
         )
         publish(args.output, filename, args.channel)
 

@@ -1,7 +1,7 @@
 # test_model_catalog_signed_updates.py
 """
 Functional tests for signed catalog publication, activation, and runtime snapshots.
-Version: 0.261.431
+Version: 0.261.474
 Implemented in: 0.261.425
 
 Real cryptographic signatures and the installed Cosmos SDK response type are used.
@@ -37,7 +37,7 @@ sys.path.insert(0, str(APP))
 from app_settings_store import AppSettingsStore, SettingsConflictError, SettingsUnavailableError
 import functions_model_capabilities as capabilities
 from model_catalog_package import (
-    CatalogUpdateError, DISCOVERY_URL, canonical_bytes, package_url, read_json,
+    CatalogUpdateError, CatalogUpgradeRequired, DISCOVERY_URL, canonical_bytes, package_url, read_json,
     verify_package,
 )
 from model_catalog_runtime import catalog_scope, configure_catalog_provider, effective_catalog, pin_catalog_stream, pin_catalog_task
@@ -322,6 +322,52 @@ def test_failed_download_preserves_catalog_and_reports_failure(world):
         service.check("admin")
     assert cosmos.document[CHECK]["status"] == "failed"
     assert not cosmos.document.get(ACTIVE)
+
+
+def _serve_official(service, raw):
+    source = {"commit": "a" * 40, "filename": "catalog-1-2026-11-10.json"}
+    service.download = lambda url, _maximum: canonical_bytes(source) if url == DISCOVERY_URL else raw
+    return package_url(source["commit"], source["filename"])
+
+
+@pytest.mark.parametrize("changes, reason", [
+    ({"keyId": "replacement-publisher"}, "publisher_key"),
+    ({"minimumAppVersion": "9.0.0"}, "minimum_version"),
+])
+def test_check_reports_upgrade_required_instead_of_failing(world, changes, reason):
+    """An official package this release cannot accept tells the admin to deploy the latest release."""
+    service, cosmos, make, _source, _logs = world
+    service.set_online(True, service.status()["etag"], "admin")
+    url = _serve_official(service, make(**changes))
+    checked = service.check("admin")
+    result = checked["check"]
+    assert result["status"] == "upgrade_required"
+    assert result["reason"] == reason
+    assert result["downloadUrl"] == url
+    assert "deploy the latest simplechat release" in result["message"].lower()
+    assert cosmos.document[CHECK]["status"] == "upgrade_required"
+    assert not cosmos.document.get(ACTIVE)
+    if reason == "minimum_version":
+        assert result["minimumAppVersion"] == "9.0.0"
+
+
+def test_release_without_key_can_still_learn_it_needs_an_upgrade(bundle):
+    """A deployment that bundles no key is told to upgrade rather than blocked from checking."""
+    make, _keys, _source = bundle
+    cosmos = CatalogCosmos()
+    service = CatalogUpdates(cosmos, AppSettingsStore(cosmos), "0.261.425", lambda *a, **k: None, keys={})
+    assert service.status()["publisherConfigured"] is False
+    service.set_online(True, service.status()["etag"], "admin")
+    _serve_official(service, make())
+    assert service.check("admin")["check"]["reason"] == "publisher_key"
+
+
+def test_upload_signed_with_unknown_key_names_the_upgrade(world):
+    """An offline upload signed with a newer key explains the fix, not just a rejection."""
+    service, _cosmos, make, _source, _logs = world
+    with pytest.raises(CatalogUpgradeRequired, match="(?i)deploy the latest SimpleChat release") as caught:
+        service.preview(make(keyId="replacement-publisher"), "admin")
+    assert caught.value.reason == "publisher_key"
 
 
 def test_publisher_prepares_exact_source_bytes(tmp_path):
