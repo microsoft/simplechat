@@ -5,7 +5,7 @@
 // copied, retried, deleted, exported, copied into the composer and saved as a reusable prompt.
 // Attempt navigation appears only once more than one attempt exists.
 
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     BookmarkPlus,
@@ -64,6 +64,14 @@ import {
     type PromptDraft,
 } from '../prompts/PromptEditorDialog';
 
+/**
+ * Set while the actions are drawn in the touch action sheet (MessageActionSheet).
+ *
+ * Holds what closes the sheet. The controls read it to lay themselves out for a finger and to
+ * close the sheet once they have run, so the row and the sheet share every entry and handler.
+ */
+const SheetLayoutContext = createContext<(() => void) | null>(null);
+
 /** A compact icon control, shared so message rows of every kind look and behave alike. */
 export function IconButton({
     label,
@@ -84,6 +92,31 @@ export function IconButton({
     controls?: string;
     buttonRef?: React.Ref<HTMLButtonElement>;
 }) {
+    const closeSheet = useContext(SheetLayoutContext);
+    if (closeSheet) {
+        return (
+            <button
+                ref={buttonRef}
+                type="button"
+                onClick={() => {
+                    onClick();
+                    closeSheet();
+                }}
+                disabled={disabled}
+                aria-pressed={active || undefined}
+                aria-expanded={expanded}
+                aria-controls={controls}
+                className={clsx(
+                    'flex min-h-16 flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 text-xs transition-colors',
+                    'disabled:cursor-not-allowed disabled:opacity-40 [&_svg]:size-5',
+                    active ? 'bg-accent-soft text-accent' : 'text-text-2 active:bg-surface-2',
+                )}
+            >
+                {children}
+                <span className="text-center leading-tight">{label}</span>
+            </button>
+        );
+    }
     return (
         <button
             ref={buttonRef}
@@ -254,6 +287,9 @@ function OverflowMenu({
     // offered and then failing.
     const shared = useChatStore((state) => state.activeConversationKind === 'collaborative');
     const isUser = message.role === 'user';
+    // In the touch sheet the entries are listed in place rather than behind the ellipsis.
+    const closeSheet = useContext(SheetLayoutContext);
+    const listed = open || Boolean(closeSheet);
 
     const toggle = () => {
         if (!open && containerRef.current) {
@@ -287,11 +323,18 @@ function OverflowMenu({
         };
     }, [open]);
 
+    const entryClass = closeSheet
+        ? 'flex min-h-11 w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-[15px] [&_svg]:size-[18px]'
+        : 'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm';
+
     const item = (
         label: string,
         icon: React.ReactNode,
         action: () => void,
         danger = false,
+        // Save as prompt opens a dialog that belongs to the sheet's copy of the actions, so
+        // the sheet stays until that dialog is done with.
+        keepSheet = false,
     ) => (
         <button
             key={label}
@@ -299,9 +342,10 @@ function OverflowMenu({
             onClick={() => {
                 setOpen(false);
                 action();
+                if (!keepSheet) closeSheet?.();
             }}
             className={clsx(
-                'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm',
+                entryClass,
                 danger ? 'text-danger hover:bg-danger-soft' : 'text-text-1 hover:bg-surface-2',
             )}
         >
@@ -327,9 +371,11 @@ function OverflowMenu({
                 onClick={() => {
                     setBusyExport(format);
                     void runExport(format, message).finally(() => setBusyExport(null));
+                    // The export's toast reports progress, so the sheet need not stay open.
+                    closeSheet?.();
                 }}
                 className={clsx(
-                    'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm',
+                    entryClass,
                     'text-text-1 hover:bg-surface-2',
                     'disabled:cursor-not-allowed disabled:hover:bg-transparent',
                     busyExport !== null && !busy && 'opacity-40',
@@ -342,16 +388,20 @@ function OverflowMenu({
     };
 
     return (
-        <div className="relative" ref={containerRef}>
-            <IconButton label="More actions" onClick={toggle}>
-                <Ellipsis size={15} />
-            </IconButton>
+        <div className={closeSheet ? 'col-span-full' : 'relative'} ref={containerRef}>
+            {!closeSheet && (
+                <IconButton label="More actions" onClick={toggle}>
+                    <Ellipsis size={15} />
+                </IconButton>
+            )}
 
-            {open && (
+            {listed && (
                 <div
                     className={clsx(
-                        'glass-modal absolute right-0 z-50 w-52 rounded-xl p-1',
-                        placement === 'up' ? 'bottom-full mb-1' : 'top-full mt-1',
+                        closeSheet
+                            ? 'mt-1 flex flex-col border-t border-edge pt-1'
+                            : 'glass-modal absolute right-0 z-50 w-52 rounded-xl p-1',
+                        !closeSheet && (placement === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'),
                     )}
                 >
                     {isUser && !shared && onEdit && item('Edit', <Pencil size={14} />, onEdit)}
@@ -392,7 +442,7 @@ function OverflowMenu({
                     {item('Save as prompt', <BookmarkPlus size={14} />, () => {
                         const text = messageToPlainText(message);
                         onSaveAsPrompt(text);
-                    })}
+                    }, false, true)}
                     {item('Download Markdown', <FileDown size={14} />, () =>
                         downloadMarkdown(message),
                     )}
@@ -418,6 +468,7 @@ export function MessageActions({
     onInspect,
     alignRight,
     planReplay,
+    onSheetDone,
 }: {
     message: ChatMessage;
     onEdit?: () => void;
@@ -438,6 +489,12 @@ export function MessageActions({
      * would put the action row on the opposite side from the bubble it belongs to.
      */
     alignRight?: boolean;
+    /**
+     * Draws the actions for the touch action sheet, and closes it once one has run.
+     *
+     * Left out for the ordinary hover-revealed row, which is unchanged.
+     */
+    onSheetDone?: () => void;
 }) {
     const { retryMessage, changeAttempt, sendFeedback, forkFromMessage, streaming, attemptsByThread, applyMask } =
         useChatStore();
@@ -488,6 +545,13 @@ export function MessageActions({
      */
     const [promptDraft, setPromptDraft] = useState<PromptDraft | null>(null);
     const [savingPrompt, setSavingPrompt] = useState(false);
+    // In the sheet, the prompt dialog was the sheet's last open task: once it closes, so does
+    // the sheet.
+    const hadPromptDraft = useRef(false);
+    useEffect(() => {
+        if (hadPromptDraft.current && !promptDraft) onSheetDone?.();
+        hadPromptDraft.current = Boolean(promptDraft);
+    }, [promptDraft, onSheetDone]);
     const [promptError, setPromptError] = useState<string | null>(null);
     const upsertPromptInCatalog = useBootstrapStore((state) => state.upsertPromptInCatalog);
     const refreshBootstrap = useBootstrapStore((state) => state.refresh);
@@ -539,19 +603,27 @@ export function MessageActions({
     const inspect = (section: InspectorSection) =>
         onInspect?.(inspector === section ? null : section);
 
+    const sheet = Boolean(onSheetDone);
+    // Each set of related buttons is its own cluster in the row; in the sheet they all join
+    // one grid of tiles.
+    const cluster = sheet ? 'contents' : 'flex items-center gap-0.5';
+
     return (
+        <SheetLayoutContext.Provider value={onSheetDone ?? null}>
         <div
             role="group"
             aria-label="Message actions"
             className={clsx(
-                // Groups are separated by a wider gap than the buttons within them, so the
-                // row reads as related sets rather than one long undifferentiated strip.
-                'mt-1 flex flex-wrap items-center gap-x-3 gap-y-1',
-                (alignRight ?? isUser) ? 'justify-end' : 'justify-start',
+                sheet
+                    ? 'grid grid-cols-4 gap-1'
+                    // Groups are separated by a wider gap than the buttons within them, so the
+                    // row reads as related sets rather than one long undifferentiated strip.
+                    : 'mt-1 flex flex-wrap items-center gap-x-3 gap-y-1',
+                !sheet && ((alignRight ?? isUser) ? 'justify-end' : 'justify-start'),
             )}
         >
             {attempts.show && !shared && (
-                <div className="flex items-center gap-0.5">
+                <div className={cluster}>
                     <IconButton
                         label="Previous attempt"
                         onClick={() => void changeAttempt(message.id, 'prev')}
@@ -560,7 +632,7 @@ export function MessageActions({
                         <ChevronLeft size={15} />
                     </IconButton>
                     <span
-                        className="font-mono text-[11px] text-text-3"
+                        className={clsx('font-mono text-[11px] text-text-3', sheet && 'self-center text-center')}
                         title={
                             attempts.total === null
                                 ? 'Use the arrows to move between attempts'
@@ -582,7 +654,7 @@ export function MessageActions({
             )}
 
             {/* Working with the message itself. */}
-            <div className="flex items-center gap-0.5">
+            <div className={cluster}>
                 <IconButton label={copied ? 'Copied' : 'Copy'} onClick={() => void copy()}>
                     {copied ? (
                         <ClipboardCheck size={15} className="text-ok" />
@@ -634,7 +706,7 @@ export function MessageActions({
             </div>
 
             {!isUser && feedbackEnabled && (
-                <div className="flex items-center gap-0.5">
+                <div className={cluster}>
                     <IconButton
                         label="Good response"
                         active={message.feedbackType === 'positive'}
@@ -659,7 +731,7 @@ export function MessageActions({
 
             {/* Looking into how the message was produced. */}
             {onInspect && (
-                <div className="flex items-center gap-0.5">
+                <div className={cluster}>
                     {!isUser && (
                         <IconButton
                             label={
@@ -696,7 +768,7 @@ export function MessageActions({
 
             {/* Masking, when the user may change it. */}
             {onInspect && maskingAllowed && (
-                <div className="flex items-center gap-0.5">
+                <div className={cluster}>
                     {!masks.hasAnyMask && (
                         <IconButton
                             label="Mask this message"
@@ -727,7 +799,7 @@ export function MessageActions({
             )}
 
             {/* Branching and everything else. */}
-            <div className="flex items-center gap-0.5">
+            <div className={cluster}>
                 {!isUser && !shared && (
                     <IconButton
                         label="Fork conversation from here"
@@ -766,5 +838,6 @@ export function MessageActions({
                 />
             ) : null}
         </div>
+        </SheetLayoutContext.Provider>
     );
 }
