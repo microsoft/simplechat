@@ -8551,6 +8551,9 @@ def _refresh_m365_pending_action_event(event_text, viewer_user_id, conversation_
     return f"data: {json.dumps(payload)}\n\n"
 
 
+STREAM_SESSION_PERSIST_FLUSH_INTERVAL_SECONDS = 0.75
+
+
 class ActiveConversationStreamSession:
     """Keep an in-flight stream replayable for reconnecting consumers."""
 
@@ -8564,6 +8567,12 @@ class ActiveConversationStreamSession:
         self.cache_key = f'{user_id}:{conversation_id}'
         self._condition = threading.Condition()
         self._accepting_events = True
+        # Batches event-append/metadata-persist calls so a fast-streaming response
+        # doesn't pay a full Cosmos/Redis round trip on every single chunk. Runs
+        # entirely on the same thread/order as before; see _flush_pending_persist.
+        self._pending_persist_events = []
+        self._pending_persist_metadata = None
+        self._last_persist_flush_at = 0.0
 
     def _build_metadata(self, active, existing=None):
         metadata = dict(existing or {})
@@ -8707,6 +8716,39 @@ class ActiveConversationStreamSession:
         metadata = self._get_metadata()
         return str(metadata.get('cancel_reason') or 'user_requested')
 
+    def _flush_pending_persist(self):
+        """Durably persist any buffered events/metadata. Safe to call when nothing is pending.
+
+        Runs synchronously, on whatever thread calls it (no background thread/queue) —
+        this is the same single-threaded code path `publish()` always used, just invoked
+        less often (see STREAM_SESSION_PERSIST_FLUSH_INTERVAL_SECONDS) so a fast-streaming
+        response isn't blocked on a Cosmos/Redis round trip for every single chunk.
+        """
+        try:
+            if self._pending_persist_events:
+                app_settings_cache.append_stream_session_events_batch(
+                    self.cache_key,
+                    self._pending_persist_events,
+                    ttl_seconds=self.session_ttl_seconds,
+                )
+                self._pending_persist_events = []
+            if self._pending_persist_metadata is not None:
+                self._persist_metadata(self._pending_persist_metadata)
+                self._pending_persist_metadata = None
+        except Exception as ex:
+            log_event(
+                '[STREAMING] Stream session persistence flush failed',
+                extra={
+                    'conversation_id': self.conversation_id,
+                    'user_id': self.user_id,
+                    'error': str(ex),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+        finally:
+            self._last_persist_flush_at = time.time()
+
     def publish(self, event_text):
         """Append an SSE event to the replay history and notify listeners."""
         if event_text is None:
@@ -8724,7 +8766,15 @@ class ActiveConversationStreamSession:
         )
         is_terminal_event = isinstance(payload, dict) and (payload.get('done') or payload.get('error') or is_cancel_event)
 
-        metadata = self._build_metadata(active=not is_terminal_event, existing=self._get_metadata())
+        # Chain off the latest not-yet-flushed metadata when one is buffered, so
+        # cumulative counters (event_count, content_chars, ...) keep incrementing
+        # correctly between flushes instead of resetting from a stale persisted copy.
+        existing_metadata = (
+            self._pending_persist_metadata
+            if self._pending_persist_metadata is not None
+            else self._get_metadata()
+        )
+        metadata = self._build_metadata(active=not is_terminal_event, existing=existing_metadata)
         metadata['event_count'] = _safe_int(metadata.get('event_count')) + 1
         metadata['last_event_at'] = _utcnow_iso()
 
@@ -8756,12 +8806,12 @@ class ActiveConversationStreamSession:
         else:
             metadata['status'] = STREAM_STATUS_STARTED
 
-        app_settings_cache.append_stream_session_event(
-            self.cache_key,
-            event_text,
-            ttl_seconds=self.session_ttl_seconds,
-        )
-        self._persist_metadata(metadata)
+        self._pending_persist_events.append(event_text)
+        self._pending_persist_metadata = metadata
+        if is_terminal_event or (
+            time.time() - self._last_persist_flush_at >= STREAM_SESSION_PERSIST_FLUSH_INTERVAL_SECONDS
+        ):
+            self._flush_pending_persist()
 
         if first_content_emitted:
             log_event(
@@ -8804,6 +8854,11 @@ class ActiveConversationStreamSession:
         with self._condition:
             self._accepting_events = False
             self._condition.notify_all()
+
+        # Flush any events/metadata buffered since the last periodic flush before
+        # computing the final state, so close()'s own write lands last and reflects
+        # everything that happened, preserving the existing events-before-metadata order.
+        self._flush_pending_persist()
 
         metadata = self._build_metadata(active=False, existing=self._get_metadata())
         if metadata.get('status') not in TERMINAL_STREAM_STATUSES:
