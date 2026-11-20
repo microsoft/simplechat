@@ -3910,10 +3910,10 @@
         ],
         "kind": "class",
         "inherited_bases": [],
-        "imports_sha256": "bc8cd28a55f2d2f12ba9afcaa6bfb6f3821275faf63cb57afe256111867e438e"
+        "imports_sha256": "20bdd10a7cb10d9fd9c35a6df4658e095290db7f64a8ec931d15f3994988f432"
       },
       "classification": "sdk-default",
-      "contract": "Point read/create and inherited settings responses use the installed CosmosDict; preserve partition equality, not-found/409 behavior and the inherited settings store's ETag and failure callbacks. Nested packages remain ordinary JSON. Review 0.261.430: only unused test imports were removed; the Cosmos double AST and SDK-default response contract are unchanged. Real activation, conflict, worker and publication regressions were rerun.",
+      "contract": "Point read/create and inherited settings responses use the installed CosmosDict; preserve partition equality, not-found/409 behavior and the inherited settings store's ETag and failure callbacks. Nested packages remain ordinary JSON. Review 0.261.430: only unused test imports were removed; the Cosmos double AST and SDK-default response contract are unchanged. Real activation, conflict, worker and publication regressions were rerun. Review 0.261.474: only the test module's imports changed (CatalogUpgradeRequired for the new upgrade-required tests); the Cosmos double AST and SDK-default response contract are unchanged.",
       "tests": [
         "functional_tests/test_model_catalog_signed_updates.py"
       ]
@@ -27531,10 +27531,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fc837f1318700c2ac566895140271c27b04676b5cf94828316365449102b223f"
+        "module_sha256": "999d6e3a69810081e25711a554f14c80374c1e4633f13a2e5ab4d66ae63d00db"
       },
       "classification": "normalized-strict",
-      "contract": "Normalize the real SDK CosmosDict before reading the immutable package's encoded data; verify the exact package digest/signature/schema before cache publication. Settings references remain ETag-fenced and never cache the active pointer in a worker.",
+      "contract": "Normalize the real SDK CosmosDict before reading the immutable package's encoded data; verify the exact package digest/signature/schema before cache publication. Settings references remain ETag-fenced and never cache the active pointer in a worker. Review 0.261.474: only the module hash changed (check() records upgrade-required results and the module imports CatalogUpgradeRequired); this owner's AST and its read_item normalization are unchanged.",
       "tests": [
         "functional_tests/test_model_catalog_signed_updates.py::test_effective_runtime_and_second_worker_preserve_overrides"
       ],
@@ -27552,10 +27552,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fc837f1318700c2ac566895140271c27b04676b5cf94828316365449102b223f"
+        "module_sha256": "999d6e3a69810081e25711a554f14c80374c1e4633f13a2e5ab4d66ae63d00db"
       },
       "classification": "response-unused",
-      "contract": "Immutable package creation does not consume its SDK response. A 409 re-reads through the normalized verifying owner instead of replacing existing data; functional tests cover real SDK responses and cross-worker activation.",
+      "contract": "Immutable package creation does not consume its SDK response. A 409 re-reads through the normalized verifying owner instead of replacing existing data; functional tests cover real SDK responses and cross-worker activation. Review 0.261.474: only the module hash changed (check() records upgrade-required results and the module imports CatalogUpgradeRequired); this owner's AST and its Cosmos calls are unchanged.",
       "tests": [
         "functional_tests/test_model_catalog_signed_updates.py::test_effective_runtime_and_second_worker_preserve_overrides"
       ]

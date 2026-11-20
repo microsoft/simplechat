@@ -9288,6 +9288,12 @@ ADMIN_SECTION_STATUS = {
 # there is something to edit. They are named here with the reason instead, and
 # the settings GET sends this list so the scan can skip them.
 SUPPRESSED_CAPABILITY_KEYS = {
+    "enable_model_catalog_online_updates": (
+        "Owned by the Catalog updates card under Model Catalog, whose \"Allow online "
+        "catalog update checks\" switch saves it through the catalog update API with "
+        "a concurrency check and an audit event. A second, generic switch here would "
+        "show the same value under its raw key name and bypass that path."
+    ),
     "enable_gpt_apim": (
         "Belongs to the classic single endpoint and is edited on the "
         "server-rendered model-endpoints pane. A connection carries its own API "

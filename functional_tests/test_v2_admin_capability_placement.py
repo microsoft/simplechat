@@ -193,6 +193,8 @@ RELOCATED_CAPABILITIES = {
 # Keys the scan must skip entirely, because they are not settings an
 # administrator can change. Declaring one would claim there is something to edit.
 EXPECTED_SUPPRESSED_CAPABILITIES = (
+    # Owned by the Catalog updates card, which saves it through its own API.
+    "enable_model_catalog_online_updates",
     "enable_tabular_processing_plugin",
     "enable_enhanced_citations_mount",
     # Derived from enable_enhanced_citations on every read and save.

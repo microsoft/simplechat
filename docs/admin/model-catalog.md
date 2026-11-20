@@ -76,8 +76,17 @@ If another administrator changes settings, reload update status and preview agai
 If the active shared catalog cannot be read, affected new model operations fail
 rather than quietly changing technical facts back to the bundled catalog.
 
-An unconfigured publisher key is shown explicitly and prevents signed imports.
+The publisher's public key ships inside SimpleChat, so a deployment receives it
+with an ordinary application upgrade. A release that does not yet include one says
+catalog updates are unavailable in this release and prevents signed imports; there
+is nothing for an administrator to install.
+Since **0.261.474**, when the official catalog is signed with a newer publisher key, or
+needs a newer application version, **Check for updates** shows **Upgrade SimpleChat to
+get catalog updates**. Deploy the latest SimpleChat release and check again; the installed
+catalog keeps working meanwhile. Uploading such a package gives the same explanation.
 Public keys are not credentials and do not require a customer Key Vault.
+Since **0.261.474**, **Allow online catalog update checks** is the only switch for
+`enable_model_catalog_online_updates`; V2 no longer repeats it under its raw key name.
 Publisher setup and key rotation are described in
 [Signed model catalog updates]({{ '/explanation/features/SIGNED_MODEL_CATALOG_UPDATES/' | relative_url }}).
 
