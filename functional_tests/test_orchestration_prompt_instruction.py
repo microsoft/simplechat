@@ -132,7 +132,10 @@ def test_requests_use_the_single_planner_message_contract():
             "plan_contract_version": lambda plan: 2,
             "ROUTING_INSTRUCTIONS": "",
         },
-        names={"PLANNER_SYSTEM_PROMPT", "build_planner_messages"},
+        names={
+            "PLANNER_PROMPT_SECTIONS", "PLANNER_SYSTEM_PROMPT", "planner_system_prompt",
+            "build_planner_messages",
+        },
     )
     context = {
         "message": "hi",

@@ -1114,6 +1114,30 @@ def test_required_work_limits_and_input_kinds_are_strict(runtime, problem):
     assert raw == original
 
 
+def test_a_step_missing_a_planned_output_logs_which_output(runtime, monkeypatch):
+    """result_output_missing covers several mismatches; the log must name the output."""
+    case = runtime.make([compose('one')], ['PRIVATE_ANSWER_TEXT actual output.'])
+    execute(runtime, case)
+    task = case.context.task_results['one']
+    produced = sorted(reference.output_name for reference in task.outputs)
+    step = deepcopy(case.plan['steps'][0])
+    step['outputs'] = [*step['outputs'], {'name': 'report', 'kind': 'markdown-v1'}]
+    logged = []
+    monkeypatch.setattr(
+        runtime.result_runtime, 'log_event',
+        lambda message, extra=None, **_kwargs: logged.append((message, extra or {})),
+    )
+    with pytest.raises(runtime.contracts.ResultContractError) as failure:
+        runtime.result_runtime.validate_task_outputs(step, case.context, task)
+    assert failure.value.code == 'result_output_missing'
+    detail = next(extra for message, extra in logged if 'Step outputs do not match the plan' in message)
+    assert detail['outputs_not_produced'] == 'report' and detail['produced_outputs'] == ','.join(produced)
+    assert detail['declared_outputs'] == ','.join(sorted([*produced, 'report']))
+    assert detail['outputs_of_another_kind'] == '' and detail['outputs_not_allowed'] == ''
+    assert detail['capability_id'] == 'compose' and detail['task_status'] == task.status
+    assert 'PRIVATE_ANSWER_TEXT' not in json.dumps(detail, default=str)
+
+
 def test_checkpoint_reuse_cannot_substitute_another_readable_producer(runtime):
     case = runtime.make([compose('one'), compose('two')], ['First actual output.', 'Second actual output.'])
     execute(runtime, case)

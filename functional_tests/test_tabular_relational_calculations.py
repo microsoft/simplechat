@@ -442,6 +442,28 @@ def test_v2_allocation_preserves_valid_high_precision_amount():
     assert result["records"] == [{"amount": amount}]
 
 
+def test_the_operations_determine_the_program_version():
+    from functions_tabular_relational import with_operation_version
+
+    first = join_spec()
+    program, authored = with_operation_version({**first, "version": "tabular-relate-v2"})
+    assert (program["version"], authored) == ("tabular-relate-v1", "tabular-relate-v2")
+    assert normalize_relational_spec(program)["version"] == "tabular-relate-v1"
+    second = join_spec()
+    second["steps"] = [{"id": "running", "op": "cumulative_sum"}]
+    assert with_operation_version(second)[0]["version"] == "tabular-relate-v2"
+    # A missing version is stated; the input is not changed in place.
+    missing = {key: value for key, value in first.items() if key != "version"}
+    assert with_operation_version(missing) == ({**missing, "version": "tabular-relate-v1"}, None)
+    assert "version" not in missing
+    # What is not a program with step objects is left for the normalizer to reject.
+    for value in (None, [], {"steps": "join"}, {"steps": ["join"]}):
+        assert with_operation_version(value) == (value, None)
+    # The normalizer itself still rejects a mismatch, so a direct program is not relaxed.
+    with pytest.raises(TabularRelationalError):
+        normalize_relational_spec({**first, "version": "tabular-relate-v2"})
+
+
 @pytest.mark.parametrize("operation", ["allocate", "cumulative_sum"])
 def test_v2_operators_are_not_admitted_under_legacy_version(operation):
     if operation == "allocate":

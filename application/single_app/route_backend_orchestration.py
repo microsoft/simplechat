@@ -36,8 +36,10 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import queue
 import threading
+import time
 import uuid
 from copy import deepcopy
 from contextlib import ExitStack
@@ -54,7 +56,7 @@ from flask import Response, copy_current_request_context, g, has_request_context
 from config import cosmos_conversations_container, cosmos_messages_container, cosmos_orchestration_runs_container
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_activity_logging import log_workflow_creation
-from functions_appinsights import log_event, workflow_log_context
+from functions_appinsights import exception_log_fields, log_event, workflow_log_context
 from functions_interaction_csrf import get_interaction_csrf_token
 from functions_assist_submissions import SubmissionIdError, normalize_submission_id
 from public_chat_scope import prepare_public_chat_scope, public_chat_execution_scope, public_chat_scope_required
@@ -211,6 +213,9 @@ from functions_orchestration_planner import (
     resolve_conversation_request,
 )
 from functions_orchestration_models import resolve_orchestration_model
+from functions_orchestration_progress import (
+    automatic_continuation, log_automatic_continuation, log_continuation_offer, reactive_loop_enabled,
+)
 from functions_orchestration_registry import (
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     CapabilityResolutionError,
@@ -537,7 +542,7 @@ def _stream_planning(events, holder, context, user_id, settings, run_plan):
         except Exception as exc:
             log_event(
                 '[ORCHESTRATION] Background planning could not finish.',
-                level=logging.ERROR, extra={'stage': 'planning_worker', 'error_type': type(exc).__name__},
+                level=logging.ERROR, extra={'stage': 'planning_worker', **exception_log_fields(exc)},
             )
             fail('Planning could not finish. Reload to check the saved question and retry.')
         finally:
@@ -640,8 +645,12 @@ def _plan_result_options(record, user_id, settings):
     }
 
 
-def _stream_execution(execution, *, run_id, conversation_id, settings=None):
-    """Detach the browser on stream loss, not the owning durable execution."""
+def _stream_execution(execution, *, run_id, conversation_id, settings=None, after=None):
+    """Detach the browser on stream loss, not the owning durable execution.
+
+    ``after`` runs on the worker once the run has been closed and its stream ended, whether or
+    not a browser is still attached. It is how a failed attempt is followed by the next one.
+    """
     worker_started = False
 
     def generate():
@@ -664,7 +673,7 @@ def _stream_execution(execution, *, run_id, conversation_id, settings=None):
                     '[ORCHESTRATION_RUNS] Headless execution could not return its saved outcome.',
                     level=logging.ERROR, extra={
                         **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
-                        'stage': 'execution_stream', 'error_type': type(exc).__name__,
+                        'stage': 'execution_stream', **exception_log_fields(exc),
                     },
                 )
                 emit(build_error_event(
@@ -684,6 +693,17 @@ def _stream_execution(execution, *, run_id, conversation_id, settings=None):
                     )
                 finally:
                     emit(finished)
+            if after is not None:
+                try:
+                    after()
+                except Exception as exc:
+                    log_event(
+                        '[ORCHESTRATION_RUNS] The step after this execution could not finish.',
+                        level=logging.ERROR, extra={
+                            **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                            'stage': 'execution_after', **exception_log_fields(exc),
+                        },
+                    )
 
         thread = threading.Thread(target=worker, name=f'orchestration-run-{run_id}', daemon=True)
         try:
@@ -708,7 +728,9 @@ def _stream_execution(execution, *, run_id, conversation_id, settings=None):
     return response
 
 
-def _prepare_execution_stream(record, data, user_id, settings, snapshot, identity, execution_identity, services):
+def _prepare_execution_stream(
+    record, data, user_id, settings, snapshot, identity, execution_identity, services, after=None,
+):
     # Initialize the shared web/scheduler runner only after the run is authorized.
     from functions_orchestration_execution import HarnessExecutionError, prepare_harness_execution
 
@@ -790,7 +812,9 @@ def _prepare_execution_stream(record, data, user_id, settings, snapshot, identit
             'error': 'Execution could not start. Reload the run to check its saved status.',
             'code': 'recovery_unavailable',
         }), 503
-    return _stream_execution(execution, run_id=run_id, conversation_id=conversation_id, settings=settings)
+    return _stream_execution(
+        execution, run_id=run_id, conversation_id=conversation_id, settings=settings, after=after,
+    )
 
 
 def _authorized_document_ids(candidates, seeds):
@@ -2188,6 +2212,139 @@ def _current_workflow_planning(record, user_id, settings, conversation_id=None):
     return refresh_workflow_planning_privacy(stored, conversation, user_id)
 
 
+def _automatic_continuation(record, recovery, user_id, settings):
+    """The server's decision on following a failed attempt without the user's sign-off."""
+    if not reactive_loop_enabled(settings) or record.get('status') != PLAN_STATUS_FAILED:
+        return None, 'disabled'
+    parent = None
+    if record.get('retry_of_run_id'):
+        try:
+            parent = get_orchestration_run(
+                record['retry_of_run_id'], user_id,
+                conversation_id=record.get('conversation_id'), strict=True,
+            )
+        except AzureError:
+            # History that cannot be read is treated as a repeat: nothing continues by itself.
+            parent = None
+    return automatic_continuation(record, recovery, settings, parent=parent)
+
+
+_CONTINUATION_RELEASE_CHECKS = 10
+_CONTINUATION_RELEASE_PAUSE_SECONDS = 1.0
+
+
+def _continue_failed_run(run_id, conversation_id, user_id, run_plan):
+    """Follow a failed attempt with its next one, on the server.
+
+    Called on the run's own worker after the attempt was closed, inside a copy of the request
+    context that started it. The next attempt does not depend on any page: the user may have
+    moved to another conversation or closed the tab. The decision is the same one the retry
+    route applies to an automatic request, the attempt is prepared by the same fenced code as a
+    clicked retry, and it runs through the same execution admission as every run. A failure
+    here leaves the failed attempt exactly as it was, with its own retry controls.
+    """
+    settings = get_settings()
+    if not reactive_loop_enabled(settings):
+        return
+    authorize = lambda: _authorize_context_conversation(conversation_id, user_id)
+    record, recovery = None, None
+    try:
+        for _check in range(_CONTINUATION_RELEASE_CHECKS):
+            record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id, strict=True)
+            if not record or record.get('status') != PLAN_STATUS_FAILED:
+                return
+            record = reconcile_checkpoints(record, authorize)
+            recovery = recovery_projection(record)
+            if recovery.get('reason_code') != 'execution_live':
+                break
+            # The attempt is released just after its outcome is saved.
+            time.sleep(_CONTINUATION_RELEASE_PAUSE_SECONDS)
+        decision, reason = _automatic_continuation(record, recovery, user_id, settings)
+        if decision is None:
+            log_continuation_offer(None, reason, record, recovery)
+            return
+        use_available = decision['kind'] == 'available_information'
+
+        def validate_retry(current):
+            if _is_workflow_replay_run(current):
+                raise RecoveryError(
+                    _workflow_replay_run_message(),
+                    code=WORKFLOW_REPLAY_RUN_MANAGED_CODE, status_code=409,
+                )
+            again, _why = _automatic_continuation(current, recovery_projection(current), user_id, settings)
+            if again is None or again['kind'] != decision['kind']:
+                raise RecoveryError(
+                    'This attempt is not continued automatically.', code='automatic_continuation_unavailable',
+                )
+            return _validate_retry_context(current, user_id, settings, preparing=True)
+
+        child = prepare_retry(
+            run_id, user_id, {
+                'conversation_id': conversation_id, 'submission_id': uuid.uuid4().hex,
+                'expected_version': recovery.get('expected_version'),
+                **({'use_available_information': True} if use_available else {}),
+            },
+            authorize=authorize, validate=validate_retry, message_container=cosmos_messages_container,
+        )
+        log_automatic_continuation(decision, None, record, successor_run_id=child['id'])
+        response = make_response(run_plan({
+            'run_id': child['id'], 'conversation_id': conversation_id,
+            'plan_id': (child.get('plan') or {}).get('plan_id'),
+            'expected_version': child.get('edit_version'),
+        }))
+        try:
+            if response.status_code >= 400:
+                refusal = response.get_json(silent=True) or {}
+                log_event(
+                    '[ORCHESTRATION_RUNS] The next attempt was prepared but could not start.',
+                    level=logging.WARNING, extra={
+                        **workflow_log_context(run_id=child['id'], conversation_id=conversation_id),
+                        'stage': 'automatic_continuation', 'validation_code': refusal.get('code'),
+                        'status_code': response.status_code,
+                    },
+                )
+            else:
+                # Reading the stream to its end is what runs the attempt; nobody is listening.
+                for _frame in response.response:
+                    pass
+        finally:
+            response.close()
+    except RecoveryError as exc:
+        log_event(
+            '[ORCHESTRATION_RUNS] The next attempt could not be prepared.',
+            level=logging.WARNING, extra={
+                **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                'stage': 'automatic_continuation', 'validation_code': exc.code,
+                **_refusal_detail(exc),
+            },
+        )
+
+
+def _refusal_detail(exc):
+    """Say which check refused a next attempt, without any of the run's content.
+
+    Most refusals share one public code. The check that raised is on the error it was raised
+    from: its code, rule and stage, and the file and line that raised it.
+    """
+    cause = exc.__cause__ if isinstance(exc.__cause__, Exception) else exc
+    frame = None
+    trace = cause.__traceback__
+    while trace is not None:
+        frame, trace = trace, trace.tb_next
+    detail = {
+        'reason_code': (exc.recovery or {}).get('reason_code') if isinstance(exc.recovery, dict) else None,
+        'cause_type': type(cause).__name__,
+        'cause_code': getattr(cause, 'code', None),
+        'validation_rule': getattr(cause, 'validation_rule', None) or exc.validation_rule,
+        'refusal_stage': getattr(cause, 'stage', None) or exc.stage,
+        'producer_capability_id': getattr(cause, 'producer_capability_id', None) or exc.producer_capability_id,
+        'error_site': (
+            f'{os.path.basename(frame.tb_frame.f_code.co_filename)}:{frame.tb_lineno}' if frame is not None else None
+        ),
+    }
+    return {key: value for key, value in detail.items() if isinstance(value, str) and value}
+
+
 def _validate_retry_context(record, user_id, settings, *, preparing=False):
     """Rebuild the same authorized execution inputs without invoking a model."""
     conversation_id = record['conversation_id']
@@ -2973,7 +3130,10 @@ def register_route_backend_orchestration(bp):
                 release_elicitation_submission(submission)
                 log_event(
                     '[ORCHESTRATION] Clarification could not be resumed.',
-                    extra={'exception_type': type(exc).__name__}, level=logging.ERROR,
+                    extra={
+                        **workflow_log_context(conversation_id=conversation_id),
+                        'stage': 'clarification_resume', **exception_log_fields(exc),
+                    }, level=logging.ERROR,
                 )
                 return jsonify({'error': 'The answer could not be checked. Please retry.'}), 503
 
@@ -3801,7 +3961,10 @@ def register_route_backend_orchestration(bp):
             except Exception as exc:
                 log_event(
                     '[ORCHESTRATION] Planning failed.',
-                    extra={'exception_type': type(exc).__name__}, level=logging.ERROR,
+                    extra={
+                        **workflow_log_context(conversation_id=resolved_conversation_id),
+                        'stage': 'planning_stream', **exception_log_fields(exc),
+                    }, level=logging.ERROR,
                 )
                 yield build_error_event('The request could not be planned or saved. Please retry.', conversation_id)
             finally:
@@ -3961,6 +4124,15 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'User not authenticated'}), 401
         data = request.get_json(silent=True)
         conversation_id = data.get('conversation_id') if isinstance(data, dict) else None
+        # ``automatic`` is the client saying nobody clicked. The server then decides whether
+        # this attempt may be followed without sign-off; a click is never held to that rule.
+        automatic = False
+        if isinstance(data, dict) and 'automatic' in data:
+            if type(data['automatic']) is not bool:
+                return jsonify({'error': 'Invalid retry request.', 'code': 'invalid_request'}), 400
+            automatic = data['automatic']
+            data = {key: value for key, value in data.items() if key != 'automatic'}
+        continued = {}
 
         def validate_retry(record):
             if _is_workflow_replay_run(record):
@@ -3968,6 +4140,22 @@ def register_route_backend_orchestration(bp):
                     _workflow_replay_run_message(),
                     code=WORKFLOW_REPLAY_RUN_MANAGED_CODE, status_code=409,
                 )
+            if automatic:
+                decision, reason = _automatic_continuation(
+                    record, recovery_projection(record), user_id, settings,
+                )
+                if decision is not None and (
+                    (decision['kind'] == 'available_information')
+                    != (data.get('use_available_information') is True)
+                ):
+                    decision, reason = None, 'not_eligible'
+                if decision is None:
+                    log_automatic_continuation(None, reason, record)
+                    raise RecoveryError(
+                        'This attempt is not continued automatically. Review it and retry if you want to.',
+                        code='automatic_continuation_unavailable',
+                    )
+                continued.update(decision=decision, record=record)
             return _validate_retry_context(record, user_id, settings, preparing=True)
 
         try:
@@ -3977,6 +4165,10 @@ def register_route_backend_orchestration(bp):
                 validate=validate_retry,
                 message_container=cosmos_messages_container,
             )
+            if continued:
+                log_automatic_continuation(
+                    continued['decision'], None, continued['record'], successor_run_id=child['id'],
+                )
             return jsonify({'run': _run_detail_row(child)}), 200
         except RecoveryError as exc:
             payload = {'error': exc.message, 'code': exc.code}
@@ -4180,8 +4372,16 @@ def register_route_backend_orchestration(bp):
         except PlanValidationError as exc:
             payload, status = _plan_edit_error(exc)
             return jsonify(payload), status
+        after = None
+        if reactive_loop_enabled(settings):
+            # Bound to this request's identity now; it runs after the attempt, on its worker.
+            @copy_current_request_context
+            def after():
+                _continue_failed_run(run_id, conversation_id or record['conversation_id'], user_id, _run_saved_plan)
+
         return _prepare_execution_stream(
             record, data, user_id, settings, snapshot, identity, agent_execution_identity, services,
+            after=after,
         )
 
     @bp.route("/api/v2/orchestration/run", methods=["POST"])
@@ -4388,6 +4588,12 @@ def register_route_backend_orchestration(bp):
                 record, lambda: _authorize_context_conversation(record['conversation_id'], user_id),
             )
             public = _run_detail_row(record)
+            decision, reason = _automatic_continuation(
+                record, public.get('recovery'), user_id, get_settings(),
+            )
+            log_continuation_offer(decision, reason, record, public.get('recovery'))
+            if decision is not None:
+                public['recovery'] = {**public['recovery'], 'auto_continue': {'kind': decision['kind']}}
         except (ConversationContextError, PermissionError) as exc:
             log_event(
                 '[ORCHESTRATION_RUNS] Current access did not permit a saved run projection.',

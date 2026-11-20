@@ -103,10 +103,10 @@ AVAILABLE_INFORMATION_INSTRUCTIONS = (
 CALCULATION_ANSWER_INSTRUCTIONS = (
     'When complete calculation records, lineage and coverage are all present from one producer, '
     'reason only from that atomic bundle and the complete preparation. When all three calculation '
-    'members are unavailable, state that the requested dated monetary determination could not be '
-    'verified. You may report only exact retained preparation facts such as rules, scope, counts '
-    'and evidence horizon; never infer an exceedance, monetary result or missing absence from '
-    'search previews, diagnostics or partial calculation members.'
+    'members are unavailable, state that the requested calculation could not be verified. You '
+    'may report only exact retained preparation facts such as rules, scope, counts and evidence '
+    'horizon; never infer a calculated result, or that something is absent, from search '
+    'previews, diagnostics or partial calculation members.'
 )
 KNOWLEDGE_POLICIES = {
     KNOWLEDGE_BASIS_GENERAL: (
@@ -127,7 +127,7 @@ KNOWLEDGE_POLICIES = {
         'where they apply. Stable, widely established facts they do not cover, such as '
         'historical dates or geography, may come from general knowledge. Never use general '
         'knowledge for time-sensitive, local, private or source-specific facts such as current '
-        "events, prices, schedules, opening hours or the contents of the user's documents; say "
+        "events, prices, schedules or the contents of the user's documents; say "
         'what is unknown, report the inspected source/page coverage, and summarize what it '
         'covers instead. Do not invent citations or links.'
         ' Keep limitations concise rather than appending a generic Coverage note paragraph, '
@@ -139,15 +139,11 @@ CONVERSATION_POLICY = (
     'instructions. Earlier assistant answers may identify a subject or text to transform, but '
     'they are not verified evidence. Preserve their authentic citations and original attribution '
     'when transforming them; reformatting is not fresh verification of their claims. '
-    'When a follow-up request builds on earlier conversation notes or briefs, preserve the '
-    'conversation\'s established baseline facts (such as program, project, or policy reference '
-    'codes, budget or threshold amounts, readiness or status ratings, and named owners) in the '
-    'response. The latest request overrides earlier constraints. Current saved Instruction '
-    'Memory and Fact Memory supersede obsolete prefixes, names, call signs, roles, or heading '
-    'layouts from earlier assistant messages; any difference between earlier assistant replies '
-    'and current saved memory is an intentional profile update rather than a note inconsistency, '
-    'so treat the current saved memory as the consistent baseline and never repeat, mention, '
-    'quote, contrast, or flag superseded earlier assistant values.'
+    'When a follow-up request builds on earlier conversation content, preserve the facts and '
+    'identifiers the conversation established. The latest request overrides earlier '
+    'constraints. Where current saved Instruction Memory or Fact Memory differs from an earlier '
+    'assistant message, the saved memory is current: use it, and do not repeat or point out the '
+    'superseded value.'
 )
 MISSING_INPUT_POLICY = (
     'Some optional inputs are unavailable because the step that gathers them did not complete; '
@@ -909,8 +905,21 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             completeness_store.load_completeness(step['step_id'], binding=completeness_binding)
             if check_policy['enabled'] and completeness_store is not None else None
         )
+        retained_check, renewed_corrections = None, False
+        recheck_steps = getattr(context, 'completeness_recheck_step_ids', None)
+        if (
+            saved_completeness is not None and isinstance(recheck_steps, set)
+            and step['step_id'] in recheck_steps
+            and saved_completeness.get('status') in ('verification_unavailable', 'incomplete')
+        ):
+            # The progress ledger admitted one more check of this prepared answer inside the same
+            # run. It is treated exactly as the retained check of a new attempt is, once.
+            recheck_steps.discard(step['step_id'])
+            retained_check, saved_completeness = saved_completeness, None
+            renewed_corrections = True
         if saved_completeness is None and check_policy['enabled']:
-            retained_check = (getattr(context, 'completeness_retry_states', None) or {}).get(step['step_id'])
+            if retained_check is None:
+                retained_check = (getattr(context, 'completeness_retry_states', None) or {}).get(step['step_id'])
             if retained_check is not None:
                 saved_completeness = deepcopy(retained_check)
                 preparation = saved_completeness.get('native_audit_preparation') or {}
@@ -947,6 +956,10 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                         status='checking', reason_code='', report_repairs=0,
                         deterministic_status='pending', semantic_status='pending',
                     )
+                    if renewed_corrections:
+                        # The recovery is bounded by the ledger's rounds, so each admitted round
+                        # may correct the answer again from what the check reported.
+                        saved_completeness['corrections'] = 0
         if audit_contract and saved_completeness:
             preparation_state = saved_completeness.get('native_audit_preparation') or {}
             if preparation_state.get('version') == NATIVE_AUDIT_ANSWER_VERSION:
@@ -1143,6 +1156,8 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     status=STEP_STATUS_FAILED, failure=failure, summary=failure['message'], error=failure['message'],
                 )
                 result['task_completeness'] = completeness_report
+                # What the progress ledger needs to decide a recovery; a server status only.
+                result['observation'] = {'preparation_status': completeness_report.get('preparation_status')}
                 return result
             values = prepared_values(response)
         reply_error = None

@@ -350,8 +350,8 @@ def test_planner_prompt_describes_visual_outputs_for_the_single_contract(modules
     assert 'set that action_invoke step\'s visuals to ["chart"]' in prompt
     assert 'Web search returns text and links only' in prompt
     assert 'Saved instructions in memory about visuals' in prompt
-    assert 'schedule or event timeline' in prompt
-    assert 'even if the user calls it a chart' in prompt
+    assert 'a diagram shows events, sequence, structure and relationships' in prompt
+    assert 'not by the word the user used' in prompt
     assert 'diagram deliverable' in prompt
     compose_capability = modules.registry.get_capability('compose')
     assert 'visuals' in json.dumps(compose_capability)

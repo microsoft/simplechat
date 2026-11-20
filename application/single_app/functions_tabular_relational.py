@@ -26,6 +26,8 @@ from functions_tabular_transformations import (
     get_tabular_transformation_model_fields,
     get_tabular_transformation_source_references,
     normalize_tabular_transformation_spec,
+    read_formatted_number,
+    tabular_number_readings,
 )
 
 
@@ -58,6 +60,10 @@ RELATIONAL_EXPRESSION_GRAMMAR = (
     "in{op,value,values,case_sensitive?}; eq|ne|lt|lte|gt|gte{op,left,right,value_type?,case_sensitive?}; "
     "add|subtract|multiply|divide{op,values} or {op,left,right}. Operands nest with the same grammar. "
     "Arithmetic on an empty or boolean operand fails, so guard it with coalesce or case with is_null. "
+    "A numeric operand is a number or text that writes one: a currency symbol, commas between groups "
+    "of three digits, a minus sign or parentheses for a negative, and a trailing percent sign (divided "
+    "by 100) are read. Comparing text that writes a number with a number needs value_type number. "
+    "The decimal mark is a point unless the dataset declares the column in comma_decimal_columns. "
     "A division whose exact quotient does not terminate must be the direct value of a round expression. "
     "A numeric output must be exactly representable as a JSON number; otherwise round it or declare "
     "type string."
@@ -103,6 +109,15 @@ def relational_spec_schema():
                 "Optional assertion of the complete ordered native header, including unused columns. "
                 "This is not a projection or a list of columns needed by the calculation. "
                 "Omit it when the complete header is not known; use a project step to select fields."
+            ),
+        },
+        "comma_decimal_columns": {
+            "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": True, "items": _COLUMN,
+            "description": (
+                "Native headers of this dataset whose text cells write numbers with a decimal comma "
+                "(1.250,00). Each such cell is read under that convention before any step; every "
+                "other column is read with a decimal point. Declare a column only when its cells "
+                "are written that way."
             ),
         },
     }, ["alias", "document_id"])
@@ -196,6 +211,9 @@ NATIVE_DIAGNOSTIC_KEYS = {
 }
 
 
+MODEL_FEEDBACK_MAX_NAMES = 200
+
+
 def safe_native_detail(detail):
     """Keep only closed tokens and counts, so a source value or model-supplied name never rides along."""
     safe = {}
@@ -210,11 +228,16 @@ def safe_native_detail(detail):
 
 
 class TabularRelationalError(ValueError):
-    """A stable failure code and content-free location, without source values or storage locations."""
+    """A stable failure code and content-free location, without source values or storage locations.
 
-    def __init__(self, code, *, detail=None):
+    ``feedback`` is for the model that authored the rejected program only. It may name columns
+    that model was already given, so it must never be logged or shown outside that correction.
+    """
+
+    def __init__(self, code, *, detail=None, feedback=None):
         self.code = code
         self.detail = safe_native_detail(detail)
+        self.feedback = deepcopy(feedback) if isinstance(feedback, dict) and feedback else None
         super().__init__("The complete cross-file calculation could not be completed.")
 
 
@@ -262,6 +285,31 @@ def _precise_spec(value, columns=None, **detail):
         "relational_expression_invalid", **detail,
     )
     return normalized
+
+
+V2_OPERATIONS = ("allocate", "cumulative_sum")
+
+
+def with_operation_version(value):
+    """Return the program with the format version its operations determine.
+
+    The version is not a choice: a program that uses ``allocate`` or ``cumulative_sum`` is the
+    second format and any other program is the first. Where a program may use either set, the
+    server states the version instead of asking its author to restate what the operations
+    already say. A value that is not a program with a list of step objects is returned
+    unchanged, for the normalizer to reject.
+
+    Returns ``(program, authored_version)``.
+    """
+    if not isinstance(value, dict) or not isinstance(value.get("steps"), list) or not all(
+        isinstance(step, dict) for step in value["steps"]
+    ):
+        return value, None
+    authored = value.get("version")
+    derived = RELATIONAL_VERSION_V2 if any(
+        step.get("op") in V2_OPERATIONS for step in value["steps"]
+    ) else RELATIONAL_VERSION
+    return {**value, "version": derived}, authored
 
 
 def normalize_relational_spec(value, document_ids=None):
@@ -342,7 +390,7 @@ def normalize_relational_spec(value, document_ids=None):
             spec["result"] in origins and origins[spec["result"]] == set(aliases), "relational_source_unused",
             check="result_sources",
         )
-        new_operations = any(step["op"] in ("allocate", "cumulative_sum") for step in spec["steps"])
+        new_operations = any(step["op"] in V2_OPERATIONS for step in spec["steps"])
         _require(
             new_operations == (spec["version"] == RELATIONAL_VERSION_V2),
             check="version_operations",
@@ -427,6 +475,9 @@ def _missing_columns_error(columns, requested, role, prefixes, where):
     return TabularRelationalError("relational_column_missing", detail={
         "check": "column_missing", "role": role, "missing_count": len(missing),
         "category": _column_category(missing[0], columns, prefixes), **where,
+    }, feedback={
+        "missing_columns": missing[:MODEL_FEEDBACK_MAX_NAMES],
+        "available_columns": list(columns)[:MODEL_FEEDBACK_MAX_NAMES],
     })
 
 
@@ -476,7 +527,12 @@ def _decimal(value, *, role, position, scale=None):
         text = str(value).strip()
         if not text or len(text) > 256:
             return None
-        number = Decimal(text)
+        try:
+            number = Decimal(text)
+        except InvalidOperation:
+            number = read_formatted_number(text)
+            if number is None:
+                raise
         if not number.is_finite() or abs(number) > Decimal("1e18"):
             raise InvalidOperation
         if scale is not None:
@@ -1051,11 +1107,34 @@ def calculate_relational_sources(spec, datasets, *, limits, cancel_requested=Non
             _require(not selected.get("columns") or list(columns) == selected["columns"], "relational_schema_changed")
             qualified = tuple(f"{alias}.{name}" for name in columns)
             _require(all(len(name) <= 128 for name in qualified), "relational_column_limit")
+            comma_decimal = frozenset(selected.get("comma_decimal_columns") or ())
+            undeclared = _missing_columns_error(
+                qualified, [f"{alias}.{name}" for name in sorted(comma_decimal - set(columns))],
+                "comma_decimal_column", budget.prefixes, {},
+            )
+            if undeclared is not None:
+                raise undeclared
             rows = []
             for number, values in raw_rows:
                 budget.check()
                 _require(isinstance(number, int) and not isinstance(number, bool) and number >= 1)
                 _require(set(values) == set(columns), "relational_schema_changed")
+                if comma_decimal:
+                    # The declared reading, applied once. Text that writes no number at all is
+                    # left as it is. Text that writes a number only with a decimal point
+                    # contradicts the declaration, and is never read the other way instead.
+                    values = dict(values)
+                    for name in comma_decimal:
+                        point, declared = tabular_number_readings(values[name])
+                        if declared is not None:
+                            values[name] = format(declared, "f")
+                        elif point is not None:
+                            contradiction = TabularTransformationEvaluationError("Numeric value is invalid")
+                            contradiction.detail = {
+                                "check": "dataset_read", "role": "comma_decimal_column",
+                                "category": "declared_decimal_mark", "expected_type": "number",
+                            }
+                            raise contradiction
                 budget.append(rows, RelationalRow(
                     {f"{alias}.{name}": values[name] for name in columns},
                     ((alias, selected["document_id"], sheet or "", number),),
@@ -1067,6 +1146,7 @@ def calculate_relational_sources(spec, datasets, *, limits, cancel_requested=Non
             "dataset": alias, "document_id": selected["document_id"], "sheet": sheet,
             "row_count": len(rows), "columns": list(columns),
             "selection": {name: selected[name] for name in ("header_row", "cell_range", "table_id") if name in selected},
+            **({"comma_decimal_columns": sorted(comma_decimal)} if comma_decimal else {}),
             "schema_sha256": hashlib.sha256(json.dumps(list(columns)).encode()).hexdigest(),
         })
     diagnostics = []

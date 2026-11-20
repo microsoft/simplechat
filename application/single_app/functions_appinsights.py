@@ -110,6 +110,9 @@ LOGGER_EXTERNAL_EVENT_MESSAGE = "[SIMPLE_CHAT_EXTERNAL_EVENT]"
 MAX_EXTERNAL_EVENT_STRING_LENGTH = 256
 LOGGER_SAFE_TEXT_MAX_LENGTH = 1024
 LOGGER_APPLICATION_VERSION_MAX_LENGTH = 64
+EXCEPTION_TYPE_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
+EXCEPTION_SITE_MAX_FRAMES = 6
+_APPLICATION_ROOT = os.path.dirname(os.path.abspath(__file__))
 # Diagnostic keys whose sanitized text may be retained; everything else stays a length.
 LOGGER_SAFE_TEXT_KEYS = frozenset({
     "attempt",
@@ -118,6 +121,7 @@ LOGGER_SAFE_TEXT_KEYS = frozenset({
     "diagnosticrunid",
     "endpointfingerprint",
     "error",
+    "errorsite",
     "errortype",
     "failurereasons",
     "failuresummary",
@@ -154,6 +158,8 @@ LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "argumentkeyword", "argumentpath", "argumentbranch", "expectedtype",
     "nativecheck", "nativerole", "nativecategory", "nativestepop", "nativetransformcode",
     "nativeleftcategory", "nativerightcategory",
+    # Planning shape diagnostics and the progress ledger: registry and server codes only.
+    "bindingproblem", "misplacedargument", "recovery", "progressoutcome",
 })
 
 
@@ -189,6 +195,27 @@ def _diagnostic_hashes(extra):
         value = context.get(key) or (extra or {}).get(key)
         if isinstance(value, str) and 0 < len(value) <= 128:
             fields[f"sc_{key}_hash"] = hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+    return fields
+
+
+def exception_log_fields(exc, *, frames=EXCEPTION_SITE_MAX_FRAMES):
+    """Identify an unexpected failure by class and application code location only.
+
+    The exception message, arguments and local values are never read: they can carry
+    request content. ``error_site`` lists the innermost application frames first as
+    ``file.py:function:line``, which is enough to find the failing statement.
+    """
+    site = []
+    traceback = getattr(exc, "__traceback__", None)
+    while traceback is not None:
+        code = traceback.tb_frame.f_code
+        path = os.path.abspath(code.co_filename)
+        if path.startswith(_APPLICATION_ROOT + os.sep):
+            site.append(f"{os.path.basename(path)}:{code.co_name}:{traceback.tb_lineno}")
+        traceback = traceback.tb_next
+    fields = {"error_type": type(exc).__name__}
+    if site:
+        fields["error_site"] = " < ".join(reversed(site[-max(1, int(frames)):]))
     return fields
 
 
@@ -398,6 +425,10 @@ def _build_logger_extra(
                         logger_extra[normalized_key] = value
                 elif diagnostic_key == "applicationversion":
                     if _is_application_version(value):
+                        logger_extra[normalized_key] = value
+                elif diagnostic_key == "exceptiontype":
+                    # A class name identifies code, not content; anything else stays a length.
+                    if EXCEPTION_TYPE_NAME_RE.fullmatch(value):
                         logger_extra[normalized_key] = value
                 elif _is_safe_log_text_key(key):
                     logger_extra[normalized_key] = (

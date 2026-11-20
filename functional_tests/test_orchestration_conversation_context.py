@@ -243,14 +243,25 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual(result['token_usage']['total_tokens'], 50)
         self.assertEqual(call.call_args.kwargs['temperature'], 0)
 
-    def test_first_turn_and_acknowledgment_do_not_call_a_model(self):
+    def test_first_turn_calls_no_model_and_wording_never_skips_the_resolver(self):
         planner = self.modules.planner
         with patch.object(planner, 'resolve_planner_client') as client:
             first = planner.resolve_conversation_request('A new question', {'messages': []})
-            acknowledgment = planner.resolve_conversation_request('Thanks!', self.snapshot)
         client.assert_not_called()
         self.assertEqual(first['resolved_message'], 'A new question')
+        self.assertIsNone(first['requires_retrieval'])
+        # With history, a short acknowledgment is the resolver model's to classify.
+        reply = json.dumps({
+            'relationship': 'new_topic', 'resolved_message': 'Thanks!', 'message_ids': [],
+            'requires_retrieval': False, 'clarification': '',
+        })
+        with patch.object(planner, 'resolve_planner_client', return_value=(object(), 'planner')) as client, \
+                patch.object(planner, '_call_planner', return_value=(reply, None)) as call:
+            acknowledgment = planner.resolve_conversation_request('Thanks!', self.snapshot)
+        client.assert_called_once()
+        call.assert_called_once()
         self.assertEqual(acknowledgment['message_ids'], [])
+        self.assertIs(acknowledgment['requires_retrieval'], False)
 
     def test_empty_history_answers_go_to_planning_without_resolving_again(self):
         planner = self.modules.planner
@@ -288,14 +299,21 @@ class ResolutionTests(unittest.TestCase):
                 else:
                     self.assertEqual(context['user_request'], request)
 
-    def test_empty_history_does_not_bypass_missing_source_or_truncation(self):
+    def test_empty_history_is_resolved_only_when_truncated_or_memory_is_saved(self):
         planner = self.modules.planner
         answers = [{'action': 'accept', 'answer': {'tone': 'concise'}}]
-        for request, truncated in (
-            ('Rewrite the text above.', False),
-            ('Prepare a delivery note.', True),
+        with patch.object(planner, 'resolve_planner_client') as client:
+            direct = planner.resolve_conversation_request(
+                'Rewrite the text above.', {'messages': [], 'truncated': False}, answered_questions=answers,
+            )
+        client.assert_not_called()
+        self.assertEqual(direct['resolved_message'], 'Rewrite the text above.')
+        remembered = {'status': 'available', 'context_messages': [{'role': 'system', 'content': 'Saved.'}]}
+        for request, truncated, memory in (
+            ('Prepare a delivery note.', True, None),
+            ('Prepare a delivery note.', False, remembered),
         ):
-            with self.subTest(request=request, truncated=truncated):
+            with self.subTest(request=request, truncated=truncated, memory=bool(memory)):
                 question = {
                     'relationship': 'clarification', 'resolved_message': request,
                     'message_ids': [], 'requires_retrieval': False,
@@ -307,7 +325,7 @@ class ResolutionTests(unittest.TestCase):
                         )) as call:
                     result = planner.resolve_conversation_request(
                         request, {'messages': [], 'truncated': truncated},
-                        answered_questions=answers,
+                        answered_questions=answers, memory_context=memory,
                     )
                 self.assertEqual(call.call_count, 1)
                 self.assertEqual(result['relationship'], 'clarification')
