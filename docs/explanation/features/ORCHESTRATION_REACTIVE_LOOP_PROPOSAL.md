@@ -140,3 +140,39 @@ Recommendation: build the loop in the existing engine and borrow the Magentic le
 1. Decided 18 November 2026: a change inside the approved scope continues without sign-off; scope growth, external actions and anything needing confirmation wait for the user.
 2. Round, stall and retry limits, and whether administrators can set them.
 3. Whether Phase 1 ships before the Phase 0 suite exists.
+
+## 5. Open items
+
+A running list. An item is added when a rerun or a review finds it, and marked closed with
+the version that closed it once a rerun confirms the fix. "Fixed" without a confirming rerun
+stays open.
+
+Last updated: 20 November 2026, at 0.261.476 (not yet deployed).
+
+0.261.476 was written and reviewed as 0.261.474. Development used 0.261.474 and 0.261.475 for
+other work before it merged, so it was renumbered.
+
+### 5.1 Open
+
+| # | Item | Found | State |
+|---|---|---|---|
+| 1 | Document analysis finishes partial on every run seen, with full coverage and the same number of limitations. A partial analysis has no `records` output and its consumers refuse it, so this is behind the compose refusals (the largest group of partial runs) and `result_output_missing`. | 0.261.472 and 0.261.473 reruns | Cause unknown. 0.261.476 logs the validator's reason codes: `[ORCHESTRATION_ANALYSIS] A document analysis finished partial.` |
+| 2 | One tabular scenario does not converge: told three times that an aggregate met a non-numeric value, the author does not correct it, on two attempts. | 0.261.473 rerun | Not investigated |
+| 3 | Follow-up prompts are refused the tabular source at planning (`source_unavailable`, `document_authorization_required`). | 0.261.472 and 0.261.473 reruns | Not investigated |
+| 4 | A join whose matches contradict its declared cardinality is not returned to the calculation's author. | 0.261.468 rerun | Held back on purpose (the easy correction inflates totals). Revisit if it keeps costing runs. |
+| 5 | An effective-date column must hold `YYYY-MM-DD`; a date written another way is not read as a date. | 0.261.476 review | Known limit. The finding is returned to the author from 0.261.476. |
+| 6 | A waiting run could not be resumed for a caller holding an app role (`recovery_changed`). | 0.261.468 rerun | Fixed in 0.261.476; the cause is inferred. Open until a rerun shows a waiting run resume. |
+| 7 | `context_unavailable` after waiting. | 0.261.472 rerun (2 runs); not seen on 0.261.473 | Unexplained |
+| 8 | The model call itself failed in a calculation (`model_failed`). | 0.261.468 rerun (4 runs) | Unexplained |
+| 9 | Three more calculation faults returned to the author (shared column names, datasets that are not the planned documents, a non-date effective value). | 0.261.472 and 0.261.473 reruns | Changed in 0.261.476. Open until a rerun shows them returned and corrected. |
+| 10 | Eleven functional test files have failures that predate this work, and three more stall or fail the same way on earlier commits (`test_action_credentials_chat_reconstruction.py`, `test_tabular_row_orchestration_scale.py`, `test_orchestration_research_selection.py`). | 0.261.470 to 0.261.476 test runs | Not investigated |
+| 11 | Release notes for 0.261.468 to 0.261.476. | | Deferred |
+| 12 | A full run of all 30 scenarios. | | Due after items 1 to 3 have fixes |
+
+### 5.2 Closed
+
+| Item | Closed in | Confirmed by |
+|---|---|---|
+| The server could not start a next attempt for a run that recalled saved memory (`execution_binding_changed`). | 0.261.468 | 0.261.468 rerun: 10 next attempts prepared, 1 refused |
+| A calculation that failed on the data was not told why, and formatted numbers were not numbers. | 0.261.470, 0.261.471 | 0.261.472 and 0.261.473 reruns: findings returned 10 times each, second attempts completing |
+| New diagnostic fields reached the log as lengths only. | 0.261.473 | 0.261.473 rerun: binding parts, correction categories and output lists readable |
