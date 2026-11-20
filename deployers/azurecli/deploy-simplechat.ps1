@@ -2188,7 +2188,11 @@ else { Write-Host "Azure App Service App Settings configured." }
 
 $additionalAppSettings = @(
     "SIMPLECHAT_RUN_BACKGROUND_TASKS=1",
-    "VIDEO_INDEXER_ARM_API_VERSION=$param_VideoIndexerArmApiVersion"
+    "VIDEO_INDEXER_ARM_API_VERSION=$param_VideoIndexerArmApiVersion",
+    # Lets the app find its Cosmos account in Azure Resource Manager to create missing containers.
+    "AZURE_SUBSCRIPTION_ID=$($script:CurrentSubscriptionId)",
+    "AZURE_RESOURCE_GROUP=$resourceGroupName",
+    "AZURE_COSMOS_ACCOUNT_NAME=$cosmosDbName"
 )
 
 # Support log export reads telemetry through this resource; the app also finds it from the connection string.
