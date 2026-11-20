@@ -38,6 +38,11 @@ import pandas
 from blob_container_readiness import APPLICATION_BLOB_CONTAINERS
 from functions_latest_features_nav import is_development_env_enabled
 from functions_appinsights import log_event
+from functions_cosmos_container_provisioning import (
+    CosmosContainerProvisioningError,
+    create_cosmos_container_via_arm,
+    is_data_plane_container_create_forbidden,
+)
 from functions_azure_endpoint_validation import validate_configured_chat_blob_endpoint
 from csp_media_sources import build_media_src_directive, parse_csp_media_origins
 
@@ -103,7 +108,7 @@ EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 CHAT_STREAM_EXECUTOR_MAX_WORKERS = max(8, int(os.getenv('SIMPLECHAT_CHAT_STREAM_WORKERS', '32') or '32'))
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.473"
+VERSION = "0.261.474"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -658,7 +663,11 @@ _cosmos_create_container_if_not_exists = cosmos_database.create_container_if_not
 
 
 def _create_container_if_not_exists_with_conflict_recovery(*args, **kwargs):
-    """Return the existing container when concurrent startup creates it first."""
+    """Return the existing container when concurrent startup creates it first.
+
+    Under managed identity Cosmos refuses data-plane container creation (403), so
+    a missing container is created through ARM instead.
+    """
     try:
         return _cosmos_create_container_if_not_exists(*args, **kwargs)
     except exceptions.CosmosResourceExistsError:
@@ -670,6 +679,36 @@ def _create_container_if_not_exists_with_conflict_recovery(*args, **kwargs):
             raise
 
         container = cosmos_database.get_container_client(container_id)
+        container.read()
+        return container
+    except exceptions.CosmosHttpResponseError as exc:
+        if (
+            cosmos_authentication_type != "managed_identity"
+            or not is_data_plane_container_create_forbidden(exc)
+        ):
+            raise
+
+        container_options = dict(zip(("id", "partition_key"), args))
+        container_options.update(kwargs)
+        try:
+            create_cosmos_container_via_arm(
+                container_options,
+                database_name=cosmos_database_name,
+                resource_manager_endpoint=resource_manager,
+                authority=authority,
+            )
+        except CosmosContainerProvisioningError as provisioning_error:
+            log_event(
+                "[CosmosContainers] Could not create a missing Cosmos container under managed identity.",
+                extra={
+                    "container_name": container_options.get("id"),
+                    "error": str(provisioning_error),
+                },
+                level=logging.ERROR,
+            )
+            raise provisioning_error from exc
+
+        container = cosmos_database.get_container_client(container_options["id"])
         container.read()
         return container
 
