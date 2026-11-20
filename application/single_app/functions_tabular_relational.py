@@ -26,6 +26,7 @@ from functions_tabular_transformations import (
     get_tabular_transformation_model_fields,
     get_tabular_transformation_source_references,
     normalize_tabular_transformation_spec,
+    read_formatted_number,
 )
 
 
@@ -58,6 +59,9 @@ RELATIONAL_EXPRESSION_GRAMMAR = (
     "in{op,value,values,case_sensitive?}; eq|ne|lt|lte|gt|gte{op,left,right,value_type?,case_sensitive?}; "
     "add|subtract|multiply|divide{op,values} or {op,left,right}. Operands nest with the same grammar. "
     "Arithmetic on an empty or boolean operand fails, so guard it with coalesce or case with is_null. "
+    "A numeric operand is a number or text that writes one: a currency symbol, commas between groups "
+    "of three digits, a minus sign or parentheses for a negative, and a trailing percent sign (divided "
+    "by 100) are read. Comparing text that writes a number with a number needs value_type number. "
     "A division whose exact quotient does not terminate must be the direct value of a round expression. "
     "A numeric output must be exactly representable as a JSON number; otherwise round it or declare "
     "type string."
@@ -512,7 +516,12 @@ def _decimal(value, *, role, position, scale=None):
         text = str(value).strip()
         if not text or len(text) > 256:
             return None
-        number = Decimal(text)
+        try:
+            number = Decimal(text)
+        except InvalidOperation:
+            number = read_formatted_number(text)
+            if number is None:
+                raise
         if not number.is_finite() or abs(number) > Decimal("1e18"):
             raise InvalidOperation
         if scale is not None:

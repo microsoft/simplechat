@@ -51,6 +51,7 @@ import zipfile
 from xml.etree import ElementTree
 
 from functions_ooxml_package_guard import UnreadablePackageError, first_unsafe_xml_part
+from functions_tabular_transformations import TABULAR_VALUE_KINDS, tabular_value_kind
 from functions_temp_files import scratch_file_dir
 
 TABULAR_MERGE_REPORT_VERSION = "tabular-merge-report-v1"
@@ -919,6 +920,8 @@ def prepare_tabular_source_context(
         if not requested.issubset(set(columns)):
             raise TabularMergeError("column_not_found", "A requested calculation context column is unavailable.")
         values = {column: {} for column in context_columns}
+        # Counts only, for every column: their size does not grow with the number of rows.
+        value_kinds = {column: dict.fromkeys(TABULAR_VALUE_KINDS, 0) for column in columns}
         profile_names = [profile["name"] for profile in key_profiles]
         if len(profile_names) != len(set(profile_names)):
             raise TabularMergeError(
@@ -937,6 +940,8 @@ def prepare_tabular_source_context(
         for row_number, row in rows:
             _check_cancel(cancel_requested)
             row_count += 1
+            for column, kinds in value_kinds.items():
+                kinds[tabular_value_kind(row[column])] += 1
             for column in context_columns:
                 cell = row[column]
                 key = json.dumps(cell, ensure_ascii=False, sort_keys=True, allow_nan=False)
@@ -1018,6 +1023,12 @@ def prepare_tabular_source_context(
                 for column in context_columns
             ],
             "key_profiles": profiles,
+            # What each column's cells hold, as the calculation reads them. numeric_text is
+            # text that writes a number; text is a cell no numeric operation can read.
+            "column_values": [
+                {"column": column, **{kind: count for kind, count in kinds.items() if count}}
+                for column, kinds in value_kinds.items()
+            ],
         }
         if len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 96 * 1024:
             raise TabularMergeError(

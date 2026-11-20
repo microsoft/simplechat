@@ -977,9 +977,49 @@ def _prepared_state(store, step_id, binding, fingerprint):
         raise
 
 
-def _safe_program_correction(error):
+def _evaluation_correction(error):
+    """A well-formed program that could not evaluate a row of the real data.
+
+    The finding is the evaluator's own: which step and operand, the kind of value it expected
+    and the kind it found. It carries no cell value. The author already holds its program and
+    the kinds each column holds, so this is enough to revise the step. A join whose matches
+    contradict its declared cardinality is not returned this way: see _safe_program_correction.
+    """
+    from functions_tabular_relational import safe_native_detail
+
+    detail = safe_native_detail(getattr(error, "detail", None))
+    correction = {
+        "category": error.code, "check": detail.get("check") or "step_evaluation",
+        "step_index": detail.get("step_index", 0), "origin": "evaluation",
+    }
+    location = {key: value for key, value in detail.items() if key not in ("check", "step_index")}
+    if location:
+        correction["location"] = location
+    return correction
+
+
+def _saved_correction_admissible(correction):
+    """Whether a correction read back from saved state is one this code would have saved."""
     from functions_tabular_relational import TabularRelationalError
 
+    if correction.get("origin") == "evaluation":
+        return (
+            isinstance(correction.get("category"), str)
+            and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", correction["category"]) is not None
+        )
+    return _safe_program_correction(TabularRelationalError(
+        correction["category"], detail={
+            key: correction[key] for key in ("check", "step_index") if key in correction
+        },
+    )) is not None
+
+
+def _safe_program_correction(error):
+    from functions_tabular_relational import TabularRelationalError
+    from functions_tabular_transformations import TabularTransformationEvaluationError
+
+    if isinstance(error, TabularTransformationEvaluationError):
+        return _evaluation_correction(error)
     if not isinstance(error, TabularRelationalError):
         return None
     category = error.code
@@ -1096,6 +1136,7 @@ def _execute_prepared_relational(
         TabularRelationalError, calculate_relational_sources, check_relational_columns,
         normalize_relational_spec, relational_spec_schema, with_operation_version,
     )
+    from functions_tabular_transformations import TabularTransformationEvaluationError
 
     invoke = getattr(context, "invoke_prompt", None)
     store = getattr(context, "completeness_store", None)
@@ -1284,12 +1325,7 @@ def _execute_prepared_relational(
                 )
             correction = deepcopy(state["last_failure"])
             correction["program"] = deepcopy(state["program"])
-            if _safe_program_correction(TabularRelationalError(
-                correction["category"], detail={
-                    key: correction[key] for key in ("check", "step_index")
-                    if key in correction
-                },
-            )) is None:
+            if not _saved_correction_admissible(correction):
                 raise TabularRelationalError(
                     correction["category"], detail={
                         key: correction[key] for key in ("check", "step_index")
@@ -1464,10 +1500,25 @@ def _execute_prepared_relational(
                 calculated = calculate_relational_sources(
                     program, datasets, limits=limits, cancel_requested=cancel_requested,
                 )
-            except TabularRelationalError as exc:
+            except (TabularRelationalError, TabularTransformationEvaluationError) as exc:
                 correction = _safe_program_correction(exc)
                 if correction is not None:
                     correction["program"] = deepcopy(program)
+                    log_event(
+                        "[ORCHESTRATION_NATIVE] Calculation program returned to its author.",
+                        extra={
+                            **workflow_log_context(
+                                run_id=getattr(context, "run_id", None),
+                                conversation_id=getattr(context, "conversation_id", None),
+                                step_id=step["step_id"],
+                            ),
+                            "stage": "tabular_program_lowering",
+                            "correction_category": correction["category"],
+                            "correction_origin": correction.get("origin") or "validation",
+                            "calls_used": state["calls_used"],
+                            "calls_limit": LOWERING_MAX_CALLS,
+                        },
+                    )
                 failed = deepcopy(state)
                 if correction is None:
                     failed.pop("program", None)

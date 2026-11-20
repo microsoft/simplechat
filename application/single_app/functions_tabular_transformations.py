@@ -20,6 +20,7 @@ from fractions import Fraction
 from graphlib import CycleError, TopologicalSorter
 import math
 import re
+import unicodedata
 
 
 TABULAR_TRANSFORMATION_SPEC_VERSION = "tabular-transform-v1"
@@ -83,6 +84,85 @@ _PRECISE_DECIMAL_CONTEXT = Context(
     traps=[InvalidOperation, DivisionByZero, Overflow, Underflow, Inexact],
 )
 _DECIMAL_TEXT_PATTERN = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+
+
+_GROUPED_DIGITS_PATTERN = re.compile(r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]*)?|\.[0-9]+")
+TABULAR_VALUE_KINDS = ("number", "numeric_text", "blank", "boolean", "date_text", "text", "other")
+
+
+def read_formatted_number(text):
+    """The number a piece of text writes with presentation marks, or None when it writes none.
+
+    A formatted number is still a number. Accepted, each at most once: one currency symbol
+    before or after the digits, commas between complete groups of three digits, a negative
+    written as a leading minus, a trailing minus or surrounding parentheses, and a trailing
+    percent sign, which divides by one hundred as a percent-formatted cell does. The decimal
+    mark is a point. Anything else is not read as a number: "1.250,00", "1,25", "USD 5" and
+    "about 5" stay text, because each has more than one reading or none.
+    """
+    if not isinstance(text, str):
+        return None
+    body = text.strip()
+    if not body or len(body) > TABULAR_TRANSFORMATION_MAX_NUMERIC_TEXT_LENGTH:
+        return None
+    negative = currency = percent = False
+    if body[0] == "(" and body[-1] == ")":
+        negative, body = True, body[1:-1].strip()
+    if body.endswith("%"):
+        percent, body = True, body[:-1].rstrip()
+    if body.endswith("-"):
+        if negative:
+            return None
+        negative, body = True, body[:-1].rstrip()
+    signed = False
+    while body:
+        if body[0] in "+-" and not signed:
+            if body[0] == "-":
+                if negative:
+                    return None
+                negative = True
+            signed, body = True, body[1:].lstrip()
+        elif unicodedata.category(body[0]) == "Sc" and not currency:
+            currency, body = True, body[1:].lstrip()
+        else:
+            break
+    if body and unicodedata.category(body[-1]) == "Sc":
+        if currency:
+            return None
+        currency, body = True, body[:-1].rstrip()
+    if (currency and percent) or not _GROUPED_DIGITS_PATTERN.fullmatch(body):
+        return None
+    try:
+        number = Decimal(body.replace(",", ""))
+    except InvalidOperation:
+        return None
+    if percent:
+        number = number.scaleb(-2)
+    return -number if negative else number
+
+
+def tabular_value_kind(value):
+    """What one cell holds, by the same reading the calculation applies to it."""
+    if value is None:
+        return "blank"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float, Decimal)):
+        return "number" if not isinstance(value, float) or math.isfinite(value) else "other"
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return "blank"
+        if len(text) <= TABULAR_TRANSFORMATION_MAX_NUMERIC_TEXT_LENGTH and (
+            _DECIMAL_TEXT_PATTERN.fullmatch(text) or read_formatted_number(text) is not None
+        ):
+            return "numeric_text"
+        try:
+            date.fromisoformat(text[:10])
+        except ValueError:
+            return "text"
+        return "date_text"
+    return "date_text" if isinstance(value, (date, datetime)) else "other"
 
 
 class TabularTransformationSpecError(ValueError):
@@ -670,11 +750,15 @@ def _parse_decimal_value(value, precise=False):
             if len(value) > TABULAR_TRANSFORMATION_MAX_NUMERIC_TEXT_LENGTH:
                 raise TabularTransformationEvaluationError("Numeric value exceeds the bounded text length")
             if not _DECIMAL_TEXT_PATTERN.fullmatch(value.strip()):
-                raise TabularTransformationEvaluationError("Numeric value is invalid")
+                value = read_formatted_number(value)
+                if value is None:
+                    raise TabularTransformationEvaluationError("Numeric value is invalid")
     try:
         parsed_value = value if isinstance(value, Decimal) else Decimal(str(value).strip())
     except (InvalidOperation, ValueError) as exc:
-        raise TabularTransformationEvaluationError("Numeric value is invalid") from exc
+        parsed_value = read_formatted_number(value)
+        if parsed_value is None:
+            raise TabularTransformationEvaluationError("Numeric value is invalid") from exc
     if not parsed_value.is_finite():
         raise TabularTransformationEvaluationError("Numeric value is not finite")
     if parsed_value.copy_abs() > TABULAR_TRANSFORMATION_MAX_NUMERIC_ABS:
