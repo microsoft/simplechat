@@ -8,6 +8,7 @@ No source is reconstructed from a preview, report paragraph, or document name.
 from copy import deepcopy
 
 from functions_analysis_access import analysis_source_snapshot
+from functions_appinsights import log_event, workflow_log_context
 from functions_document_analysis_results import (
     ANALYSIS_RESPONSE_SHAPE_CODES, SOURCE_OBSERVATIONS, analysis_result_semantics,
 )
@@ -79,6 +80,44 @@ def _native_completeness(reader):
     if status == "partial":
         limitations.append("Only accepted native findings are retained; unresolved or unfinished work is not complete.")
     return status, coverage, tuple(checks), tuple(limitations)
+
+
+def _log_partial_analysis(producer, manifest, count, public_records):
+    """Why a finished analysis is partial, as the validator's own codes and counts.
+
+    A partial analysis has no ``records`` output and its consumers refuse it unless a recovery
+    accepts it, so this is the first cause of several different failures downstream.
+    """
+    validation = manifest.get("validation") or {}
+    coverage = validation.get("coverage") or {}
+    issues = [issue for issue in validation.get("issues") or [] if isinstance(issue, dict)]
+    codes = sorted({issue["code"] for issue in issues if isinstance(issue.get("code"), str)})
+    not_passed = sorted({
+        check["name"] for check in validation.get("checks") or []
+        if isinstance(check, dict) and isinstance(check.get("name"), str) and check.get("status") != "passed"
+    })
+    log_event("[ORCHESTRATION_ANALYSIS] A document analysis finished partial.", extra={
+        **workflow_log_context(
+            run_id=producer.run_id, conversation_id=producer.conversation_id, step_id=producer.step_id,
+        ),
+        "stage": "analysis_result", "capability_id": producer.capability_id,
+        "validation_status": validation.get("status"),
+        "execution_status": (manifest.get("execution") or {}).get("status"),
+        "presentation_status": validation.get("presentation_status"),
+        "coverage_status": coverage.get("status"),
+        "validation_issue_codes": ",".join(codes[:32]),
+        "validation_checks_not_passed": ",".join(not_passed[:32]),
+        "validation_issue_count": len(issues),
+        "limitation_count": len(validation.get("limitations") or []),
+        "record_count": count,
+        "public_records_available": public_records,
+        **{
+            name: coverage.get(name) for name in (
+                "assigned_work_units", "completed_work_units", "failed_work_units", "pending_work_units",
+                "assigned_sources", "completed_sources",
+            ) if type(coverage.get(name)) is int
+        },
+    })
 
 
 def _completeness(status, count, coverage, checks, limitations, *, expected=None):
@@ -164,6 +203,8 @@ def persist_saved_analysis_result(
     columns = () if semantics and semantics["mode"] == SOURCE_OBSERVATIONS else _public_columns(reader)
     projection = SavedAnalysisRecordSource(reader, columns=columns) if status == "complete" and columns else None
     findings = projection.iter_units() if projection is not None else _finding_units(reader)
+    if status != "complete":
+        _log_partial_analysis(producer, manifest, count, projection is not None)
     outputs = [
         NamedOutput("findings", "records-v1", findings,
                     _completeness(status, count, coverage, checks, limitations), FINDING_COLUMNS),

@@ -1014,6 +1014,38 @@ def _saved_correction_admissible(correction):
     )) is not None
 
 
+# Faults in how the program is written or in which column it reads, each for one named check.
+# Two tables sharing a column name, datasets that are not the planned documents in their
+# planned order, and an effective-date column whose cell is not a date are corrected by
+# changing the program. A join whose matches contradict its declared cardinality, an
+# overlapping interval and an invalid allocation or cumulative value are not listed: the easy
+# correction there is to weaken the calculation, which then passes every check.
+_RETURNED_PROGRAM_CHECKS = {
+    "relational_columns_ambiguous": frozenset({"join_columns_ambiguous", "allocate_columns_ambiguous"}),
+    "relational_selection_invalid": frozenset({"document_ids_mismatch"}),
+    "relational_date_invalid": frozenset({"effective_value"}),
+}
+
+
+def _log_program_returned(context, step, correction, state):
+    log_event(
+        "[ORCHESTRATION_NATIVE] Calculation program returned to its author.",
+        extra={
+            **workflow_log_context(
+                run_id=getattr(context, "run_id", None),
+                conversation_id=getattr(context, "conversation_id", None),
+                step_id=step["step_id"],
+            ),
+            "stage": "tabular_program_lowering",
+            "correction_category": correction["category"],
+            "correction_check": correction.get("check"),
+            "correction_origin": correction.get("origin") or "validation",
+            "calls_used": state["calls_used"],
+            "calls_limit": LOWERING_MAX_CALLS,
+        },
+    )
+
+
 def _safe_program_correction(error):
     from functions_tabular_relational import TabularRelationalError
     from functions_tabular_transformations import TabularTransformationEvaluationError
@@ -1023,12 +1055,16 @@ def _safe_program_correction(error):
     if not isinstance(error, TabularRelationalError):
         return None
     category = error.code
-    if category not in {
+    detail = error.detail or {}
+    if category in _RETURNED_PROGRAM_CHECKS:
+        # Returned only for the named check: the same code also covers faults that stay refused.
+        if detail.get("check") not in _RETURNED_PROGRAM_CHECKS[category]:
+            return None
+    elif category not in {
         "relational_column_missing", "relational_spec_invalid",
         "relational_expression_invalid", "relational_source_unused",
     }:
         return None
-    detail = error.detail or {}
     if (
         detail.get("check") in {"json_parse", "json_object"}
         or category == "relational_column_missing"
@@ -1469,6 +1505,8 @@ def _execute_prepared_relational(
                         continue
                     candidate = program if isinstance(locals().get("program"), dict) else None
                     correction = _safe_program_correction(exc) if candidate is not None else None
+                    if correction is not None:
+                        _log_program_returned(context, step, correction, state)
                     failed = deepcopy(state)
                     if correction is None:
                         failed.pop("program", None)
@@ -1504,21 +1542,7 @@ def _execute_prepared_relational(
                 correction = _safe_program_correction(exc)
                 if correction is not None:
                     correction["program"] = deepcopy(program)
-                    log_event(
-                        "[ORCHESTRATION_NATIVE] Calculation program returned to its author.",
-                        extra={
-                            **workflow_log_context(
-                                run_id=getattr(context, "run_id", None),
-                                conversation_id=getattr(context, "conversation_id", None),
-                                step_id=step["step_id"],
-                            ),
-                            "stage": "tabular_program_lowering",
-                            "correction_category": correction["category"],
-                            "correction_origin": correction.get("origin") or "validation",
-                            "calls_used": state["calls_used"],
-                            "calls_limit": LOWERING_MAX_CALLS,
-                        },
-                    )
+                    _log_program_returned(context, step, correction, state)
                 failed = deepcopy(state)
                 if correction is None:
                     failed.pop("program", None)

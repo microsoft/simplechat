@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.476)**
+### **(v0.261.477)**
 
 #### Bug Fixes
 
@@ -19,6 +19,15 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The message shown when a background export or analysis starts now reads as an application status ("The app started a background job to generate the complete JSON for all 826 rows") instead of the assistant agreeing to do it.
     *   The background export card has an **Answer in chat instead** button that cancels the run and answers the same request in chat. Classic interface only.
     *   (Ref: `route_backend_chats.py`, `chat-messages.js`, `ui_tests/test_chat_background_generated_export_status.py`)
+
+### **(v0.261.476)**
+
+#### User Interface Enhancements
+
+*   **Press and Hold a Message for Its Actions on Touch Screens**
+    *   In the V2 chat, a message's actions only appear when the pointer hovers over it, which never happens on a phone or tablet. Pressing and holding a message or generated image for about half a second now opens those actions in a bottom sheet: labelled buttons for Copy, Retry, Read aloud, feedback, sources, Fork and the rest, with the overflow menu's entries listed beneath.
+    *   The sheet uses the same actions and handlers as the hover row, which is unchanged on desktop. Mouse input, scrolling, links, buttons and code blocks behave as before. Tap outside, press Escape, or swipe the sheet down to close it.
+    *   (Ref: `useLongPress.ts`, `MessageActionSheet.tsx`, `MessageActions.tsx`, `MessageList.tsx`, `test_v2_chat_message_touch_sheet.py`, `V2_CHAT_MESSAGE_TOUCH_SHEET.md`)
 
 ### **(v0.261.475)**
 

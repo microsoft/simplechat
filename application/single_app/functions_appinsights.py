@@ -163,11 +163,13 @@ LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     # Whether a run's binding was saved or found changed, what a calculation's author was
     # told, and a step's status when its outputs did not match the plan.
     "bindingoutcome", "correctioncategory", "correctionorigin", "taskstatus",
+    # The named check behind a returned calculation, and why a document analysis is partial.
+    "correctioncheck", "validationstatus", "executionstatus", "presentationstatus", "coveragestatus",
 })
 # Comma-separated output names from a capability contract; any other text is dropped.
 LOGGER_WORKFLOW_CODE_LIST_KEYS = frozenset({
     "declaredoutputs", "producedoutputs", "outputsnotproduced", "outputsofanotherkind",
-    "outputsnotallowed",
+    "outputsnotallowed", "validationissuecodes", "validationchecksnotpassed",
 })
 LOGGER_WORKFLOW_CODE_LIST_RE = re.compile(r"(?:[a-z][a-z0-9_]{0,79}(?:,[a-z][a-z0-9_]{0,79}){0,31})?")
 # One short hash per part of a run's execution binding (binding_part_*, binding_input_*).
