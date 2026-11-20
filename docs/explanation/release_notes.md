@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.473)**
+
+#### Bug Fixes
+
+*   **Faster Chat Streaming with Batched Replay Persistence**
+    *   Removed per-token replay writes that could make short answers appear in slow motion. Live content continues streaming immediately while replay content is combined into 250 ms batches.
+    *   Combines replay and metadata writes in a Redis transaction, throttles cancellation reads, and flushes pending content before control and terminal events while preserving Stop, reconnect, and Cosmos fallback behavior.
+    *   (Ref: `route_backend_chats.py`, `app_settings_cache.py`, `test_stream_replay_batching.py`, `STREAM_REPLAY_BATCHING_FIX.md`, [microsoft/simplechat#1964](https://github.com/microsoft/simplechat/issues/1964); related `config.py` version update: `0.261.473`)
+
 ### **(v0.261.454)**
 
 #### Bug Fixes

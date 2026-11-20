@@ -1,9 +1,10 @@
 # test_chat_content_streaming.py
 """
 Functional regressions for content-check streaming and processing-note visibility.
-Version: 0.261.341
+Version: 0.261.473
 Implemented in: 0.261.127
 Semantic outcome and cancellation diagnostics implemented in: 0.261.341
+Combined replay cache compatibility implemented in: 0.261.473
 
 Execute the shipped stream session/bridge classes against an isolated cache.
 Cold-import probes use real modules with network access blocked.
@@ -51,6 +52,11 @@ class Cache:
 
     def append_stream_session_event(self, key, event, **kwargs):
         self.events.setdefault(key, []).append(event)
+
+    def append_stream_session_event_and_meta(self, key, event, metadata, **kwargs):
+        self.append_stream_session_event(key, event, **kwargs)
+        self.set_stream_session_meta(key, metadata, **kwargs)
+        return True
 
     def get_stream_session_events(self, key, start_index=0):
         return list(self.events.get(key, [])[start_index:])
