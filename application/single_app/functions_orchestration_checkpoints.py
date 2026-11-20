@@ -141,6 +141,32 @@ def _execution_settings_fingerprint(settings):
     return fingerprint(configuration_settings(settings) if isinstance(settings, dict) else settings)
 
 
+def _memory_fingerprint(memory):
+    """What saved memory said, not when it was read.
+
+    A recall citation records the time of the read, and each recalled fact a similarity scored
+    against a query embedding generated for that read. Neither is memory content, and both
+    differ between two reads of unchanged memory, so with them in the fingerprint no run that
+    had recalled anything could be resumed or retried. Memory with no citations fingerprints
+    exactly as before.
+    """
+    if not isinstance(memory, dict) or not memory.get('citations'):
+        return fingerprint(memory or {})
+    citations = []
+    for citation in memory['citations']:
+        if isinstance(citation, dict):
+            citation = {key: value for key, value in citation.items() if key != 'timestamp'}
+            result = citation.get('function_result')
+            if isinstance(result, dict) and isinstance(result.get('facts'), list):
+                citation['function_result'] = {**result, 'facts': [
+                    {key: value for key, value in fact.items() if key != 'similarity'}
+                    if isinstance(fact, dict) else fact
+                    for fact in result['facts']
+                ]}
+        citations.append(citation)
+    return fingerprint({**memory, 'citations': citations})
+
+
 def _manifest_address(step_id, *, waiting=False, input_only=False):
     if waiting and input_only:
         raise CheckpointError('checkpoint_invalid')
@@ -211,7 +237,7 @@ def context_binding(context, plan, settings):
         'plan': effective_plan(plan),
         'inputs': inputs,
         'model': {key: model.get(key) for key in ('model_id', 'endpoint_id', 'provider', 'model_deployment')},
-        'memory_digest': fingerprint(getattr(context, 'memory_context', {}) or {}),
+        'memory_digest': _memory_fingerprint(getattr(context, 'memory_context', None)),
         'agent_catalog_digest': fingerprint(getattr(context, 'agent_catalog', []) or []),
         'action_catalog_digest': fingerprint(getattr(context, 'action_catalog', []) or []),
         'settings_digest': _execution_settings_fingerprint(settings),
@@ -355,7 +381,7 @@ def step_input_fingerprint(step, context, binding, *, settings=None):
         'inputs': references,
         'request': {key: getattr(context, key, None) for key in INPUT_FIELDS},
         'model': {key: model.get(key) for key in ('model_id', 'endpoint_id', 'provider', 'model_deployment')},
-        'memory_digest': fingerprint(getattr(context, 'memory_context', {}) or {}),
+        'memory_digest': _memory_fingerprint(getattr(context, 'memory_context', None)),
         'settings_digest': _execution_settings_fingerprint(settings or {}),
         'capability': {key: capability_binding.get(key) for key in (
             'id', 'plan_contract_version', 'result_contract_version', 'role', 'adapter', 'inputs',

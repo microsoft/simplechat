@@ -2,7 +2,7 @@
 # test_orchestration_server_continuation.py
 """
 Functional test for the server-side next attempt after a failed orchestration run.
-Version: 0.261.467
+Version: 0.261.468
 Implemented in: 0.261.462
 
 This test ensures that a failed attempt is followed by its next one on the server, after the
@@ -108,6 +108,49 @@ def test_the_server_starts_nothing_when_the_setting_is_off(real_http_harness):
     time.sleep(1.5)
     assert len(_wait_for_attempts(harness, 1)) == len(attempts) == 1
     assert len(harness.model_calls) == 6
+
+
+def test_reading_unchanged_memory_again_does_not_change_the_binding(modules, monkeypatch):
+    """A next attempt reads saved memory again; only a change in the memory may refuse it."""
+    import types
+
+    import functions_fact_memory_context as fact_memory
+    from functions_orchestration_checkpoints import context_binding, fingerprint
+
+    def read_memory(value, similarity, moment):
+        # The real citation builders, so the fields a real read varies are the ones tested.
+        class Clock:
+            @staticmethod
+            def utcnow():
+                return moment
+
+        monkeypatch.setattr(fact_memory, "datetime", Clock)
+        fact = {"id": "fact-1", "value": value, "memory_type": "fact", "updated_at": "2026-11-01T00:00:00"}
+        return {
+            "audience": {"kind": "personal"}, "status": "available", "scope_type": "user",
+            "scope": {"type": "user", "id": "user-1"}, "notices": [],
+            "context_messages": [{"role": "system", "content": f"- {value}"}],
+            "instruction_messages": [{"role": "system", "content": "Answer briefly."}],
+            "citations": [
+                fact_memory.build_instruction_memory_citation([{**fact, "memory_type": "instruction"}]),
+                fact_memory.build_fact_memory_citation("vendor terms", [{**fact, "similarity": similarity}], "embedding"),
+            ],
+        }
+
+    from datetime import datetime as real_datetime
+
+    plan = {"steps": [], "final_response": None}
+    binding = lambda memory: context_binding(types.SimpleNamespace(memory_context=memory), plan, {})
+    first = read_memory("Net 30 terms.", 0.812345, real_datetime(2026, 11, 20, 0, 23, 53))
+    again = read_memory("Net 30 terms.", 0.812344, real_datetime(2026, 11, 20, 0, 25, 14))
+    assert first["citations"] != again["citations"], "the two reads must differ as real reads do"
+    assert binding(first) == binding(again)
+    changed = read_memory("Net 45 terms.", 0.812345, real_datetime(2026, 11, 20, 0, 23, 53))
+    assert binding(first) != binding(changed)
+    # Runs saved before this change keep their binding when memory recalled nothing.
+    empty = {"audience": {"kind": "personal"}, "status": "empty", "citations": [], "context_messages": []}
+    from functions_orchestration_checkpoints import _memory_fingerprint
+    assert _memory_fingerprint(empty) == fingerprint(empty) and _memory_fingerprint(None) == fingerprint({})
 
 
 def test_a_refused_next_attempt_logs_which_check_refused_it(modules):
