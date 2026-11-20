@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { api, apiUrl, CREDENTIALS_MODE } from '../../lib/apiClient';
 import { saveBlob } from '../../lib/endpoints';
 import {
-    SUPPORT_EXPORT_ROOT, SUPPORT_SOURCE_LABELS, SUPPORT_SOURCES, buildSupportRequest,
-    supportDefaults, supportExportPath, supportJobActive,
-    type SupportConfiguration, type SupportConversation, type SupportForm, type SupportJob,
+    SUPPORT_CLOUD_LABELS, SUPPORT_EXPORT_ROOT, SUPPORT_SOURCE_LABELS, SUPPORT_SOURCES, buildSupportRequest,
+    describeSupportOrigin, supportDefaults, supportExportPath, supportJobActive, supportOverridesToSave,
+    type SupportConfiguration, type SupportConversation, type SupportOverrides, type SupportForm, type SupportJob,
     type SupportPage, type SupportPerson, type SupportReadiness, type SupportRequest, type SupportReview,
 } from '../../lib/supportExports';
 import { v2ApiFetch } from '../../lib/v2SourcePolicy';
@@ -14,10 +14,11 @@ import { Notice, StatusBadge } from '../approvals/ApprovalParts';
 import { GlassButton } from '../ui/primitives';
 import { inputClass } from './fields';
 
-const configFields = [
-    ['app_resource_id', 'Application Insights resource ID'],
-    ['site_resource_id', 'App Service resource ID (optional console source)'],
+const sourceFields = [
+    ['app_resource_id', 'Application Insights', 'Application Insights resource ID'],
+    ['site_resource_id', 'App Service', 'App Service resource ID'],
 ] as const;
+const emptyOverrides: SupportOverrides = { cloud: '', app_resource_id: '', site_resource_id: '' };
 
 function message(error: unknown): string {
     return error instanceof Error ? error.message : 'The support export operation failed.';
@@ -25,7 +26,7 @@ function message(error: unknown): string {
 
 export function SupportExportPanel() {
     const [readiness, setReadiness] = useState<SupportReadiness | null>(null);
-    const [configuration, setConfiguration] = useState<SupportConfiguration | null>(null);
+    const [overrides, setOverrides] = useState<SupportOverrides>(emptyOverrides);
     const [form, setForm] = useState<SupportForm>(() => supportDefaults());
     const [people, setPeople] = useState<SupportPerson[]>([]);
     const [peopleNext, setPeopleNext] = useState<string | null>(null);
@@ -67,7 +68,7 @@ export function SupportExportPanel() {
             api.get<SupportReadiness>(`${SUPPORT_EXPORT_ROOT}/readiness`, controller.signal),
             api.get<SupportPage<SupportJob>>(SUPPORT_EXPORT_ROOT, controller.signal),
         ]).then(([ready, page]) => {
-            setReadiness(ready); setConfiguration(ready.configuration); setJobs(page.items); setJobsNext(page.next);
+            setReadiness(ready); setOverrides(ready.setup?.overrides ?? emptyOverrides); setJobs(page.items); setJobsNext(page.next);
             const latest = [...page.items].sort((a, b) => b.created_at.localeCompare(a.created_at));
             setJob(latest.find((item) => supportJobActive(item.status)) ?? latest[0] ?? null);
         }).catch((failure) => { if (!controller.signal.aborted) setError(message(failure)); });
@@ -127,7 +128,7 @@ export function SupportExportPanel() {
     };
     const refreshReadiness = async () => {
         const ready = await api.get<SupportReadiness>(`${SUPPORT_EXPORT_ROOT}/readiness`);
-        setReadiness(ready); setConfiguration(ready.configuration); setReview(null);
+        setReadiness(ready); setOverrides(ready.setup?.overrides ?? emptyOverrides); setReview(null);
     };
 
     return (
@@ -137,25 +138,52 @@ export function SupportExportPanel() {
                 These actions run separately from Save settings.
             </p>
             {error ? <Notice tone="danger">{error}</Notice> : null}
-            <details className="rounded-xl border border-edge p-3">
+            <details className="rounded-xl border border-edge p-3" open={readiness ? !readiness.configuration.app_resource_id : false}>
                 <summary className="cursor-pointer text-sm font-medium text-text-1">Source and storage setup</summary>
-                {configuration ? <div className="mt-4 space-y-3">
-                    <label className="block text-sm">Azure cloud
-                        <select aria-label="Support export Azure cloud" className={`${inputClass} mt-1 w-full`} value={configuration.cloud}
-                            disabled={busy} onChange={(event) => setConfiguration({ ...configuration, cloud: event.target.value as SupportConfiguration['cloud'] })}>
-                            <option value="public">Azure Commercial</option><option value="usgovernment">Azure US Government</option>
-                        </select>
-                    </label>
-                    {configFields.map(([key, label]) => <label key={key} className="block text-sm">{label}
-                        <input className={`${inputClass} mt-1 w-full`} aria-label={label} value={configuration[key]} disabled={busy}
-                            onChange={(event) => setConfiguration({ ...configuration, [key]: event.target.value })} />
-                    </label>)}
-                    <p className="text-sm text-text-2">Queries use Azure Monitor resource context. Give the application identity read access to these resources; the connected workspace must allow resource permissions. The ingestion connection string does not grant query access.</p>
-                    <p className="text-sm text-text-2">{readiness?.storage.message}</p>
+                {readiness ? <div className="mt-4 space-y-3">
+                    <p className="text-sm text-text-2">
+                        SimpleChat finds these sources from the deployment it is running in. Nothing needs to be entered unless a
+                        source is missing or you need to query a different resource.
+                    </p>
+                    <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-[10rem_minmax(0,1fr)]" data-testid="support-export-resolved">
+                        <dt className="font-medium text-text-1">Azure cloud</dt>
+                        <dd className="min-w-0">
+                            <span className="text-text-1">{SUPPORT_CLOUD_LABELS[readiness.configuration.cloud]}</span>
+                            <span className="block text-text-2">{describeSupportOrigin('cloud', readiness.setup)}</span>
+                        </dd>
+                        {sourceFields.map(([key, title]) => <div key={key} className="contents">
+                            <dt className="font-medium text-text-1">{title}</dt>
+                            <dd className="min-w-0">
+                                <span className="break-all text-text-1">{readiness.configuration[key] || 'Not available'}</span>
+                                <span className="block text-text-2">{describeSupportOrigin(key, readiness.setup)}</span>
+                            </dd>
+                        </div>)}
+                    </dl>
+                    <p className="text-sm text-text-2">Queries use Azure Monitor resource context. Give the application identity read access to these resources (for example Monitoring Reader); the connected workspace must allow resource permissions.</p>
+                    <details className="rounded-lg border border-edge p-3">
+                        <summary className="cursor-pointer text-sm text-text-1">Override detected values</summary>
+                        <div className="mt-3 space-y-3">
+                            {!readiness.setup?.detected.cloud ? <label className="block text-sm">Azure cloud
+                                <select aria-label="Support export Azure cloud" className={`${inputClass} mt-1 w-full`}
+                                    value={overrides.cloud || readiness.configuration.cloud} disabled={busy}
+                                    onChange={(event) => setOverrides({ ...overrides, cloud: event.target.value as SupportConfiguration['cloud'] })}>
+                                    <option value="public">Azure Commercial</option><option value="usgovernment">Azure US Government</option>
+                                </select>
+                            </label> : null}
+                            {sourceFields.map(([key, , label]) => <label key={key} className="block text-sm">{label}
+                                <input className={`${inputClass} mt-1 w-full`} aria-label={label} value={overrides[key]} disabled={busy}
+                                    placeholder={readiness.setup?.detected[key] || ''}
+                                    onChange={(event) => setOverrides({ ...overrides, [key]: event.target.value })} />
+                            </label>)}
+                            <p className="text-sm text-text-2">Leave a field blank to use the detected value.</p>
+                            <GlassButton type="button" variant="subtle" disabled={busy} onClick={() => void run(async () => {
+                                await api.post(`${SUPPORT_EXPORT_ROOT}/configuration`, supportOverridesToSave(overrides, readiness.setup));
+                                await refreshReadiness();
+                            })}>Save overrides</GlassButton>
+                        </div>
+                    </details>
+                    <p className="text-sm text-text-2">{readiness.storage.message}</p>
                     <div className="flex flex-wrap gap-2">
-                        <GlassButton type="button" variant="subtle" disabled={busy} onClick={() => void run(async () => {
-                            await api.post(`${SUPPORT_EXPORT_ROOT}/configuration`, configuration); await refreshReadiness();
-                        })}>Save export configuration</GlassButton>
                         <GlassButton type="button" variant="subtle" disabled={busy} onClick={() => void run(async () => {
                             const ready = await api.post<SupportReadiness>(`${SUPPORT_EXPORT_ROOT}/initialize-storage`, { confirmed: true }); setReadiness(ready);
                         })}>Initialize private export storage</GlassButton>

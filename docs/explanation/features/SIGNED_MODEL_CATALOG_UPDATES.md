@@ -2,7 +2,7 @@
 layout: page
 title: "Signed model catalog updates"
 description: "Publish reviewed model metadata through an approval-gated signing workflow and install compatible revisions independently of application deployment."
-version: "0.261.431"
+version: "0.261.474"
 ---
 
 # Signed model catalog updates
@@ -42,6 +42,12 @@ Do not distribute a private key or put a development key in the production map.
    string under a stable key ID in
    `application/single_app/static/json/model_catalog_trusted_keys.json`.
    Review and ship this trust-anchor change in the initial application upgrade.
+   Since **0.261.474**, one command does the export, size check and write while
+   signed in to Azure with read access to the key:
+   `python scripts/publish_model_catalog.py trust-key --channel production --key-id <CATALOG_KEY_ID> --vault-key-url <CATALOG_VAULT_KEY_URL>`.
+   The URL must include the key version. Use `--channel development` for step 7.
+   Until a release carries this key, every deployment shows that catalog updates
+   are unavailable in this release; customers have nothing to install themselves.
 3. Configure a publisher Azure identity for the GitHub workflow using OIDC.
    Read the repository's actual subject customization with
    `gh api repos/microsoft/simplechat/actions/oidc/customization/sub`; use the
@@ -82,6 +88,42 @@ Do not distribute a private key or put a development key in the production map.
 The publisher's Key Vault belongs to the publisher, not each customer deployment.
 GitHub environment approval controls use of the signing identity; source review
 controls which catalog changes can reach the publisher workflow.
+
+### Signing without Key Vault access (0.261.474)
+
+Some publishers cannot use the steps above: policy keeps every vault's public network
+access disabled and no private network or self-hosted runner is available, so neither a
+local machine nor a GitHub-hosted runner can reach the vault's data plane. Those
+publishers keep the private key as a secret of the protected GitHub environment instead.
+
+1. On a trusted workstation, from the repository root, generate the key pair. The
+   private key file must be outside the repository; the command refuses otherwise and
+   never overwrites an existing file:
+   `python scripts/publish_model_catalog.py generate-key --channel production --key-id <KEY_ID> --private-key-out <PATH_OUTSIDE_REPO>`.
+   The public key is written into `model_catalog_trusted_keys.json`.
+2. Load the private key into the **model-catalog-publishing** environment secret
+   `CATALOG_SIGNING_KEY`, for example
+   `gh secret set CATALOG_SIGNING_KEY --env model-catalog-publishing --repo microsoft/simplechat < <PATH_OUTSIDE_REPO>`.
+   Set the environment variable `CATALOG_KEY_ID` to the same key ID. Do not set
+   `CATALOG_VAULT_KEY_URL`; the workflow refuses an environment that configures both.
+   The `CATALOG_AZURE_*` variables are not needed and Azure login is skipped.
+3. Delete the local private key file. If you keep an offline backup, store it encrypted
+   somewhere other than the repository or a shared drive.
+4. Commit the trust map and ship it in a release (steps 4, 6, 8 and 9 above still apply).
+5. Repeat with `--channel development`, a different key ID, and the
+   **model-catalog-development** environment.
+
+The signing job refuses a secret that is not an unencrypted RSA key of at least 3,072 bits,
+a key ID missing from the bundled trust map, and a secret whose public half differs from
+the trusted key. Error messages never include the secret. The secret is passed only to the
+signing step, and required reviewers on the environment still gate every use.
+
+Trade-off: unlike a Key Vault key, this private key existed on a workstation and can be
+exported by anyone who can change the protected environment's secrets. Treat a suspected
+leak as a compromised key (see **Verification, recovery, and trust limits**). Losing the
+secret is a rotation: generate a new key under a new key ID, keep the old public key in the
+trust map, and ship it in a release. Deployments on older releases then see
+**Upgrade SimpleChat to get catalog updates** until they upgrade.
 
 ## Everyday publishing workflow
 

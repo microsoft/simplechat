@@ -2,7 +2,7 @@
 # test_orchestration_server_continuation.py
 """
 Functional test for the server-side next attempt after a failed orchestration run.
-Version: 0.261.474
+Version: 0.261.476
 Implemented in: 0.261.462
 
 This test ensures that a failed attempt is followed by its next one on the server, after the

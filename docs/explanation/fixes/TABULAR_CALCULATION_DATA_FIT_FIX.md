@@ -1,6 +1,6 @@
 # A calculation that did not fit the data failed without being told why
 
-Fixed in version: **0.261.470**, extended in **0.261.471** and **0.261.474**
+Fixed in version: **0.261.470**, extended in **0.261.471** and **0.261.476**
 
 ## Issue
 
@@ -113,7 +113,7 @@ numeric operand is and that comparing text that writes a number with a number ne
 `value_type` number. No instruction was added to any prompt; the correction wording is
 unchanged.
 
-### Three more faults return to the author (0.261.474)
+### Three more faults return to the author (0.261.476)
 
 The 0.261.473 rerun showed the loop working: a finding was returned 10 times, and the
 categories were readable for the first time (non-numeric value in an aggregate 5, comparison
@@ -172,7 +172,7 @@ nothing. The line also carries `correction_check`.
 - `test_orchestration_research_selection.py` has 23 failures that are the same on the commit
   before this change.
 
-- 0.261.474: the guard test asserts each newly returned check, and that every other check
+- 0.261.476: the guard test asserts each newly returned check, and that every other check
   under the same codes is still refused.
 
 ## Not verified
@@ -181,7 +181,7 @@ nothing. The line also carries `correction_check`.
   non-numeric value, the author did not correct it, on two attempts. What the finding lacks
   for that case is not yet known.
 - An effective-date column must hold `YYYY-MM-DD`. A date written another way is still not
-  read as a date; 0.261.474 only returns that finding to the author.
+  read as a date; 0.261.476 only returns that finding to the author.
 
 - **Not run against a live model or the deployed application.** Whether the model, given the
   value kinds and the finding, writes a program that fits is the thing the next rerun shows.

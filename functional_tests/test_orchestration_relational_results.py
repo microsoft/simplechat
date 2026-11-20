@@ -1,7 +1,7 @@
 # test_orchestration_relational_results.py
 """
 Functional tests for authorized, retained multi-file calculation results.
-Version: 0.261.474
+Version: 0.261.476
 Implemented in: 0.261.437; 0.261.446
 Evaluation findings returned to the authoring model added in: 0.261.470
 Source-header failure classification added in: 0.261.439
@@ -625,7 +625,7 @@ def test_program_correction_never_repairs_genuine_interval_or_numeric_faults():
         "relational_numeric_invalid",
         detail={"check": "cumulative_value", "step_index": 2},
     )) is None
-    # From 0.261.474: three faults in how the program is written or which column it reads are
+    # From 0.261.476: three faults in how the program is written or which column it reads are
     # returned, each for one named check. The same codes for any other check stay refused.
     for category, check in (
         ("relational_columns_ambiguous", "join_columns_ambiguous"),

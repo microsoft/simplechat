@@ -1,6 +1,6 @@
 # A run that waited could not be resumed for a caller holding an app role
 
-Fixed in version: **0.261.474**
+Fixed in version: **0.261.476**
 
 ## Issue
 
@@ -38,7 +38,7 @@ and keeps the roles.
 **This is read from the code and the changed part named in the log, not observed directly.**
 The log does not say which catalog entry differed. The catalog's only input that differs
 between the request and the worker is the role claims, and the only entries that depend on
-them are role-gated. 0.261.474 logs the counts that confirm or contradict this (below).
+them are role-gated. 0.261.476 logs the counts that confirm or contradict this (below).
 
 ## Change
 

@@ -14,11 +14,17 @@ from datetime import timedelta
 from functions_appinsights import diagnostic_log_context
 from support_export_contracts import (
     ACTIVE_STATES, EXPIRY_SECONDS, PUBLIC_LIMITS, RUNNING_STATES, SCHEMA_VERSION, SOURCES,
-    SupportExportError, check_size, digest, fail, identifier, iso, normalize_configuration,
-    normalize_request, resolve_intervals, timestamp, utc_now,
+    SupportExportError, check_size, digest, effective_configuration, fail, identifier, iso,
+    normalize_overrides, normalize_request, resolve_intervals, timestamp, utc_now,
 )
 from support_export_privacy import BundleRedactor, encoded_json, map_text, scrub_credentials
 from support_export_store import LEASE_SECONDS
+
+
+MISSING_SOURCE_MESSAGES = {
+    "telemetry": "Application Insights could not be identified automatically. Set APPLICATIONINSIGHTS_RESOURCE_ID on the App Service, or enter the resource ID under Source and storage setup.",
+    "console": "Not detected: the application does not appear to be running on Azure App Service. Enter the App Service resource ID under Source and storage setup to include console logs.",
+}
 
 
 WARNINGS = [
@@ -86,8 +92,9 @@ def _check_integrity(job):
 
 
 class SupportExportService:
-    def __init__(self, store, sources, *, version, model_info, inspect_ai, notify, audit, storage_binding="", close_resources=None):
+    def __init__(self, store, sources, *, version, model_info, inspect_ai, notify, audit, storage_binding="", close_resources=None, detected=None):
         self.store = store
+        self.detected = detected or {}
         self.sources = sources
         self.version = version
         self.model_info = model_info
@@ -102,11 +109,32 @@ class SupportExportService:
         if self.close_resources is not None:
             self.close_resources()
 
+    def overrides(self):
+        """Values an admin saved; blank fields defer to what the application detected."""
+        return normalize_overrides(self.store.configuration() or {})
+
     def configuration(self):
-        stored = self.store.configuration()
-        return normalize_configuration(stored or {
-            "cloud": "public", "app_resource_id": "", "site_resource_id": "",
-        })
+        return effective_configuration(self.overrides(), self.detected)
+
+    def setup(self):
+        """Explain each resolved value: detected from the running app, overridden, or missing."""
+        overrides = self.overrides()
+        effective = effective_configuration(overrides, self.detected)
+        detected_origins = self.detected.get("origins") or {}
+        origins = {}
+        for key in ("cloud", "app_resource_id", "site_resource_id"):
+            if key == "cloud":
+                origin = "detected" if self.detected.get("cloud") else ("override" if overrides["cloud"] else "default")
+            elif overrides[key]:
+                origin = "override"
+            else:
+                origin = "detected" if effective[key] else "missing"
+            origins[key] = {"origin": origin, "detected_from": detected_origins.get(key, "") if origin == "detected" else ""}
+        return {
+            "overrides": overrides,
+            "detected": {key: self.detected.get(key, "") for key in ("cloud", "app_resource_id", "site_resource_id")},
+            "origins": origins,
+        }
 
     def readiness(self):
         configuration = self.configuration()
@@ -118,8 +146,8 @@ class SupportExportService:
             ready = bool(configuration[resource])
             availability[key] = {
                 "available": ready, "access": "not_tested",
-                "message": "Configured; read permissions are checked during collection." if ready
-                else "Configure this application's resource ID.",
+                "message": "Ready; read permissions are checked during collection." if ready
+                else MISSING_SOURCE_MESSAGES[key],
             }
         storage = {"available": False, "message": "Initialize the private support-export container."}
         try:
@@ -132,7 +160,7 @@ class SupportExportService:
             storage["message"] = "Application Blob storage could not be verified. Check its configuration and data-plane permissions."
         model = self.model_info()
         return {
-            "configuration": configuration, "sources": availability, "storage": storage,
+            "configuration": configuration, "setup": self.setup(), "sources": availability, "storage": storage,
             "model": {key: model.get(key) for key in ("available", "label", "provider", "message")},
             "limits": PUBLIC_LIMITS, "warnings": WARNINGS,
         }
@@ -140,7 +168,7 @@ class SupportExportService:
     def initialize_storage(self, actor, roles):
         require_admin(actor, roles)
         self.store.require_private_storage(create=True)
-        self.store.set_configuration(self.configuration())
+        self.store.set_configuration(self.overrides())
         self.audit("storage_initialized", actor=actor)
         return self.readiness()
 
@@ -158,16 +186,16 @@ class SupportExportService:
                 self.audit("source_check_failed", actor=actor, source=source, error_type=type(exc).__name__)
                 result["sources"][source].update(
                     available=False, access="failed",
-                    message="Read access could not be verified. Check the resource IDs, cloud, collected tables, and resource-context Azure Monitor read permissions.",
+                    message="Read access could not be verified. Give the application identity a reader role (for example Monitoring Reader) on this resource and make sure the connected workspace allows resource permissions.",
                 )
         return result
 
     def configure(self, actor, roles, value):
         require_admin(actor, roles)
-        normalized = normalize_configuration(value)
+        normalized = normalize_overrides(value)
         self.store.set_configuration(normalized)
         self.audit("configuration_saved", actor=actor)
-        return {"configuration": normalized}
+        return {"configuration": effective_configuration(normalized, self.detected), "overrides": normalized}
 
     def _own_job(self, actor, roles, job_id, *, allow_expired=False):
         require_admin(actor, roles)
@@ -241,7 +269,7 @@ class SupportExportService:
             if source in ("telemetry", "console") and not (
                 configuration["site_resource_id" if source == "console" else "app_resource_id"]
             ):
-                fail("source_unavailable", "A selected Azure source is not configured. Configure it or explicitly deselect it.", 503)
+                fail("source_unavailable", "A selected Azure source could not be identified for this deployment. Deselect it, or enter its resource ID under Source and storage setup.", 503)
         model = self.model_info() if plan["privacy"] == "ai" else {"available": False}
         if plan["privacy"] == "ai" and not model.get("available"):
             fail("model_unavailable", "The default text model cannot perform privacy inspection. Configure AI Connections or use deterministic-only checking.", 503)

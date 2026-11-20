@@ -87,13 +87,21 @@ jobs:
         with:
           name: catalog-candidate
           path: candidate
+      # The environment signs with exactly one of: a Key Vault key (CATALOG_VAULT_KEY_URL
+      # plus the CATALOG_AZURE_* identity) or the CATALOG_SIGNING_KEY environment secret.
       - name: Require publishing configuration
         env:
           KEY_ID: ${{ vars.CATALOG_KEY_ID }}
           KEY_URL: ${{ vars.CATALOG_VAULT_KEY_URL }}
+          HAS_SIGNING_SECRET: ${{ secrets.CATALOG_SIGNING_KEY != '' }}
         run: |
-          test -n "$KEY_ID" && test -n "$KEY_URL"
+          test -n "$KEY_ID"
+          if [ -n "$KEY_URL" ] && [ "$HAS_SIGNING_SECRET" = "true" ]; then
+            echo "Configure CATALOG_VAULT_KEY_URL or CATALOG_SIGNING_KEY, not both." >&2; exit 1
+          fi
+          test -n "$KEY_URL" || test "$HAS_SIGNING_SECRET" = "true"
       - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        if: vars.CATALOG_VAULT_KEY_URL != ''
         with:
           client-id: ${{ vars.CATALOG_AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.CATALOG_AZURE_TENANT_ID }}
@@ -106,6 +114,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CATALOG_KEY_ID: ${{ vars.CATALOG_KEY_ID }}
           CATALOG_VAULT_KEY_URL: ${{ vars.CATALOG_VAULT_KEY_URL }}
+          CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}
           CATALOG_APP_VERSION: ${{ needs.prepare.outputs.app_version }}
           CHANNEL: ${{ needs.prepare.outputs.channel }}
         run: |
