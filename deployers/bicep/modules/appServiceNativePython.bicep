@@ -144,6 +144,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
 
         { name: 'APPINSIGHTS_INSTRUMENTATIONKEY', value: appInsights.properties.InstrumentationKey }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
+        { name: 'APPLICATIONINSIGHTS_RESOURCE_ID', value: appInsights.id }
         { name: 'APPINSIGHTS_PROFILERFEATURE_VERSION', value: '1.0.0' }
         { name: 'APPINSIGHTS_SNAPSHOTFEATURE_VERSION', value: '1.0.0' }
         { name: 'APPLICATIONINSIGHTS_CONFIGURATION_CONTENT', value: '' }

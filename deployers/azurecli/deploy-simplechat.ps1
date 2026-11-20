@@ -2191,6 +2191,12 @@ $additionalAppSettings = @(
     "VIDEO_INDEXER_ARM_API_VERSION=$param_VideoIndexerArmApiVersion"
 )
 
+# Support log export reads telemetry through this resource; the app also finds it from the connection string.
+$appInsightsResourceIdSetting = az monitor app-insights component show --app $appInsightsName --resource-group $resourceGroupName --query id -o tsv 2>$null
+if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($appInsightsResourceIdSetting)) {
+    $additionalAppSettings += "APPLICATIONINSIGHTS_RESOURCE_ID=$($appInsightsResourceIdSetting.Trim())"
+}
+
 if ($param_AppService_Environment -eq 'custom') {
     $additionalAppSettings += @(
         "CUSTOM_GRAPH_URL_VALUE=$param_CustomGraphUrl",

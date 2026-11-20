@@ -78,24 +78,55 @@ def identity_hash(value):
     return hashlib.sha256(identifier(value).encode("utf-8")).hexdigest()
 
 
-def normalize_configuration(value):
+CLOUDS = ("public", "usgovernment")
+_RESOURCE_PREFIX = r"/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9_.()-]+/providers/"
+_RESOURCE_PATTERNS = (
+    ("app_resource_id", r"Microsoft\.Insights/components/[A-Za-z0-9_.()-]+"),
+    ("site_resource_id", r"Microsoft\.Web/sites/[A-Za-z0-9_.()-]+(?:/slots/[A-Za-z0-9_.()-]+)?"),
+)
+
+
+def _normalize_sources(value, clouds):
     allowed = {"cloud", "app_resource_id", "site_resource_id"}
     if not isinstance(value, dict) or set(value) - allowed:
         fail("invalid_configuration", "Unsupported support-export configuration.")
     result = {key: value.get(key, "") for key in allowed}
-    if result["cloud"] not in ("public", "usgovernment"):
-        fail("invalid_cloud", "Choose Azure Commercial or Azure US Government.")
     if any(not isinstance(item, str) or len(item) > 512 for item in result.values()):
         fail("invalid_configuration", "Invalid support-export configuration.")
-    prefix = r"/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9_.()-]+/providers/"
-    for key, resource in (
-        ("app_resource_id", r"Microsoft\.Insights/components/"),
-        ("site_resource_id", r"Microsoft\.Web/sites/"),
-    ):
+    if result["cloud"] not in clouds:
+        fail("invalid_cloud", "Choose Azure Commercial or Azure US Government.")
+    for key, pattern in _RESOURCE_PATTERNS:
         result[key] = result[key].strip()
-        if result[key] and not re.fullmatch(prefix + resource + r"[A-Za-z0-9_.()-]+", result[key], re.I):
+        if result[key] and not re.fullmatch(_RESOURCE_PREFIX + pattern, result[key], re.I):
             fail("invalid_resource", "Use a complete Application Insights or App Service resource ID.")
     return result
+
+
+def normalize_configuration(value):
+    """The effective configuration a job queries with: a concrete cloud and resource IDs."""
+    return _normalize_sources(value, CLOUDS)
+
+
+def normalize_overrides(value):
+    """Admin-saved overrides; blank values mean "use what the application detected"."""
+    return _normalize_sources(value, CLOUDS + ("",))
+
+
+def effective_configuration(overrides, detected):
+    """Combine admin overrides with detected values.
+
+    A resource ID the admin saved wins over a detected one. The cloud comes from
+    AZURE_ENVIRONMENT whenever that names a supported cloud, because querying another
+    cloud than the one the app runs in can never succeed; the saved cloud only applies
+    when the environment cannot say (for example AZURE_ENVIRONMENT=custom).
+    """
+    overrides = normalize_overrides(overrides or {})
+    detected = detected or {}
+    return normalize_configuration({
+        "cloud": detected.get("cloud") or overrides["cloud"] or "public",
+        "app_resource_id": overrides["app_resource_id"] or detected.get("app_resource_id") or "",
+        "site_resource_id": overrides["site_resource_id"] or detected.get("site_resource_id") or "",
+    })
 
 
 def normalize_request(value, now=None):
