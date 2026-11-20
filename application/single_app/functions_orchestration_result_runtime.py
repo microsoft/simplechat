@@ -1,13 +1,14 @@
 # functions_orchestration_result_runtime.py
 """Typed runtime handoffs; no clients, model calls, publication, or new storage.
 
-Version: 0.261.424
+Version: 0.261.472
 """
 
 from copy import deepcopy
 from dataclasses import replace
 import hashlib
 import json
+import logging
 import re
 
 from content_screening.contracts import DocumentHeldError, ScreeningError
@@ -865,6 +866,26 @@ def validate_task_outputs(step, context, task, *, reused=False):
         if any(actual.get(name) != kind for name, kind in declared.items()) or any(
             allowed.get(name) != kind for name, kind in actual.items()
         ):
+            # Which named output is at fault. Output names and kinds are fixed by the capability
+            # contract, never by content, so they are safe to record.
+            log_event('[ORCHESTRATION_EXECUTOR] Step outputs do not match the plan.', extra={
+                **workflow_log_context(
+                    run_id=getattr(context, 'run_id', None),
+                    conversation_id=getattr(context, 'conversation_id', None),
+                    step_id=step.get('step_id'),
+                ),
+                'stage': 'task_output_validation', 'capability_id': step.get('capability_id'),
+                'task_status': task.status, 'reused': bool(reused),
+                'declared_outputs': ','.join(sorted(declared)),
+                'produced_outputs': ','.join(sorted(actual)),
+                'outputs_not_produced': ','.join(sorted(name for name in declared if name not in actual)),
+                'outputs_of_another_kind': ','.join(sorted(
+                    name for name, kind in declared.items() if name in actual and actual[name] != kind
+                )),
+                'outputs_not_allowed': ','.join(sorted(
+                    name for name, kind in actual.items() if allowed.get(name) != kind
+                )),
+            }, level=logging.WARNING)
             raise ResultContractError('result_output_missing')
         for reference in task.outputs:
             service.open_result(
