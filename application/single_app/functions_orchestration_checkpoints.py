@@ -258,10 +258,10 @@ def context_binding_parts(context, plan, settings):
     """
     payload = _context_binding_payload(context, plan, settings)
     parts = {
-        f'part_{name}': value for name, value in payload.items()
+        f'binding_part_{name}': value for name, value in payload.items()
         if name not in ('inputs', 'plan_contract_version')
     }
-    parts.update({f'input_{name}': value for name, value in payload['inputs'].items()})
+    parts.update({f'binding_input_{name}': value for name, value in payload['inputs'].items()})
     return {
         name: (value if name.endswith('_digest') else fingerprint(value))[:12]
         for name, value in parts.items()
