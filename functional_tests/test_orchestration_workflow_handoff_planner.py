@@ -531,16 +531,17 @@ def test_the_missing_answer_steer_is_only_for_a_plan_that_hands_work_off(plan_wi
     handed_off = plan_with(settings, context, [handoff, PLAIN_PLAN])
     handed_off_repair = _repair(handed_off)
     answered = plan_with(settings, context, [answer, PLAIN_PLAN])
-    answered_repair = _repair(answered)
 
     _same(_codes(handed_off), [("deliverables_invalid", "missing_final_response")], "the hand-off plan's errors")
     _require(handed_off_repair.endswith(STEER), f"A hand-off plan must be steered: {handed_off_repair!r}")
-    _same(_codes(answered), [("deliverables_invalid", "missing_final_response")], "the answer plan's errors")
-    _require(STEER.strip() not in answered_repair, "A plan without a hand-off must not be steered.")
+    # One compose step with one unread text output: the server selects it as the answer, so a
+    # plan without a hand-off is no longer sent back for it.
+    _same(len(answered["calls"]), 1, "the planner calls for a plan whose answer the server selects")
+    _same(_codes(answered), [], "the answer plan's errors")
     _require(
-        answered_repair.endswith("exact unavailable_reason capability_availability.deliverables gives, instead of "
-                                 "dropping it or promising it."),
-        f"The plain repair message must be unchanged: {answered_repair!r}",
+        plain.endswith("exact unavailable_reason capability_availability.deliverables gives, instead of "
+                       "dropping it or promising it."),
+        f"The plain repair message must be unchanged: {plain!r}",
     )
 
 

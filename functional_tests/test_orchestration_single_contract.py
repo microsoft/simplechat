@@ -297,9 +297,9 @@ def test_the_one_planner_prompt_has_no_legacy_phase_language(modules):
     '"original_message" as the user\'s unchanged words',
     '"request_time_utc"',
     "the ledger records activity, not source\nevidence",
-    "Earlier assistant claims do not establish current facts or opening hours",
+    "Earlier assistant claims do not establish current facts",
     # Self-contained work and brevity.
-    'fragments such as "open on\nWednesdays"',
+    "include the subject and every relevant constraint rather than a fragment",
     "a one-step compose plan is a good\nplan when the question is simple",
     # Visual planning.
     "Plan the gathering each\nvisual needs",

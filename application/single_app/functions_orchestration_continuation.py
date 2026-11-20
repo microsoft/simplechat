@@ -43,6 +43,7 @@ from functions_orchestration_recovery import (
     RecoveryError,
     _completed_checkpoint,
     _execution_steps,
+    log_binding_parts,
     _replace,
     _validate_payload_sources,
     claim_waiting_continuation,
@@ -527,7 +528,10 @@ class ContinuationCheckpoints(ExecutionCheckpoints):
         if self.initializing:
             _require_initial_checkpoint_state(self.record)
         elif self.binding != self.record.get("execution_binding"):
-            raise CheckpointError("recovery_changed")
+            log_binding_parts(self.record, context, self.record["plan"], settings, "changed")
+            raise CheckpointError(
+                "recovery_changed", rule="execution_binding_changed", stage="continuation_binding",
+            )
         context.execution_deadline_at = self.record["execution_deadline_at"]
         context.credential_wait_seconds = self.record.get("credential_wait_seconds", 0)
         self.store = checkpoint_store(self.record, lease.read, token=lease.token, claim_id=lease.claim_id)

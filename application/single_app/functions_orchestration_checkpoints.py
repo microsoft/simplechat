@@ -58,6 +58,10 @@ INPUT_FIELDS = (
 )
 
 
+# Must equal functions_orchestration_native_results.LOWERING_MAX_CALLS.
+LOWERING_STATE_MAX_CALLS = 3
+
+
 class CheckpointError(OrchestrationInvocationControlError):
     def __init__(
         self, code='checkpoint_unavailable', *, rule=None, stage=None, producer_capability_id=None,
@@ -137,6 +141,32 @@ def _execution_settings_fingerprint(settings):
     return fingerprint(configuration_settings(settings) if isinstance(settings, dict) else settings)
 
 
+def _memory_fingerprint(memory):
+    """What saved memory said, not when it was read.
+
+    A recall citation records the time of the read, and each recalled fact a similarity scored
+    against a query embedding generated for that read. Neither is memory content, and both
+    differ between two reads of unchanged memory, so with them in the fingerprint no run that
+    had recalled anything could be resumed or retried. Memory with no citations fingerprints
+    exactly as before.
+    """
+    if not isinstance(memory, dict) or not memory.get('citations'):
+        return fingerprint(memory or {})
+    citations = []
+    for citation in memory['citations']:
+        if isinstance(citation, dict):
+            citation = {key: value for key, value in citation.items() if key != 'timestamp'}
+            result = citation.get('function_result')
+            if isinstance(result, dict) and isinstance(result.get('facts'), list):
+                citation['function_result'] = {**result, 'facts': [
+                    {key: value for key, value in fact.items() if key != 'similarity'}
+                    if isinstance(fact, dict) else fact
+                    for fact in result['facts']
+                ]}
+        citations.append(citation)
+    return fingerprint({**memory, 'citations': citations})
+
+
 def _manifest_address(step_id, *, waiting=False, input_only=False):
     if waiting and input_only:
         raise CheckpointError('checkpoint_invalid')
@@ -197,24 +227,45 @@ def context_state(context):
     return state
 
 
-def context_binding(context, plan, settings):
-    """Hash runtime bindings; never persist identity, credentials or memory prompts."""
+def _context_binding_payload(context, plan, settings):
     model = getattr(context, 'model_context', None) or {}
     inputs = {key: getattr(context, key, None) for key in INPUT_FIELDS}
     if getattr(context, 'analysis_result_contexts', None):
         inputs['analysis_result_contexts'] = context.analysis_result_contexts
-    payload = {
+    return {
         'plan': effective_plan(plan),
         'inputs': inputs,
         'model': {key: model.get(key) for key in ('model_id', 'endpoint_id', 'provider', 'model_deployment')},
-        'memory_digest': fingerprint(getattr(context, 'memory_context', {}) or {}),
+        'memory_digest': _memory_fingerprint(getattr(context, 'memory_context', None)),
         'agent_catalog_digest': fingerprint(getattr(context, 'agent_catalog', []) or []),
         'action_catalog_digest': fingerprint(getattr(context, 'action_catalog', []) or []),
         'settings_digest': _execution_settings_fingerprint(settings),
         'plan_contract_version': 2,
         'final_response': plan.get('final_response'),
     }
-    return fingerprint(payload)
+
+
+def context_binding(context, plan, settings):
+    """Hash runtime bindings; never persist identity, credentials or memory prompts."""
+    return fingerprint(_context_binding_payload(context, plan, settings))
+
+
+def context_binding_parts(context, plan, settings):
+    """A short hash of each part of the binding, so a changed binding can name its part.
+
+    The binding is one hash; when it differs nothing says what differed. These are hashes of
+    the same values the binding covers, one per part and one per request input. No content.
+    """
+    payload = _context_binding_payload(context, plan, settings)
+    parts = {
+        f'part_{name}': value for name, value in payload.items()
+        if name not in ('inputs', 'plan_contract_version')
+    }
+    parts.update({f'input_{name}': value for name, value in payload['inputs'].items()})
+    return {
+        name: (value if name.endswith('_digest') else fingerprint(value))[:12]
+        for name, value in parts.items()
+    }
 
 
 def _legacy_tabular_capability_inputs(schema):
@@ -351,7 +402,7 @@ def step_input_fingerprint(step, context, binding, *, settings=None):
         'inputs': references,
         'request': {key: getattr(context, key, None) for key in INPUT_FIELDS},
         'model': {key: model.get(key) for key in ('model_id', 'endpoint_id', 'provider', 'model_deployment')},
-        'memory_digest': fingerprint(getattr(context, 'memory_context', {}) or {}),
+        'memory_digest': _memory_fingerprint(getattr(context, 'memory_context', None)),
         'settings_digest': _execution_settings_fingerprint(settings or {}),
         'capability': {key: capability_binding.get(key) for key in (
             'id', 'plan_contract_version', 'result_contract_version', 'role', 'adapter', 'inputs',
@@ -657,7 +708,7 @@ class CheckpointStore:
             type(step_id) is not str or not step_id
             or type(state) is not dict or type(binding) is not str
             or not isinstance(state.get('calls_used'), int)
-            or not 0 <= state['calls_used'] <= 2
+            or not 0 <= state['calls_used'] <= LOWERING_STATE_MAX_CALLS
             or state.get('version') != 'tabular-program-lowering-v1'
             or state.get('phase') not in {
                 'context_checked', 'call_reserved', 'program_saved',
@@ -706,7 +757,7 @@ class CheckpointStore:
             }
             or type(state.get('calls_used')) is not int
             or isinstance(state.get('calls_used'), bool)
-            or not 0 <= state['calls_used'] <= 2
+            or not 0 <= state['calls_used'] <= LOWERING_STATE_MAX_CALLS
             or set(state) - {
                 'version', 'phase', 'calls_used', 'completion_contract_version',
                 'program', 'program_sha256', 'completion_confirmed', 'last_failure',

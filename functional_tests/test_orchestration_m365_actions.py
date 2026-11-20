@@ -112,6 +112,7 @@ def stub_modules(state):
             debug_print=lambda *args, **kwargs: None, is_debug_enabled=lambda *args, **kwargs: False,
             get_appinsights_logger=lambda: logging.getLogger("test_orchestration_m365"),
             workflow_log_context=lambda **kwargs: {},
+            exception_log_fields=lambda exc, **kwargs: {"error_type": type(exc).__name__},
         ),
         "functions_activity_logging": module("functions_activity_logging"),
         "functions_settings": module(

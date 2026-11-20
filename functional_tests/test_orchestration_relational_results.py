@@ -1,8 +1,9 @@
 # test_orchestration_relational_results.py
 """
 Functional tests for authorized, retained multi-file calculation results.
-Version: 0.261.446
+Version: 0.261.470
 Implemented in: 0.261.437; 0.261.446
+Evaluation findings returned to the authoring model added in: 0.261.470
 Source-header failure classification added in: 0.261.439
 Stable runtime failure codes and locations added in: 0.261.443
 Complete preparation and owner-bound prepared lowering added in: 0.261.446
@@ -225,6 +226,8 @@ def test_relational_arguments_and_legacy_single_source_contracts_are_distinct():
     [
         None, "body", "request", "selector", "saved_unsupported",
         "saved_wrong_sources", "resume_correction",
+        "two_corrections", "correction_exhausted", "authored_version",
+        "evaluation_correction", "evaluation_exhausted",
     ],
 )
 def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(monkeypatch, mutation):
@@ -351,9 +354,34 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
         spec["datasets"][0]["document_id"] = "source-1"
         spec["datasets"][1]["document_id"] = "source-2"
         calls = []
+        prompts = []
+        faulty_replies = {
+            "two_corrections": 2, "correction_exhausted": 3,
+            "evaluation_correction": 1, "evaluation_exhausted": 3,
+        }.get(mutation, 0)
 
-        def invoke(_prompt, *, stage, metadata):
+        def invoke(prompt, *, stage, metadata):
             calls.append((stage, metadata))
+            prompts.append(json.loads(prompt))
+            if len(calls) <= faulty_replies:
+                faulty = deepcopy(spec)
+                if mutation.startswith("evaluation"):
+                    # Well formed, and every column exists: it fails only on the data, where
+                    # the quantity cells are text and the comparison is not typed.
+                    amount = faulty["steps"][1]["transform"]["fields"][0]
+                    amount["expression"] = {
+                        "op": "case", "else": deepcopy(amount["expression"]),
+                        "branches": [{
+                            "when": {"op": "gt", "left": {"source": "sales.quantity"}, "right": {"value": 1}},
+                            "then": deepcopy(amount["expression"]),
+                        }],
+                    }
+                else:
+                    faulty["steps"][0]["on"][0]["right"] = "catalog.missing"
+                return json.dumps(faulty)
+            if mutation == "authored_version":
+                # The author names the other format; the operations decide, with no correction.
+                return json.dumps({**spec, "version": "tabular-relate-v2"})
             return json.dumps(spec)
 
         invoke.enforces_complete_generation = True
@@ -433,7 +461,15 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
                 "header_row"
             ] = 2
         result = execute(runtime)
-        if mutation is not None and mutation != "resume_correction":
+        if mutation in ("correction_exhausted", "evaluation_exhausted"):
+            assert result["status"] == "failed", result
+            assert len(calls) == module.LOWERING_MAX_CALLS == checkpoints.LOWERING_STATE_MAX_CALLS == 3
+            assert len(commits(runtime)) == initial_commits
+            assert "catalog.missing" not in json.dumps(failures, default=str)
+            return
+        if mutation not in (
+            None, "resume_correction", "two_corrections", "authored_version", "evaluation_correction",
+        ):
             assert result["status"] == "failed", result
             assert result["failure"]["native_code"] in {
                 "native_inputs_unsupported", "native_access_unavailable",
@@ -444,15 +480,36 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
         assert result["status"] == "completed", json.dumps(
             {"result": result, "diagnostics": failures}, default=str, indent=2,
         )
-        assert len(calls) == 1
+        assert len(calls) == {"two_corrections": 3, "evaluation_correction": 2}.get(mutation, 1)
+        if mutation == "evaluation_correction":
+            # The evaluator's finding went back to the author with its own program: which step
+            # and operand, what it expected and what it found. No cell value.
+            assert "rejection" not in prompts[0]
+            rejection = prompts[1]["rejection"]["location"]
+            assert rejection["category"] == "comparison" and rejection["step_op"] == "derive"
+            assert rejection["left_category"] == "string" and rejection["right_category"] == "number"
+            assert prompts[1]["rejected_program"]["steps"][1]["transform"]["fields"][0]["expression"]["op"] == "case"
+            assert "comparison_operands_have_incompatible_types" in prompts[1]["instructions"]
+            returned = [item for item in failures if (item or {}).get("correction_origin") == "evaluation"]
+            assert len(returned) == 1 and returned[0]["calls_used"] == 1 and returned[0]["calls_limit"] == 3
         assert calls[0][1]["require_complete_generation"] is True
+        if mutation == "two_corrections":
+            assert "rejection" not in prompts[0]
+            for corrected in prompts[1:]:
+                feedback = corrected["rejection"]["feedback"]
+                assert feedback["missing_columns"] == ["catalog.missing"]
+                assert "catalog.sku" in feedback["available_columns"]
+                assert corrected["rejected_program"]["steps"][0]["on"][0]["right"] == "catalog.missing"
+            assert "catalog.missing" not in json.dumps(failures, default=str)
         state = checkpoint_store.load_lowering_state(
             "compute", binding=binding, input_fingerprint=fingerprint(
                 runtime.step, runtime.context,
             ),
         )
         assert state["phase"] == "retained"
-        assert state["calls_used"] == (2 if mutation == "resume_correction" else 1)
+        assert state["calls_used"] == {
+            "resume_correction": 2, "two_corrections": 3, "evaluation_correction": 2,
+        }.get(mutation, 1)
         assert state["completion_confirmed"] is True
         assert state["program_sha256"] == hashlib.sha256(
             contracts.canonical_bytes(spec)
@@ -540,6 +597,26 @@ def test_saved_lowering_program_requires_supported_completion_and_exact_digest(m
 def test_program_correction_never_repairs_genuine_interval_or_numeric_faults():
     native = importlib.import_module("functions_orchestration_native_results")
     relational = importlib.import_module("functions_tabular_relational")
+    # A join whose matches contradict its declared cardinality is still never returned.
+    assert native._safe_program_correction(relational.TabularRelationalError(
+        "relational_match_ambiguous", detail={"check": "left_reuse", "step_index": 5},
+    )) is None
+    transformations = importlib.import_module("functions_tabular_transformations")
+    stopped = transformations.TabularTransformationEvaluationError("Numeric value is invalid")
+    stopped.detail = {
+        "check": "step_evaluation", "step_index": 4, "step_op": "aggregate", "role": "aggregate_measure",
+        "measure_index": 2, "left_category": "string", "expected_type": "number", "value": "private cell",
+    }
+    returned = native._safe_program_correction(stopped)
+    assert returned == {
+        "category": "numeric_value_is_invalid", "check": "step_evaluation", "step_index": 4,
+        "origin": "evaluation", "location": {
+            "step_op": "aggregate", "role": "aggregate_measure", "measure_index": 2,
+            "left_category": "string", "expected_type": "number",
+        },
+    }
+    assert native._saved_correction_admissible(returned)
+    assert not native._saved_correction_admissible({"category": "relational_match_ambiguous", "step_index": 1})
     assert native._safe_program_correction(relational.TabularRelationalError(
         "relational_match_ambiguous",
         detail={"check": "effective_interval_overlap", "step_index": 1},
@@ -557,6 +634,18 @@ def test_program_correction_never_repairs_genuine_interval_or_numeric_faults():
         "check": "column_missing",
         "step_index": 0,
     }
+    named = relational._missing_columns_error(
+        ("catalog.sku", "catalog.price"), ["catalog.missing"], "join_right_key",
+        frozenset({"catalog"}), {"step_index": 0, "step_op": "join"},
+    )
+    assert "catalog.missing" not in json.dumps(named.detail)
+    assert "catalog.missing" not in json.dumps(relational.native_error_diagnostics(named))
+    named_correction = native._safe_program_correction(named)
+    assert named_correction["feedback"] == {
+        "missing_columns": ["catalog.missing"],
+        "available_columns": ["catalog.sku", "catalog.price"],
+    }
+    assert named_correction["location"]["role"] == "join_right_key"
     prompt = json.loads(native._prepared_program_prompt(
         "Approved request.", {"version": "tabular-calculation-context-v1"},
         {"type": "object"}, correction={
