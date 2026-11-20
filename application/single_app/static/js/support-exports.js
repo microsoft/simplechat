@@ -8,6 +8,23 @@ const sourceLabels = {
     file_processing: 'File-processing diagnostics',
     console: 'App Service console logs'
 };
+const cloudLabels = { public: 'Azure Commercial', usgovernment: 'Azure US Government' };
+const detectedFromLabels = {
+    environment: 'Detected from the App Service configuration.',
+    connection_string: 'Found from the Application Insights connection string this app sends telemetry to.',
+    app_service: 'Detected from the running App Service.'
+};
+
+function describeOrigin(field, setup) {
+    const origin = setup?.origins?.[field] || { origin: 'missing' };
+    if (origin.origin === 'detected') return detectedFromLabels[origin.detected_from] || 'Detected automatically.';
+    if (origin.origin === 'override') return 'Saved override.';
+    if (origin.origin === 'default') return 'AZURE_ENVIRONMENT does not name a supported cloud; using the default.';
+    return field === 'site_resource_id'
+        ? 'Not detected. Console logs are only available when running on Azure App Service.'
+        : 'Not detected. Set APPLICATIONINSIGHTS_RESOURCE_ID on the App Service or enter an override.';
+}
+
 const activeStates = new Set(['waiting_for_consent', 'queued', 'collecting', 'redacting', 'ai_review']);
 
 function node(tag, text = '', className = '') {
@@ -180,9 +197,22 @@ function initializeAdmin(root) {
     };
     const renderReady = (ready) => {
         state.ready = ready;
-        get('cloud').value = ready.configuration.cloud;
-        get('app-resource').value = ready.configuration.app_resource_id;
-        get('site-resource').value = ready.configuration.site_resource_id;
+        const setup = ready.setup || {};
+        const overrides = setup.overrides || {};
+        const detected = setup.detected || {};
+        get('resolved-cloud').textContent = cloudLabels[ready.configuration.cloud] || ready.configuration.cloud;
+        get('resolved-app').textContent = ready.configuration.app_resource_id || 'Not available';
+        get('resolved-site').textContent = ready.configuration.site_resource_id || 'Not available';
+        get('origin-cloud').textContent = describeOrigin('cloud', setup);
+        get('origin-app').textContent = describeOrigin('app_resource_id', setup);
+        get('origin-site').textContent = describeOrigin('site_resource_id', setup);
+        show('cloud-field', !detected.cloud);
+        get('cloud').value = overrides.cloud || ready.configuration.cloud;
+        get('app-resource').value = overrides.app_resource_id || '';
+        get('app-resource').placeholder = detected.app_resource_id || '';
+        get('site-resource').value = overrides.site_resource_id || '';
+        get('site-resource').placeholder = detected.site_resource_id || '';
+        if (!ready.configuration.app_resource_id) get('setup').open = true;
         get('storage-status').textContent = ready.storage.message;
         get('model').textContent = `${ready.model.message || ''}${ready.model.label ? ` Default model: ${ready.model.label} (${ready.model.provider}).` : ''}`;
         get('privacy').querySelector('option[value="ai"]').disabled = !ready.model.available;
@@ -258,7 +288,7 @@ function initializeAdmin(root) {
     for (const name of ['mode', 'narrow', 'privacy', 'review-ack', 'download-ack']) get(name).addEventListener('change', updateControls);
     get('save-config').addEventListener('click', () => act(async () => {
         await api(`${exportRoot}/configuration`, {
-            cloud: get('cloud').value,
+            cloud: state.ready?.setup?.detected?.cloud ? '' : get('cloud').value,
             app_resource_id: get('app-resource').value.trim(), site_resource_id: get('site-resource').value.trim()
         });
         state.review = null; show('review-panel', false); renderReady(await api(`${exportRoot}/readiness`));

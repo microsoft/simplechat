@@ -24606,7 +24606,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fb93ab5dad40d2fcdad8e4cbfa8f405d18b3de96994abbdf86e4b410dd1ab072"
+        "module_sha256": "1cd652b67a81c941208000fc1b692c15c7784fd6ef4739222a2282ebf9f34fb9"
       },
       "classification": "normalized-strict",
       "contract": "Normalizes the fresh app-settings SDK point document before capability binding and disclosure hashing; credentials/settings are never projected to the browser. Fresh-process real-module integration uses SDK-default external I/O, defeats a deliberately stale cache and detects changed destination fingerprints.",
@@ -24627,7 +24627,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fb93ab5dad40d2fcdad8e4cbfa8f405d18b3de96994abbdf86e4b410dd1ab072"
+        "module_sha256": "1cd652b67a81c941208000fc1b692c15c7784fd6ef4739222a2282ebf9f34fb9"
       },
       "classification": "response-unused",
       "contract": "Persists a content-free activity record and intentionally ignores the create response. The real runtime startup regression verifies persistence; no SDK document is passed to the audit/logging projection.",

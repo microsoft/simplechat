@@ -18,8 +18,52 @@ export interface SupportConfiguration {
     site_resource_id: string;
 }
 
+export type SupportConfigurationField = keyof SupportConfiguration;
+export interface SupportOverrides {
+    cloud: SupportConfiguration['cloud'] | '';
+    app_resource_id: string;
+    site_resource_id: string;
+}
+export interface SupportSetup {
+    overrides: SupportOverrides;
+    detected: SupportOverrides;
+    origins: Record<SupportConfigurationField, { origin: 'detected' | 'override' | 'default' | 'missing'; detected_from: string }>;
+}
+
+export const SUPPORT_CLOUD_LABELS: Record<SupportConfiguration['cloud'], string> = {
+    public: 'Azure Commercial',
+    usgovernment: 'Azure US Government',
+};
+
+const DETECTED_FROM_LABELS: Record<string, string> = {
+    environment: 'Detected from the App Service configuration.',
+    connection_string: 'Found from the Application Insights connection string this app sends telemetry to.',
+    app_service: 'Detected from the running App Service.',
+};
+
+/** Plain-language note saying where a resolved source value came from. */
+export function describeSupportOrigin(field: SupportConfigurationField, setup: SupportSetup | undefined): string {
+    const origin = setup?.origins[field] ?? { origin: 'missing', detected_from: '' };
+    if (origin.origin === 'detected') return DETECTED_FROM_LABELS[origin.detected_from] ?? 'Detected automatically.';
+    if (origin.origin === 'override') return 'Saved override.';
+    if (origin.origin === 'default') return 'AZURE_ENVIRONMENT does not name a supported cloud; using the default.';
+    return field === 'site_resource_id'
+        ? 'Not detected. Console logs are only available when running on Azure App Service.'
+        : 'Not detected. Set APPLICATIONINSIGHTS_RESOURCE_ID on the App Service or enter an override.';
+}
+
+/** Overrides to save: a detected cloud is never overridden, so it is sent blank. */
+export function supportOverridesToSave(overrides: SupportOverrides, setup: SupportSetup | undefined): SupportOverrides {
+    return {
+        cloud: setup?.detected.cloud ? '' : overrides.cloud,
+        app_resource_id: overrides.app_resource_id.trim(),
+        site_resource_id: overrides.site_resource_id.trim(),
+    };
+}
+
 export interface SupportReadiness {
     configuration: SupportConfiguration;
+    setup?: SupportSetup;
     sources: Record<SupportSource, { available: boolean; message: string; access?: string }>;
     storage: { available: boolean; message: string };
     model: { available: boolean; label?: string; provider?: string; message?: string };
