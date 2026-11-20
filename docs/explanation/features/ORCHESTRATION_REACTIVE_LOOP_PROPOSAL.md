@@ -31,7 +31,7 @@ Status: proposal for discussion.
 
 ### 1.1 Live telemetry, 9-16 November 2026 (versions 0.261.424 to 0.261.444)
 
-Source: Application Insights `simplechat-2026beta-ai`. This is test traffic; the same scenarios repeat across versions.
+Source: Application Insights for the beta deployment. This is test traffic; the same scenarios repeat across versions.
 
 | Stage | Count |
 | --- | --- |
