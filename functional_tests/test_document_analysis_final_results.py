@@ -1,7 +1,7 @@
 # test_document_analysis_final_results.py
 """
 Functional tests for the built-in narrative Analyze producer.
-Version: 0.261.109
+Version: 0.261.477
 Implemented in: 0.261.109
 
 Exercise the real source resolution, windowing, retry, cancellation and producer
@@ -403,10 +403,15 @@ def test_material_unresolved_requirements_are_reported_without_inventing_values(
             'findings': [], 'issues': ['Required scoring weights were not specified.'],
         })))
         assert result['authoritative_result']['value'] == []
-        assert result['analysis_validation']['status'] == 'partial'
-        assert 'unresolved task requirement' in result['analysis_reply']
+        # From 0.261.477 a full read whose only issue is a gap the model states is complete.
+        assert result['analysis_validation']['status'] == 'valid'
+        assert result['analysis_validation']['stated_gap_count'] == 1
+        assert 'Required scoring weights were not specified.' in result['analysis_reply']
         assert 'Required scoring weights were not specified.' in json.dumps(result['analysis_diagnostics'])
-        assert 'Required scoring weights were not specified.' not in json.dumps(result['analysis_validation'])
+        # The statement is part of the result; issue messages stay application text.
+        [gap] = result['analysis_validation']['stated_gaps']
+        assert gap['scope'] == 'source' and gap['statement'] == 'Required scoring weights were not specified.'
+        assert 'Required scoring weights' not in json.dumps(result['analysis_validation']['issues'])
         checks = {check['name']: check['status'] for check in result['analysis_validation']['checks']}
         assert checks['factual_accuracy_and_entailment'] == 'not_performed'
         assert checks['mathematical_correctness'] == 'not_performed'
@@ -432,7 +437,9 @@ def test_collected_but_unsupported_candidates_are_not_authoritative(uncertainty)
         result, _client = run_analysis(runtime, documents, FixtureAnalysisClient(response))
         assert result['authoritative_result']['value'] == []
         assert result['analysis_validation']['coverage']['completed_sources'] == 1
-        assert result['analysis_validation']['status'] == 'partial'
+        # From 0.261.477 a finding the model itself did not conclude is a stated gap; a finding
+        # the validator could not accept still makes the result partial.
+        assert result['analysis_validation']['status'] == ('valid' if uncertainty == 'unresolved' else 'partial')
         assert result['analysis_validation']['unresolved_candidate_count'] == 1
         assert result['analysis_diagnostics']['candidates'][0]['resolution'] == 'unresolved'
 

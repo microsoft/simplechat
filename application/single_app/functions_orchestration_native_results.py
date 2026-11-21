@@ -617,6 +617,10 @@ def _failure(step, exc, stage, context=None):
         calculation_cause = "calculation_program_invalid"
     if calculation_cause is not None:
         result["failure"]["calculation_cause"] = calculation_cause
+        if calculation_cause != "generation_incomplete" and _safe_program_correction(exc) is not None:
+            # The attempt stopped on a finding that is returned to the author, so it stopped
+            # because the authoring calls ran out, not because the author had nothing to act on.
+            result["failure"]["calculation_revisable"] = True
         result["summary"] = build_failure(calculation_cause)["message"]
         result["error"] = result["summary"]
     return result
@@ -982,8 +986,7 @@ def _evaluation_correction(error):
 
     The finding is the evaluator's own: which step and operand, the kind of value it expected
     and the kind it found. It carries no cell value. The author already holds its program and
-    the kinds each column holds, so this is enough to revise the step. A join whose matches
-    contradict its declared cardinality is not returned this way: see _safe_program_correction.
+    the kinds each column holds, so this is enough to revise the step.
     """
     from functions_tabular_relational import safe_native_detail
 
@@ -1017,13 +1020,22 @@ def _saved_correction_admissible(correction):
 # Faults in how the program is written or in which column it reads, each for one named check.
 # Two tables sharing a column name, datasets that are not the planned documents in their
 # planned order, and an effective-date column whose cell is not a date are corrected by
-# changing the program. A join whose matches contradict its declared cardinality, an
-# overlapping interval and an invalid allocation or cumulative value are not listed: the easy
-# correction there is to weaken the calculation, which then passes every check.
+# changing the program.
+#
+# A join whose matches contradict the cardinality its author declared is returned too (from
+# 0.261.477). The declaration is the author's statement about the data and the finding is the
+# data's answer: which side repeats. It was held back because the easy correction is to
+# declare the looser cardinality. Holding it back did not prevent that program: an author that
+# declares the looser cardinality first is never stopped. It only ended the run for an author
+# that declared the stricter one, without telling it what the data holds.
+#
+# Overlapping effective intervals and an invalid allocation or cumulative value are not
+# listed: those are statements about the reference data itself, not about the program.
 _RETURNED_PROGRAM_CHECKS = {
     "relational_columns_ambiguous": frozenset({"join_columns_ambiguous", "allocate_columns_ambiguous"}),
     "relational_selection_invalid": frozenset({"document_ids_mismatch"}),
     "relational_date_invalid": frozenset({"effective_value"}),
+    "relational_match_ambiguous": frozenset({"right_cardinality", "right_match_cardinality", "left_reuse"}),
 }
 
 

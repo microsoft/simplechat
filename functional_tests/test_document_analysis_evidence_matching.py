@@ -1,7 +1,7 @@
 # test_document_analysis_evidence_matching.py
 """
 Functional tests for general Analyze evidence matching, caveats, notes and validation logging.
-Version: 0.261.316
+Version: 0.261.477
 Implemented in: 0.261.191
 
 Literal source matching precedes lossy normalization as of 0.261.314.
@@ -666,8 +666,109 @@ def test_complementary_windows_union_caveats_without_unresolving_the_finding():
 
 
 @pytest.mark.parametrize('uncertainty,code,records', [
-    ('finding_issue', 'unresolved_finding', 0),
+    ('finding_issue', 'unresolved_finding', 1),
+    ('finding_status', 'unresolved_finding', 0),
     ('window_issue', 'window_requirement_unresolved', 1),
+])
+def test_a_gap_the_analysis_states_is_reported_and_does_not_make_a_full_read_partial(uncertainty, code, records):
+    """0.261.477: every source was read, and the model says the source does not settle something."""
+    documents = {'supplier': original_document('supplier', ['There is a sole supplier for this service.'])}
+    stated = 'Two different supplier names are given.'
+
+    def response(prompt):
+        payload = json.loads(extract_fixture_findings(prompt))
+        finding = payload['findings'][0]
+        if uncertainty == 'finding_issue':
+            finding['issues'] = [stated]
+        elif uncertainty == 'finding_status':
+            finding['status'] = 'unresolved'
+        else:
+            payload['issues'] = [stated]
+        return json.dumps(payload)
+
+    with document_analysis_runtime(documents) as runtime:
+        result, _client = run_analysis(runtime, documents, FixtureAnalysisClient(response))
+        limitation = runtime.results.STATED_GAP_LIMITATION
+    validation = result['analysis_validation']
+    assert validation['status'] == 'valid'
+    assert validation['coverage']['status'] == 'complete'
+    assert {issue['code'] for issue in validation['issues']} == {code}
+    assert validation['stated_gap_count'] == 1
+    assert validation['unresolved_candidate_count'] == (1 if uncertainty == 'finding_status' else 0)
+    checks = {check['name']: check['status'] for check in validation['checks']}
+    assert checks['candidate_structure_and_evidence_locations'] == 'passed'
+    assert limitation in validation['limitations']
+    # A finding the model does not support is not a record. A finding it supports, with one
+    # thing it could not settle, is kept with that statement beside its values.
+    found = result['authoritative_result']['value']
+    assert len(found) == records
+    assert [record.get('open_issues') for record in found] == (
+        [[stated]] if uncertainty == 'finding_issue' else [None] * records
+    )
+    # The gap is part of the result, in the model's words, with where it was stated.
+    [gap] = validation['stated_gaps']
+    scope = {'finding_issue': 'record', 'finding_status': 'finding', 'window_issue': 'source'}[uncertainty]
+    assert gap['scope'] == scope and gap['file_name'] == 'supplier.txt'
+    assert ('record_id' in gap) == (scope == 'record') and ('finding_key' in gap) == (scope != 'source')
+    assert (stated in gap['statement']) == (uncertainty != 'finding_status')
+    # Issue messages stay application text.
+    assert stated not in json.dumps(validation['issues'])
+    reply = result['analysis_reply']
+    assert 'Partial result' not in reply and 'Unresolved work' not in reply and 'diagnostics' not in reply
+    if uncertainty == 'finding_issue':
+        # Shown on the finding itself, so not repeated as a separate section.
+        assert f'Not settled: {stated}' in reply and '## Not settled by the sources' not in reply
+    else:
+        section = reply.split('## Not settled by the sources', 1)[1].split('## Limitations', 1)[0]
+        assert 'supplier.txt' in section
+        assert ('did not support a final conclusion' if uncertainty == 'finding_status' else stated) in section
+
+
+def test_a_stated_gap_never_excuses_unread_sources_or_rejected_findings():
+    """A stated gap is complete only with a full read and nothing the validator refused."""
+    with document_analysis_runtime({}) as runtime:
+        results = runtime.results
+    source = {'document_id': 'd1', 'file_name': 'a.txt'}
+
+    def unit(status, issues=()):
+        return {'work_unit_id': 'u1', 'document_id': 'd1', 'source': source, 'status': status,
+                'issues': list(issues)}
+
+    def candidate(issues):
+        return {'candidate_id': 'c1', 'record_id': 'r1', 'document_id': 'd1', 'source': source,
+                'work_unit_id': 'u1', 'finding_key': 'k', 'values': {'finding': 'x'},
+                'evidence_refs': [], 'status': 'unresolved', 'issues': issues}
+
+    gap = results._issue('window_requirement_unresolved', 'stated', work_unit_id='u1', document_id='d1')
+
+    def status(units, candidates=()):
+        return results.finalize_document_analysis_result([source], units, list(candidates), [])[
+            'analysis_validation']['status']
+
+    assert status([unit('completed', [gap])]) == 'valid'
+    # A supported finding that is refused keeps its statement as a gap, and is not a record.
+    refused = results.finalize_document_analysis_result(
+        [source], [unit('completed')],
+        [{**candidate([]), 'status': 'candidate', 'stated_issues': ['one value is unclear']}], [],
+    )
+    assert refused['analysis_validation']['status'] == 'partial'
+    assert refused['authoritative_result']['value'] == []
+    assert [item['scope'] for item in refused['analysis_validation']['stated_gaps']] == ['finding']
+    assert status([unit('completed')]) == 'valid'
+    # The slice was not read: the gap does not stand in for it.
+    assert status([unit('failed', [gap])]) == 'invalid'
+    # A finding with no located evidence is rejected, whatever else the model stated about it.
+    rejected = results.finalize_document_analysis_result(
+        [source], [unit('completed', [gap])],
+        [candidate([results._issue('unresolved_finding', 'stated')])], [],
+    )['analysis_validation']
+    assert rejected['status'] == 'partial'
+    assert 'invalid_evidence_reference' in {issue['code'] for issue in rejected['issues']}
+    checks = {check['name']: check['status'] for check in rejected['checks']}
+    assert checks['candidate_structure_and_evidence_locations'] == 'unresolved'
+
+
+@pytest.mark.parametrize('uncertainty,code,records', [
     ('invalid_caveats', 'invalid_caveats', 0),
     ('invalid_caveat_item', 'invalid_caveats', 0),
 ])
@@ -678,11 +779,7 @@ def test_real_uncertainty_still_leaves_the_result_partial(uncertainty, code, rec
     def response(prompt):
         payload = json.loads(extract_fixture_findings(prompt))
         finding = payload['findings'][0]
-        if uncertainty == 'finding_issue':
-            finding['issues'] = [private]
-        elif uncertainty == 'window_issue':
-            payload['issues'] = [private]
-        elif uncertainty == 'invalid_caveats':
+        if uncertainty == 'invalid_caveats':
             finding['caveats'] = private
         else:
             finding['caveats'] = [private, 3]
