@@ -1244,6 +1244,9 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         ))
         if calculation_answer and not calculation_bundle_present:
             limitations += ('calculation_unavailable',)
+        if len(limitations) > 32:
+            # A result holds at most 32 limitations. Each input keeps its own in full.
+            limitations = (*limitations[:31], 'Further limitations are recorded on the named inputs.')
         if partial and not limitations:
             raise ResultContractError('result_partial_unqualified')
         named = []

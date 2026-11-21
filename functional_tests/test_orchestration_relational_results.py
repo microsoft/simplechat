@@ -1,7 +1,7 @@
 # test_orchestration_relational_results.py
 """
 Functional tests for authorized, retained multi-file calculation results.
-Version: 0.261.476
+Version: 0.261.477
 Implemented in: 0.261.437; 0.261.446
 Evaluation findings returned to the authoring model added in: 0.261.470
 Source-header failure classification added in: 0.261.439
@@ -597,9 +597,22 @@ def test_saved_lowering_program_requires_supported_completion_and_exact_digest(m
 def test_program_correction_never_repairs_genuine_interval_or_numeric_faults():
     native = importlib.import_module("functions_orchestration_native_results")
     relational = importlib.import_module("functions_tabular_relational")
-    # A join whose matches contradict its declared cardinality is still never returned.
+    # From 0.261.477 a join whose matches contradict its declared cardinality is returned, for
+    # each of the three cardinality checks. An overlapping effective interval is not (below).
+    for check, role in (
+        ("left_reuse", "join_left_cardinality"), ("right_cardinality", "join_right_cardinality"),
+        ("right_match_cardinality", "join_right_cardinality"),
+    ):
+        returned = native._safe_program_correction(relational.TabularRelationalError(
+            "relational_match_ambiguous", detail={"check": check, "role": role, "step_index": 5},
+        ))
+        assert returned == {
+            "category": "relational_match_ambiguous", "check": check, "step_index": 5,
+            "location": {"role": role},
+        }
+        assert native._saved_correction_admissible(returned)
     assert native._safe_program_correction(relational.TabularRelationalError(
-        "relational_match_ambiguous", detail={"check": "left_reuse", "step_index": 5},
+        "relational_match_ambiguous", detail={"step_index": 5},
     )) is None
     transformations = importlib.import_module("functions_tabular_transformations")
     stopped = transformations.TabularTransformationEvaluationError("Numeric value is invalid")
@@ -832,3 +845,42 @@ def test_real_compiler_executor_and_export_consume_trusted_legacy_manual_rows(ru
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_an_attempt_that_ran_out_of_authoring_calls_may_have_a_next_attempt():
+    """0.261.477: the calls ran out while a finding was still being returned to the author."""
+    native = importlib.import_module("functions_orchestration_native_results")
+    relational = importlib.import_module("functions_tabular_relational")
+    schema = importlib.import_module("functions_orchestration_schema")
+    step = {"step_id": "calculate"}
+    cases = (
+        # (error, cause, the author is given this finding)
+        (relational.TabularRelationalError("relational_spec_invalid", detail={"check": "schema"}),
+         "calculation_program_invalid", True),
+        (relational.TabularRelationalError("relational_source_unused", detail={"check": "result_sources"}),
+         "calculation_program_invalid", True),
+        (relational.TabularRelationalError("relational_match_ambiguous", detail={"check": "left_reuse"}),
+         "relationship_grain_invalid", True),
+        (relational.TabularRelationalError(
+            "relational_match_ambiguous", detail={"check": "effective_interval_overlap"}),
+         "relationship_grain_invalid", False),
+        (relational.TabularRelationalError("relational_spec_invalid", detail={"check": "json_parse"}),
+         "calculation_program_invalid", False),
+        (relational.TabularRelationalError("relational_row_limit"), "calculation_program_invalid", False),
+    )
+    for error, cause, revisable in cases:
+        failure = native._failure(step, error, "execution")["failure"]
+        assert failure["calculation_cause"] == cause
+        assert (failure.get("calculation_revisable") is True) == revisable
+        # The saved step keeps the flag, and the public text is unchanged by it.
+        saved = schema.safe_failure(failure)
+        assert saved["code"] == cause and saved["message"] == schema.FAILURE_MESSAGES[cause]
+        assert (saved.get("calculation_revisable") is True) == revisable
+        assert schema.failure_repeats_on_retry(saved) is (not revisable)
+    # The flag means nothing without a calculation cause, and only True is read.
+    assert "calculation_revisable" not in schema.build_failure("result_invalid", calculation_revisable=True)
+    assert schema.failure_repeats_on_retry({
+        "calculation_cause": "calculation_program_invalid", "calculation_revisable": "yes",
+    })
+    assert schema.failure_repeats_on_retry({"calculation_cause": "generation_incomplete"})
+    assert schema.failure_repeats_on_retry({"code": "image_content_refused", "calculation_revisable": True})

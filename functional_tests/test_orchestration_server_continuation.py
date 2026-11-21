@@ -2,7 +2,7 @@
 # test_orchestration_server_continuation.py
 """
 Functional test for the server-side next attempt after a failed orchestration run.
-Version: 0.261.476
+Version: 0.261.477
 Implemented in: 0.261.462
 
 This test ensures that a failed attempt is followed by its next one on the server, after the
@@ -256,6 +256,7 @@ def test_a_partial_analysis_logs_why_as_codes_only(monkeypatch):
                          "failed_work_units": 0, "pending_work_units": 0},
             "issues": [{"code": "requirement_unresolved", "message": "PRIVATE issue text"},
                        {"code": "requirement_unresolved"}, {"code": "evidence_missing"}, "PRIVATE"],
+            "finalized_record_count": 12, "unresolved_candidate_count": 2,
             "checks": [{"name": "evidence_matching", "status": "passed"},
                        {"name": "requirement_coverage", "status": "partial"}],
             "limitations": ["PRIVATE limitation"] * 5,
@@ -269,7 +270,34 @@ def test_a_partial_analysis_logs_why_as_codes_only(monkeypatch):
     assert (detail["sc_validation_issue_count"], detail["sc_limitation_count"]) == (3, 5)
     assert (detail["sc_record_count"], detail["sc_completed_work_units"]) == (12, 3)
     assert detail["sc_public_records_available"] is False
+    assert (detail["sc_finalized_record_count"], detail["sc_unresolved_candidate_count"]) == (12, 2)
+    assert detail["sc_model_stated_issue_count"] == 0
     assert "PRIVATE" not in json.dumps(detail)
+    logged.clear()
+    results._log_partial_analysis(producer, {"validation": {"status": "partial", "issues": [
+        {"code": "unresolved_finding"}, {"code": "window_requirement_unresolved"}, {"code": "unmatched_evidence"},
+    ]}}, 0, False)
+    assert logged[0]["sc_model_stated_issue_count"] == 2 and logged[0]["sc_validation_issue_count"] == 3
+
+
+def test_stated_gaps_reach_every_reading_step_as_bounded_limitations():
+    """0.261.477: each stated gap is a limitation of the result, in the model's words."""
+    results = importlib.import_module("functions_orchestration_analysis_results")
+    lines = results._stated_gap_limitations({"stated_gaps": [
+        {"scope": "source", "file_name": "a.pdf", "statement": "Two renewal\n dates are given."},
+        {"scope": "record", "file_name": "a.pdf", "finding_key": "supplier", "statement": "The value is unclear."},
+        {"scope": "source", "statement": "x" * 5000},
+        {"scope": "source", "statement": "  "}, "not a gap", {"statement": 3},
+    ]})
+    assert lines[0] == "Not settled by the sources (a.pdf): Two renewal dates are given."
+    assert lines[1] == "Not settled by the sources (a.pdf, supplier): The value is unclear."
+    assert len(lines) == 3 and all(len(line.encode("utf-8")) <= 1024 and line == line.strip() for line in lines)
+    many = results._stated_gap_limitations({"stated_gaps": [
+        {"scope": "source", "file_name": "a.pdf", "statement": f"gap {index}"} for index in range(20)
+    ]})
+    assert len(many) == results.STATED_GAP_LIMITATION_LIMIT + 1
+    assert many[-1] == "12 more stated gaps are listed in the analysis report."
+    assert results._stated_gap_limitations({}) == []
 
 
 def test_new_diagnostic_fields_reach_the_log_and_only_as_codes():

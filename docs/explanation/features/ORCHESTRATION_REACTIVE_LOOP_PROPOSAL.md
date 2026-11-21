@@ -147,7 +147,9 @@ A running list. An item is added when a rerun or a review finds it, and marked c
 the version that closed it once a rerun confirms the fix. "Fixed" without a confirming rerun
 stays open.
 
-Last updated: 20 November 2026, at 0.261.476 (not yet deployed).
+Last updated: 21 November 2026, at 0.261.477 (not yet deployed), from the 0.261.476 rerun
+while it was still in progress (7 of 13 scenarios, 38 runs: 16 completed, 22 partial, 0
+failed).
 
 0.261.476 was written and reviewed as 0.261.474. Development used 0.261.474 and 0.261.475 for
 other work before it merged, so it was renumbered.
@@ -156,18 +158,20 @@ other work before it merged, so it was renumbered.
 
 | # | Item | Found | State |
 |---|---|---|---|
-| 1 | Document analysis finishes partial on every run seen, with full coverage and the same number of limitations. A partial analysis has no `records` output and its consumers refuse it, so this is behind the compose refusals (the largest group of partial runs) and `result_output_missing`. | 0.261.472 and 0.261.473 reruns | Cause unknown. 0.261.476 logs the validator's reason codes: `[ORCHESTRATION_ANALYSIS] A document analysis finished partial.` |
-| 2 | One tabular scenario does not converge: told three times that an aggregate met a non-numeric value, the author does not correct it, on two attempts. | 0.261.473 rerun | Not investigated |
-| 3 | Follow-up prompts are refused the tabular source at planning (`source_unavailable`, `document_authorization_required`). | 0.261.472 and 0.261.473 reruns | Not investigated |
-| 4 | A join whose matches contradict its declared cardinality is not returned to the calculation's author. | 0.261.468 rerun | Held back on purpose (the easy correction inflates totals). Revisit if it keeps costing runs. |
+| 1 | Document analysis finishes partial on every run seen, with full coverage and the same number of limitations. A partial analysis has no `records` output and its consumers refuse it, so this is behind the compose refusals (the largest group of partial runs) and `result_output_missing`. | 0.261.472 and 0.261.473 reruns | Changed in 0.261.477. Cause: the analysis model reports what it could not conclude, and the validator made the analysis partial for any such report (a slice-level statement in 8 of 9 partial analyses on 0.261.476, a finding-level one in 6 of 9). Now, when every source was read, a gap the model states is reported and the analysis is complete; a finding it did not conclude is still not a record. Unread sources and findings the validator refuses (3 of 9) are still partial. A finding the model supports with one thing it could not settle is kept, with that statement on it. Every step that reads the analysis is given the statements as limitations, not only one that reads the report. Not guarded: a calculation over record values is not stopped by a statement on a record. See `DOCUMENT_ANALYSIS_STATED_GAP_FIX.md`. Open until a rerun shows analyses complete with `stated_gap_count` set. |
+| 2 | One tabular scenario does not converge: told three times that an aggregate met a non-numeric value, the author does not correct it, on two attempts. | 0.261.473 rerun | Not investigated. Seen again on 0.261.476: the same aggregate measure met text in two conversations; one completed on its second attempt, one did not. |
+| 3 | Follow-up prompts are refused the tabular source at planning (`source_unavailable`, `document_authorization_required`). | 0.261.472 and 0.261.473 reruns | Not investigated. Once on 0.261.476. |
+| 4 | A join whose matches contradict its declared cardinality is not returned to the calculation's author. | 0.261.468 rerun | Changed in 0.261.477: the three cardinality checks are returned with the side that repeats (3 runs on 0.261.476 stopped here). An overlapping effective interval is still refused. Open until a rerun shows it returned and corrected. |
 | 5 | An effective-date column must hold `YYYY-MM-DD`; a date written another way is not read as a date. | 0.261.476 review | Known limit. The finding is returned to the author from 0.261.476. |
-| 6 | A waiting run could not be resumed for a caller holding an app role (`recovery_changed`). | 0.261.468 rerun | Fixed in 0.261.476; the cause is inferred. Open until a rerun shows a waiting run resume. |
-| 7 | `context_unavailable` after waiting. | 0.261.472 rerun (2 runs); not seen on 0.261.473 | Unexplained |
-| 8 | The model call itself failed in a calculation (`model_failed`). | 0.261.468 rerun (4 runs) | Unexplained |
-| 9 | Three more calculation faults returned to the author (shared column names, datasets that are not the planned documents, a non-date effective value). | 0.261.472 and 0.261.473 reruns | Changed in 0.261.476. Open until a rerun shows them returned and corrected. |
+| 7 | `context_unavailable` after waiting. | 0.261.472 rerun (2 runs); not seen on 0.261.473 or 0.261.476 | Unexplained |
+| 8 | The model call itself failed in a calculation (`model_failed`). | 0.261.468 rerun (4 runs); once on 0.261.476, where the second attempt completed | Unexplained |
+| 9 | Three more calculation faults returned to the author (shared column names, datasets that are not the planned documents, a non-date effective value). | 0.261.472 and 0.261.473 reruns | Changed in 0.261.476. Shared column names was returned once and corrected (0.261.476 rerun). The other two have not occurred since. |
 | 10 | Eleven functional test files have failures that predate this work, and three more stall or fail the same way on earlier commits (`test_action_credentials_chat_reconstruction.py`, `test_tabular_row_orchestration_scale.py`, `test_orchestration_research_selection.py`). | 0.261.470 to 0.261.476 test runs | Not investigated |
 | 11 | Release notes for 0.261.468 to 0.261.476. | | Deferred |
 | 12 | A full run of all 30 scenarios. | | Due after items 1 to 3 have fixes |
+| 13 | A calculation's author spends all three calls on faults in the shape of the program (`relational_spec_invalid` for schema or transform, `relational_source_unused`), and the run ends `calculation_program_invalid` with no next attempt offered. | 0.261.476 rerun (6 runs) | Changed in 0.261.477: such an attempt may have a next attempt, within the round limit and the stall check. The next attempt does not carry the last program or its finding forward. Open until a rerun shows a next attempt start and complete. |
+| 14 | After a calculation's second attempt, compose stops with `result_tabular_calculation_incomplete`, twice, to the round limit. | 0.261.476 rerun (1 conversation) | Not investigated |
+| 15 | A follow-up is refused at planning with `plan_arguments_invalid` (`tabular_requirement_sources_invalid`). | 0.261.476 rerun (1) | Not investigated |
 
 ### 5.2 Closed
 
@@ -175,4 +179,5 @@ other work before it merged, so it was renumbered.
 |---|---|---|
 | The server could not start a next attempt for a run that recalled saved memory (`execution_binding_changed`). | 0.261.468 | 0.261.468 rerun: 10 next attempts prepared, 1 refused |
 | A calculation that failed on the data was not told why, and formatted numbers were not numbers. | 0.261.470, 0.261.471 | 0.261.472 and 0.261.473 reruns: findings returned 10 times each, second attempts completing |
+| A waiting run could not be resumed for a caller holding an app role (`recovery_changed`). | 0.261.476 | 0.261.476 rerun: 3 runs waited and all 3 resumed; 38 bindings saved, none changed, each with `role_gated_action_count` 1, which confirms the inferred cause |
 | New diagnostic fields reached the log as lengths only. | 0.261.473 | 0.261.473 rerun: binding parts, correction categories and output lists readable |
