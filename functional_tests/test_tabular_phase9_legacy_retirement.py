@@ -187,6 +187,10 @@ def load_post_tool_namespace():
 
     namespace = {
         "TABULAR_RUN_TASK_COMBINED": "combined",
+        "ACTION_BACKGROUND_RUN": __import__("functions_request_intent").ACTION_BACKGROUND_RUN,
+        "ACTION_FILE_EXPORT": __import__("functions_request_intent").ACTION_FILE_EXPORT,
+        "RequestIntentWithheldError": __import__("functions_request_intent").RequestIntentWithheldError,
+        "action_withheld": __import__("functions_request_intent").action_withheld,
         "TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS": "hierarchical_analysis",
         "_get_tabular_generated_output_task_type": (
             lambda generated, hierarchical, settings, action_mode=None: "structured_export"

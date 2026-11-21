@@ -521,6 +521,10 @@ def test_direct_preflight_uses_planner_action_mode_for_parity_events():
         "classify_tabular_parity_request": lambda prompt: {"execution_contract": "combined"},
         "emit_tabular_parity_event": lambda settings, event_name, mode, **kwargs: parity_modes.append(mode),
         "_build_direct_tabular_generated_output_source": lambda *args, **kwargs: None,
+        "ACTION_BACKGROUND_RUN": __import__("functions_request_intent").ACTION_BACKGROUND_RUN,
+        "ACTION_FILE_EXPORT": __import__("functions_request_intent").ACTION_FILE_EXPORT,
+        "RequestIntentWithheldError": __import__("functions_request_intent").RequestIntentWithheldError,
+        "action_withheld": __import__("functions_request_intent").action_withheld,
         "logging": logging,
     }
     exec(compile(ast.Module(body=[function_node], type_ignores=[]), CHAT_ROUTE, "exec"), namespace)
