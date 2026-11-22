@@ -1,9 +1,9 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.480
+Version: 0.261.481
 Implemented in: 0.261.127
-Delivery summary states rows only for files of records, and a readable size, in: 0.261.480
+Delivery summary states rows only for files of records, and a readable size, in: 0.261.481
 Incomplete completion rejection added in: 0.261.445
 Prepared stop-only completion enforcement added in: 0.261.446
 Named rule on every model failure, read by the calculation owner, added in: 0.261.478

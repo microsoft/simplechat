@@ -1,6 +1,6 @@
 // test_v2_generated_file_card_details_logic.mjs
-// Version: 0.261.480
-// Implemented in: 0.261.480
+// Version: 0.261.481
+// Implemented in: 0.261.481
 // Executes the real V2 helpers that decide which facts a generated file's card shows. A row
 // count describes a file of records (CSV, Excel, JSON, XML, YAML) and nothing else: a Word
 // document, PDF, deck or text file reports zero records, which used to read "0 rows" on a

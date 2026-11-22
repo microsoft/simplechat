@@ -1,11 +1,11 @@
 # test_v2_orchestration_outputs.py
 """
 Real-component coverage for independent orchestration file recovery.
-Version: 0.261.480
+Version: 0.261.481
 Implemented in: 0.261.127
 Simplified file cards covered in: 0.261.141
 Container-only file access messages covered in: 0.261.232
-Compact file row with a type icon and per-type details covered in: 0.261.480
+Compact file row with a type icon and per-type details covered in: 0.261.481
 Refs: microsoft/simplechat#1509, microsoft/simplechat#1621
 
 Executes the production React thread/drawer, stores, SSE reader and HTTP clients

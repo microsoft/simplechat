@@ -11,7 +11,7 @@ on a row of its own. The reply text above it repeated the file as
 The card is now a single compact row: a file-type icon, the file name, one line of details that
 fit the file type, and a **Download** button at the end of the row.
 
-Implemented in version **0.261.480**.
+Implemented in version **0.261.481**.
 
 ### Dependencies
 
