@@ -1,10 +1,11 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.446
+Version: 0.261.478
 Implemented in: 0.261.127
 Incomplete completion rejection added in: 0.261.445
 Prepared stop-only completion enforcement added in: 0.261.446
+Named rule on every model failure, read by the calculation owner, added in: 0.261.478
 Invocation, catalog, and citation regressions implemented in: 0.261.129
 Direct initial-binding scope coverage implemented in: 0.261.130
 Single orchestration contract updated in: 0.261.139
@@ -699,6 +700,46 @@ def test_required_complete_generation_accepts_only_provider_stop(
     assert failure.value.stage == "tabular_program_lowering"
     assert usage == {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9}
     assert invoke.enforces_complete_generation is True
+    # The calculation owner reads the rule from this error. Before 0.261.478 it read an
+    # attribute this class does not have, so a cut-off reply was never asked again.
+    native = importlib.import_module("functions_orchestration_native_results")
+    assert native._failure_rule(failure.value) == "generation_incomplete"
+    assert native._failure_rule(failure.value) in native._REPLY_INCOMPLETE_RULES
+
+
+@pytest.mark.parametrize("reply,rule", [
+    ("empty", "reply_empty"), ("no_choices", "reply_empty"),
+    ("refusal", "reply_refused"), ("content_filter", "reply_refused"),
+])
+def test_a_model_failure_names_what_came_back(harness, monkeypatch, reply, rule):
+    """0.261.478: ``model_failed`` says which kind, so telemetry and the owner can tell them apart."""
+    harness.create(replies=["unused"])
+    execution = harness.prepare()
+    response = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=5, completion_tokens=4, total_tokens=9),
+        choices=[] if reply == "no_choices" else [SimpleNamespace(
+            finish_reason="content_filter" if reply == "content_filter" else "stop",
+            message=SimpleNamespace(
+                content="" if reply == "empty" else '{"valid":"json"}',
+                refusal="declined" if reply == "refusal" else None,
+            ),
+        )],
+    )
+    monkeypatch.setattr(execution.answer_model, "create_completion", Mock(return_value=response))
+    invoke = build_harness_invoke_prompt(
+        execution.answer_model, token_usage={}, revalidate=execution._revalidate_context,
+    )
+    try:
+        with pytest.raises(HarnessExecutionError) as failure:
+            invoke(
+                "Return a complete program.", stage="tabular_program_lowering",
+                metadata={"require_complete_generation": True},
+            )
+    finally:
+        execution.close()
+    assert failure.value.code == "model_failed" and failure.value.validation_rule == rule
+    native = importlib.import_module("functions_orchestration_native_results")
+    assert (native._failure_rule(failure.value) in native._REPLY_INCOMPLETE_RULES) == (rule == "reply_empty")
 
 
 def test_required_complete_generation_accepts_provider_stop(harness, monkeypatch):

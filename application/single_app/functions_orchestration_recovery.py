@@ -336,7 +336,7 @@ def checkpoint_store(record, authorize, *, token=None, claim_id=None):
         run_store.cosmos_orchestration_run_steps_container,
         run_id=record['id'], user_id=record['user_id'], conversation_id=record['conversation_id'],
         turn_id=record.get('turn_id') or record['plan'].get('turn_id'), authorize=authorize,
-        token=token, claim_id=claim_id,
+        token=token, claim_id=claim_id, prior_run_id=record.get('retry_of_run_id'),
     )
 
 

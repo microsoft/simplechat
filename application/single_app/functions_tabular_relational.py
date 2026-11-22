@@ -1206,8 +1206,12 @@ def calculate_relational_sources(spec, datasets, *, limits, cancel_requested=Non
     return {
         "records": records, "lineage": lineage,
         "columns": [
+            # A field that does not say whether it may be empty is not refused an empty value
+            # when it is evaluated, so the column says what the records hold.
             {"name": field["name"], "value_type": "string" if field["type"] == "date" else field["type"],
-             "nullable": field.get("nullable", False)}
+             "nullable": field["nullable"] if "nullable" in field else any(
+                 record[field["name"]] is None for record in records
+             )}
             for field in projection["fields"]
         ],
         "coverage": {"version": spec["version"], "sources": sources, "steps": diagnostics,
