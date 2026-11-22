@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.481)**
+
+#### User Interface Enhancements
+
+*   **Generated File Cards Show an Icon, the File Name and a Download Button**
+    *   In the modern chat, each file a plan produces is now one compact row: a file-type icon (Word, PDF, PowerPoint, Excel, CSV and the text formats each have their own), the file name, a line of details, and a **Download** button at the end of the row. The green **Completed** badge is gone, since the Download button already says the file is ready; files that are still rendering, failed or cancelled keep their badge.
+    *   The details line fits the file type. Spreadsheets and data files show rows and size; Word, PDF, PowerPoint, Markdown and text files show size only, so a finished Word document no longer says "0 rows". The Generated list in the documents drawer follows the same rule.
+    *   The reply text above the card reads `ready (40.3 KB)` or `ready (50 rows, 1006 B)` in place of `ready (0 rows, 18,898 characters, 41,274 bytes)`.
+    *   (Ref: `GeneratedFileIcon.tsx`, `OrchestrationOutputs.tsx`, `GeneratedArtifactCard.tsx`, `orchestrationOutputs.ts`, `conversationGeneratedFiles.ts`, `functions_orchestration_execution.py`, `test_v2_generated_file_card_details_logic.mjs`, `V2_GENERATED_FILE_CARD.md`)
+
 ### **(v0.261.479)**
 
 #### User Interface Enhancements

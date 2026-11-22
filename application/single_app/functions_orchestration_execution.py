@@ -542,6 +542,22 @@ def _partition_citations(citations):
     return documents, web, tools
 
 
+# Formats whose content is a list of records; the modern file card applies the same rule
+# (RECORD_FORMATS in orchestrationOutputs.ts).
+_RECORD_FORMATS = frozenset({"csv", "json", "xlsx", "xml", "yaml", "yml"})
+
+
+def _readable_size(size_bytes):
+    """Bytes as a person reads them, matching the file card: 0 B, 1006 B, 40.3 KB, 2 MB."""
+    size, units = float(size_bytes), ["B", "KB", "MB", "GB", "TB"]
+    while size >= 1024 and len(units) > 1:
+        size /= 1024
+        units.pop(0)
+    if units[0] == "B" or size >= 100:
+        return f"{round(size)} {units[0]}"
+    return f"{size:.1f}".rstrip("0").rstrip(".") + f" {units[0]}"
+
+
 def _delivery_summary(outputs, artifacts):
     """Describe only durable, public file facts; artifact cards provide the links."""
     delivered = {artifact["output_id"] for artifact in artifacts}
@@ -554,10 +570,15 @@ def _delivery_summary(outputs, artifacts):
         ):
             detail = "unavailable; current access could not be verified"
         elif state == "completed":
+            # The facts a person reads off a file: rows where the file is a list of records, and
+            # its size. A document reports zero records, and nobody counts characters or bytes.
             facts = []
-            for key, unit in (("row_count", "rows"), ("character_count", "characters"), ("size_bytes", "bytes")):
-                if type(output.get(key)) is int and output[key] >= 0:
-                    facts.append(f"{output[key]:,} {unit}")
+            rows, size = output.get("row_count"), output.get("size_bytes")
+            file_format = str(output.get("output_format") or output["file_name"].rpartition(".")[2])
+            if type(rows) is int and rows >= 0 and file_format.strip(". ").lower() in _RECORD_FORMATS:
+                facts.append(f"{rows:,} {'row' if rows == 1 else 'rows'}")
+            if type(size) is int and size >= 0:
+                facts.append(_readable_size(size))
             detail = "ready" + (f" ({', '.join(facts)})" if facts else "")
         elif state == "retry_scheduled":
             detail = "waiting for an automatic file retry"

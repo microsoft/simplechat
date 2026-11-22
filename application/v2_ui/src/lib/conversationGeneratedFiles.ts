@@ -36,6 +36,7 @@ import {
 import {
     committedOrchestrationArtifact,
     isOrchestrationOutputArtifact,
+    orchestrationOutputRowLabel,
     orchestrationOutputTypeLabel,
     type OrchestrationOutput,
 } from './orchestrationOutputs';
@@ -362,11 +363,11 @@ export function collectConversationGeneratedFiles(
     return files;
 }
 
-/** "CSV file · 50 rows · 1006 B", as the file's card in the thread describes it. */
+/** "CSV file · 50 rows · 1006 B" or "Word document · 40.3 KB", as the file's card in the thread describes it. */
 export function generatedFileDetails(file: ConversationGeneratedFile): string {
     return [
         file.typeLabel,
-        file.rowCount !== null ? `${file.rowCount.toLocaleString()} ${file.rowCount === 1 ? 'row' : 'rows'}` : '',
+        orchestrationOutputRowLabel(file.format, file.rowCount),
         // An empty file is still a finished file; the shared formatter reserves its dash for unknown sizes.
         file.sizeBytes !== null ? (file.sizeBytes === 0 ? '0 B' : formatFileSize(file.sizeBytes)) : '',
     ].filter(Boolean).join(' · ');

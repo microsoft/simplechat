@@ -126,6 +126,21 @@ export function orchestrationOutputTypeLabel(outputFormat: string): string {
     return OUTPUT_TYPE_LABELS[format] ?? (format ? `${format.toUpperCase()} file` : 'File');
 }
 
+// Formats whose content is a list of records. A row count describes these and nothing else:
+// a Word document or a deck reports zero records, which reads as an empty file.
+const RECORD_FORMATS: ReadonlySet<string> = new Set(['csv', 'json', 'xlsx', 'xml', 'yaml', 'yml']);
+
+/** Whether a row count says something true about a file of this format. */
+export function orchestrationOutputHasRows(outputFormat: string): boolean {
+    return RECORD_FORMATS.has(outputFormat.trim().replace(/^\./, '').toLowerCase());
+}
+
+/** "1 row", "50 rows", or '' when the format has no rows or the count is unknown. */
+export function orchestrationOutputRowLabel(outputFormat: string, rows: number | null): string {
+    if (rows === null || !orchestrationOutputHasRows(outputFormat)) return '';
+    return `${rows.toLocaleString()} ${rows === 1 ? 'row' : 'rows'}`;
+}
+
 export function isOrchestrationOutputArtifact(artifact: GeneratedArtifact): boolean {
     return artifact.capability === 'render_file';
 }
