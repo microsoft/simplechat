@@ -7,7 +7,7 @@ from semantic_kernel.functions import kernel_function
 
 from content_screening.contracts import ScreeningError
 from functions_authentication import get_current_user_id
-from functions_appinsights import log_event
+from functions_appinsights import exception_log_fields, log_event
 from public_chat_scope_state import current_public_chat_scope
 from functions_agent_document_citations import annotate_document_search_payload
 from native_document_evidence import NativeInspectionRequestError
@@ -536,7 +536,8 @@ class DocumentSearchPlugin(BasePlugin):
         except Exception as error:
             log_event(
                 "[DOCUMENT_METADATA] Document inspection action failed.",
-                level=logging.WARNING, extra={"error_type": type(error).__name__},
+                # The class and the application frames that raised; never the message.
+                level=logging.WARNING, extra=exception_log_fields(error),
             )
             return {'error': 'Unable to inspect the requested document or workbook range.'}
 
