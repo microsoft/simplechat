@@ -1,7 +1,7 @@
 # test_orchestration_relational_results.py
 """
 Functional tests for authorized, retained multi-file calculation results.
-Version: 0.261.478
+Version: 0.261.480
 Implemented in: 0.261.437; 0.261.446
 Evaluation findings returned to the authoring model added in: 0.261.470
 Previous attempt's program carried forward, incomplete replies asked again added in: 0.261.478
@@ -638,6 +638,17 @@ def test_a_refused_table_selection_logs_its_rule_and_operation(monkeypatch):
             "exception_type": "TabularSelectionError", "operation": "describe_tabular_file",
             "error_code": "sheet_selection_required", "choice_count": 2,
         }
+        # 0.261.480: file work runs in a worker closure; the log names the plugin function.
+        logged.clear()
+
+        class TabularProcessingPlugin:
+            def lookup_value(self):
+                def _sync_work():
+                    return plugin.TabularProcessingPlugin._tabular_error_payload(ValueError("PRIVATE"))
+                return _sync_work()
+
+        TabularProcessingPlugin().lookup_value()
+        assert logged[0][1]["operation"] == "lookup_value"
         logged.clear()
         plugin.TabularProcessingPlugin._tabular_error_payload(ValueError("PRIVATE"))
         assert set(logged[0][1]) == {"exception_type", "operation"}
