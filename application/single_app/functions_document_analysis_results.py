@@ -465,6 +465,19 @@ def _issue(code, message, **context):
     return {'code': code, 'message': message, **context}
 
 
+# What the analysis model states it could not conclude from a slice it read: a task requirement
+# the slice leaves open, a finding it could not support, or one requested value of a finding it
+# otherwise supports. When every source was read, this is a result of the analysis (the sources
+# do not settle it), not unfinished or rejected work. It is kept with the result as a stated
+# gap, in the model's words, and does not make the analysis partial. A finding the validator
+# could not accept (evidence, identity, structure, conflicting values) is never one of these.
+STATED_GAP_CODES = frozenset({'unresolved_finding', 'window_requirement_unresolved'})
+STATED_GAP_LIMITATION = (
+    'The sources did not settle every requirement. What the analysis could not conclude is '
+    'stated with the result as its stated gaps.'
+)
+
+
 def _public_issue(issue):
     public = {
         key: deepcopy(issue[key])
@@ -472,9 +485,9 @@ def _public_issue(issue):
         if key in issue
     }
     if issue['code'] == 'unresolved_finding':
-        public['message'] = 'A source slice did not support a final conclusion; its details remain in diagnostics.'
+        public['message'] = 'A source slice did not settle a requested conclusion; it is listed with the stated gaps.'
     elif issue['code'] == 'window_requirement_unresolved':
-        public['message'] = 'A source window reported an unresolved task requirement; review its details in diagnostics.'
+        public['message'] = 'A source window left a task requirement unsettled; it is listed with the stated gaps.'
     return public
 
 
@@ -812,8 +825,13 @@ def collect_analysis_window_candidates(
         elif finding.get('status') != 'supported':
             issues.append(_issue('unresolved_finding', 'The source slice did not support a final conclusion.'))
         finding_issues = finding.get('issues', [])
+        stated_issues = []
         if not isinstance(finding_issues, list) or any(not isinstance(item, str) for item in finding_issues):
             issues.append(_issue('invalid_issues', 'A finding supplied an invalid uncertainty description.'))
+        elif finding.get('status') == 'supported':
+            # The model supports the finding and states what it could not settle within it. The
+            # finding is kept with that statement beside its values, not dropped for it.
+            stated_issues = sorted({item.strip() for item in finding_issues if item.strip()})
         else:
             issues.extend(_issue('unresolved_finding', item) for item in finding_issues if item.strip())
         caveats = finding.get('caveats')
@@ -881,6 +899,8 @@ def collect_analysis_window_candidates(
         }
         if caveats:
             candidate['caveats'] = caveats
+        if stated_issues:
+            candidate['stated_issues'] = stated_issues
         candidate['candidate_id'] = _identity('candidate', candidate)
         candidates.append(candidate)
 
@@ -969,6 +989,14 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence,
 
     records = []
     issues = [deepcopy(issue) for unit in units.values() for issue in unit.get('issues', [])]
+    stated_gap_candidates = 0
+    stated_gaps = []
+    for unit in units.values():
+        stated_gaps.extend(
+            {'scope': 'source', 'document_id': unit['document_id'],
+             'file_name': (unit.get('source') or {}).get('file_name'), 'statement': issue['message']}
+            for issue in unit.get('issues', []) if issue['code'] == 'window_requirement_unresolved'
+        )
     for record_id, group in sorted(grouped.items()):
         values = {}
         conflicts = set()
@@ -982,12 +1010,26 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence,
                 'conflicting_values', 'Source windows disagree on values; this finding remains unresolved.',
                 record_id=record_id, document_id=group[0]['document_id'], fields=sorted(conflicts),
             ))
+        if unresolved and not conflicts and all(
+            issue['code'] == 'unresolved_finding'
+            for item in group for issue in item['issues'] + item['resolution_issues']
+        ):
+            # Nothing was rejected: the model itself did not conclude this finding.
+            stated_gap_candidates += len(group)
         for candidate in group:
             candidate['resolution'] = 'unresolved' if unresolved else 'accepted'
+            statements = [_issue('unresolved_finding', text) for text in candidate.get('stated_issues', [])]
             issues.extend(
                 {**issue, 'record_id': record_id, 'document_id': candidate['document_id'],
                  'work_unit_id': candidate['work_unit_id']}
-                for issue in candidate['issues'] + candidate['resolution_issues']
+                for issue in candidate['issues'] + candidate['resolution_issues'] + statements
+            )
+            stated_gaps.extend(
+                {'scope': 'finding' if unresolved else 'record', 'document_id': candidate['document_id'],
+                 'file_name': (candidate.get('source') or {}).get('file_name'),
+                 'finding_key': candidate['finding_key'],
+                 **({} if unresolved else {'record_id': record_id}), 'statement': issue['message']}
+                for issue in candidate['issues'] + statements if issue['code'] == 'unresolved_finding'
             )
         if not unresolved:
             record = {
@@ -1000,6 +1042,10 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence,
             caveats = sorted({caveat for candidate in group for caveat in candidate.get('caveats', [])})
             if caveats:
                 record['caveats'] = caveats
+            open_issues = sorted({text for candidate in group for text in candidate.get('stated_issues', [])})
+            if open_issues:
+                # What the model could not settle within this finding, kept beside its values.
+                record['open_issues'] = open_issues
             records.append(record)
 
     source_order = {source['document_id']: index for index, source in enumerate(sources)}
@@ -1032,8 +1078,14 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence,
     complete_sources = sum(item['status'] == 'complete' for item in source_coverage)
     coverage_complete = bool(sources) and complete_sources == len(sources)
     unresolved_count = sum(item['resolution'] == 'unresolved' for item in unique_candidates.values())
+    rejected_count = unresolved_count - stated_gap_candidates
+    stated_gap_count = sum(issue['code'] in STATED_GAP_CODES for issue in issues)
+    stated_gaps = [
+        {key: value for key, value in gap.items() if value is not None}
+        for gap in {_identity('gap', gap): gap for gap in stated_gaps}.values()
+    ]
     status = 'valid'
-    if not coverage_complete or unresolved_count or issues:
+    if not coverage_complete or rejected_count or stated_gap_count != len(issues):
         status = 'partial' if completed_units else ('pending' if pending_units and not failed_units else 'invalid')
     coverage = {
         'assigned_sources': len(sources),
@@ -1070,7 +1122,7 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence,
                 )},
                 {'name': 'candidate_structure_and_evidence_locations',
                  'status': (
-                     'unresolved' if unresolved_count else ('passed' if unique_candidates else 'not_applicable')
+                     'unresolved' if rejected_count else ('passed' if unique_candidates else 'not_applicable')
                  )},
                 {'name': 'conflicting_values', 'status': (
                     'unresolved' if any(
@@ -1089,11 +1141,16 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence,
                 'Calculations, scoring rules and derived values have not been independently verified.',
                 *(['Source observations are attributed source statements, not reconciled values.']
                   if observations else []),
+                *([STATED_GAP_LIMITATION] if stated_gap_count else []),
             ],
             'issues': [_public_issue(issue) for issue in issues],
             'coverage': coverage,
             'finalized_record_count': len(records),
             'unresolved_candidate_count': unresolved_count,
+            'stated_gap_count': stated_gap_count,
+            # In the model's words, as the findings are: a result of the analysis, read by every
+            # step that reads it, not an audit detail.
+            **({'stated_gaps': stated_gaps} if stated_gaps else {}),
             'evidence_matcher_version': EVIDENCE_MATCHER_VERSION,
         },
         'analysis_diagnostics': {
@@ -1222,6 +1279,12 @@ def build_document_analysis_report(result):
                 f'  Caveat: {_markdown_text(caveat)}' for caveat in caveats
                 if isinstance(caveat, str) and caveat.strip()
             )
+        open_issues = record.get('open_issues')
+        if isinstance(open_issues, list):
+            lines.extend(
+                f'  Not settled: {_markdown_text(text)}' for text in open_issues
+                if isinstance(text, str) and text.strip()
+            )
         lines.append('')
     lines.extend([
         '', '## Coverage', '',
@@ -1260,9 +1323,27 @@ def build_document_analysis_report(result):
         )
     if note_lines:
         lines.extend(['', '## Analysis notes', '', *note_lines])
-    if validation.get('issues'):
+    # What the analysis stated it could not conclude, in its own words. A gap within a finding
+    # that is shown above is on that finding, so only the others are listed here.
+    stated_gaps = [gap for gap in validation.get('stated_gaps') or [] if isinstance(gap, dict)]
+    gap_lines = []
+    for gap in stated_gaps:
+        if gap.get('scope') == 'record' or not isinstance(gap.get('statement'), str):
+            continue
+        prefix = _markdown_text(gap.get('file_name') or names.get(gap.get('document_id')) or 'Source')
+        if gap.get('finding_key'):
+            prefix = f'{prefix}, {_markdown_text(gap["finding_key"])}'
+        gap_lines.append(f'- {prefix}: {_markdown_text(gap["statement"])}')
+    gap_lines = list(dict.fromkeys(gap_lines))
+    if gap_lines:
+        lines.extend(['', '## Not settled by the sources', '', *gap_lines])
+    other_issues = [
+        issue for issue in validation.get('issues') or []
+        if not (stated_gaps and issue.get('code') in STATED_GAP_CODES)
+    ]
+    if other_issues:
         lines.extend(['', '## Validation notes' if validation.get('status') == 'valid' else '## Unresolved work', ''])
-        for issue in validation['issues']:
+        for issue in other_issues:
             name = names.get(issue.get('document_id'))
             prefix = f'{_markdown_text(name)}: ' if name else ''
             lines.append(f'- {prefix}{_markdown_text(issue["message"])}')

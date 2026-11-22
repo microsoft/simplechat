@@ -1,8 +1,9 @@
 # test_task_completeness_engine.py
 """Grounded, bounded task checking and recovery.
 
-Version: 0.261.423
+Version: 0.261.478
 Implemented in: 0.261.382; 0.261.384; 0.261.416; 0.261.418; 0.261.422
+Input-budget numbers on an unavailable check added in: 0.261.478
 """
 
 import json
@@ -73,6 +74,36 @@ def test_assessment_transport_only_accepts_actual_evidence_keys(evidence):
     invalid_errors = list(validator.iter_errors(report))
     assert invalid_errors
     assert "source text" not in json.dumps(schema)
+
+
+def test_a_check_whose_input_does_not_fit_logs_the_budget_numbers():
+    """0.261.478: an unavailable check says how far its input was over the model's budget."""
+    class BudgetError(Exception):
+        audit = {
+            "input_tokens": 190000, "input_budget_tokens": 120000, "context_window_tokens": 128000,
+            "max_output_tokens": 8192, "limit_source": "catalog+configured", "limit_status": "known",
+            "decision": "exceeded", "model_id": "PRIVATE-DEPLOYMENT", "safety_tokens": True,
+        }
+
+    def invoke(messages, stage, *, response_format=None):
+        raise BudgetError("PRIVATE provider text")
+
+    diagnostics = []
+    result, state = check_and_correct(
+        "Evaluation", instruction="Include the status.", contract={"kind": "text-v1"},
+        evidence={"record": {"status": "Evaluation"}},
+        policy={"enabled": True, "max_corrections": 2},
+        invoke=invoke, validate=lambda value: [], on_diagnostic=diagnostics.append,
+    )
+    assert result == "Evaluation" and state["status"] == "verification_unavailable"
+    [diagnostic] = diagnostics
+    assert diagnostic["error_type"] == "BudgetError"
+    assert (diagnostic["input_tokens"], diagnostic["input_budget_tokens"]) == (190000, 120000)
+    assert (diagnostic["context_window_tokens"], diagnostic["max_output_tokens"]) == (128000, 8192)
+    assert (diagnostic["limit_source"], diagnostic["limit_status"]) == ("catalog+configured", "known")
+    # Counts and closed tokens only: no model name, no boolean passed off as a count.
+    assert "model_id" not in diagnostic and "safety_tokens" not in diagnostic
+    assert "PRIVATE" not in json.dumps(diagnostic)
 
 
 def test_evidence_reference_repair_gets_valid_labels_without_rewriting_the_answer():

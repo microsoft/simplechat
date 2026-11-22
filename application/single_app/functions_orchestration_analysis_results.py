@@ -29,6 +29,32 @@ FINDING_COLUMNS = (
 )
 
 
+# Each stated gap is a limitation of the result, so a step that reads any of its outputs is
+# given what the sources did not settle, not only that something was not settled.
+STATED_GAP_LIMITATION_LIMIT = 8
+LIMITATION_BYTES = 1024
+
+
+def _stated_gap_limitations(validation):
+    lines = []
+    for gap in validation.get("stated_gaps") or []:
+        if type(gap) is not dict or type(gap.get("statement")) is not str or not gap["statement"].strip():
+            continue
+        where = ", ".join(
+            value.strip() for value in (gap.get("file_name"), gap.get("finding_key"))
+            if type(value) is str and value.strip()
+        )
+        line = f'Not settled by the sources{f" ({where})" if where else ""}: {" ".join(gap["statement"].split())}'
+        lines.append(line.encode("utf-8")[:LIMITATION_BYTES].decode("utf-8", errors="ignore").strip())
+    lines = list(dict.fromkeys(lines))
+    if len(lines) > STATED_GAP_LIMITATION_LIMIT:
+        more = len(lines) - STATED_GAP_LIMITATION_LIMIT
+        lines = lines[:STATED_GAP_LIMITATION_LIMIT] + [
+            f"{more} more stated gaps are listed in the analysis report.",
+        ]
+    return lines
+
+
 def _count(value):
     if type(value) is not int or value < 0:
         raise ResultContractError("result_analysis_coverage_invalid")
@@ -76,10 +102,34 @@ def _native_completeness(reader):
             if isinstance(issue, dict)
         ) else 'passed'
     ))
-    limitations = list(validation.get("limitations") or [])
+    limitations = [*(validation.get("limitations") or []), *_stated_gap_limitations(validation)]
     if status == "partial":
         limitations.append("Only accepted native findings are retained; unresolved or unfinished work is not complete.")
     return status, coverage, tuple(checks), tuple(limitations)
+
+
+def _log_stated_gaps(producer, manifest, count):
+    """A complete analysis that states what the sources did not settle: how many, and where."""
+    validation = manifest.get("validation") or {}
+    gaps = [gap for gap in validation.get("stated_gaps") or [] if isinstance(gap, dict)]
+    if not gaps:
+        return
+    log_event("[ORCHESTRATION_ANALYSIS] A complete document analysis stated gaps.", extra={
+        **workflow_log_context(
+            run_id=producer.run_id, conversation_id=producer.conversation_id, step_id=producer.step_id,
+        ),
+        "stage": "analysis_result", "capability_id": producer.capability_id,
+        "stated_gap_count": len(gaps),
+        **{
+            f"stated_gap_{scope}_count": sum(gap.get("scope") == scope for gap in gaps)
+            for scope in ("source", "finding", "record")
+        },
+        "record_count": count,
+        **{
+            name: validation.get(name) for name in ("finalized_record_count", "unresolved_candidate_count")
+            if type(validation.get(name)) is int
+        },
+    })
 
 
 def _log_partial_analysis(producer, manifest, count, public_records):
@@ -108,6 +158,15 @@ def _log_partial_analysis(producer, manifest, count, public_records):
         "validation_issue_codes": ",".join(codes[:32]),
         "validation_checks_not_passed": ",".join(not_passed[:32]),
         "validation_issue_count": len(issues),
+        # Issues the analysis model stated itself (a slice or a finding it could not conclude),
+        # as against findings the validator could not accept (evidence, identity, conflicts).
+        "model_stated_issue_count": sum(
+            issue.get("code") in ("unresolved_finding", "window_requirement_unresolved") for issue in issues
+        ),
+        **{
+            name: validation.get(name) for name in ("finalized_record_count", "unresolved_candidate_count")
+            if type(validation.get(name)) is int
+        },
         "limitation_count": len(validation.get("limitations") or []),
         "record_count": count,
         "public_records_available": public_records,
@@ -205,6 +264,8 @@ def persist_saved_analysis_result(
     findings = projection.iter_units() if projection is not None else _finding_units(reader)
     if status != "complete":
         _log_partial_analysis(producer, manifest, count, projection is not None)
+    else:
+        _log_stated_gaps(producer, manifest, count)
     outputs = [
         NamedOutput("findings", "records-v1", findings,
                     _completeness(status, count, coverage, checks, limitations), FINDING_COLUMNS),

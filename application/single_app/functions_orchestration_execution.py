@@ -417,7 +417,7 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
                 )
                 if transient_check:
                     raise CompletenessError("completeness_checker_unavailable") from exc
-                raise HarnessExecutionError("model_failed") from exc
+                raise HarnessExecutionError("model_failed", rule="request_failed", stage=stage) from exc
             raise
         usage = getattr(response, "usage", None)
         for field in _USAGE_FIELDS:
@@ -429,11 +429,11 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
         if not response or not response.choices:
             if stage == "completeness_check":
                 raise CompletenessError("completeness_report_invalid")
-            raise HarnessExecutionError("model_failed")
+            raise HarnessExecutionError("model_failed", rule="reply_empty", stage=stage)
         choice = response.choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
         if finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
-            raise HarnessExecutionError("model_failed")
+            raise HarnessExecutionError("model_failed", rule="reply_refused", stage=stage)
         if (metadata or {}).get("require_complete_generation") is True and finish_reason != "stop":
             raise HarnessExecutionError(
                 "model_failed", rule="generation_incomplete", stage=stage,
@@ -448,7 +448,7 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
         if not text.strip():
             if stage == "completeness_check":
                 raise CompletenessError("completeness_report_invalid")
-            raise HarnessExecutionError("model_failed")
+            raise HarnessExecutionError("model_failed", rule="reply_empty", stage=stage)
         return text
 
     invoke_prompt.model_metadata = model.model_metadata or behavior_name

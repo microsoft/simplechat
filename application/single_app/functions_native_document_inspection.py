@@ -93,9 +93,13 @@ def inspect_native_document(document, source_bytes, extension, *, section="all",
         NATIVE_DOCUMENT_FOCUSED_INSPECTION_VERSION
         if native_slide_number is not None else NATIVE_DOCUMENT_INSPECTION_VERSION
     )
+    # What a continuation must still match: the document, its uploaded version and the source
+    # bytes. The record's storage revision is not part of it (from 0.261.478): any write to the
+    # record changes that revision, including ones that leave the source bytes as they were,
+    # and a page is read from the bytes. Access is checked again on every read by the caller.
     identity = {
         "document_id": document["id"], "version": document.get("version"),
-        "revision": document.get("_etag"), "source_sha256": digest,
+        "source_sha256": digest,
         "schema_version": schema_version, "section": section,
         **({"native_slide_number": native_slide_number} if native_slide_number is not None else {}),
     }
