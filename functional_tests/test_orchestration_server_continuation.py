@@ -2,7 +2,7 @@
 # test_orchestration_server_continuation.py
 """
 Functional test for the server-side next attempt after a failed orchestration run.
-Version: 0.261.477
+Version: 0.261.478
 Implemented in: 0.261.462
 
 This test ensures that a failed attempt is followed by its next one on the server, after the
@@ -278,6 +278,38 @@ def test_a_partial_analysis_logs_why_as_codes_only(monkeypatch):
         {"code": "unresolved_finding"}, {"code": "window_requirement_unresolved"}, {"code": "unmatched_evidence"},
     ]}}, 0, False)
     assert logged[0]["sc_model_stated_issue_count"] == 2 and logged[0]["sc_validation_issue_count"] == 3
+
+
+def test_a_complete_analysis_logs_how_many_gaps_it_stated(monkeypatch):
+    """0.261.478: a complete analysis with stated gaps is visible in telemetry, as counts."""
+    results = importlib.import_module("functions_orchestration_analysis_results")
+    telemetry = importlib.import_module("functions_appinsights")
+    logged = []
+    monkeypatch.setattr(
+        results, "log_event",
+        lambda message, extra=None, **_kwargs: logged.append(telemetry._build_logger_extra(message, extra)),
+    )
+    producer = types.SimpleNamespace(
+        run_id="PRIVATE_RUN", conversation_id="PRIVATE_CONVERSATION", step_id="PRIVATE_STEP",
+        capability_id="document_analyze",
+    )
+    results._log_stated_gaps(producer, {"validation": {"status": "valid", "finalized_record_count": 4, "stated_gaps": [
+        {"scope": "source", "file_name": "PRIVATE.pdf", "statement": "PRIVATE statement"},
+        {"scope": "record", "statement": "PRIVATE"}, {"scope": "record", "statement": "PRIVATE"},
+        {"scope": "finding", "statement": "PRIVATE"}, "PRIVATE",
+    ]}}, 4)
+    [detail] = logged
+    assert detail["sc_stated_gap_count"] == 4 and detail["sc_record_count"] == 4
+    assert (
+        detail["sc_stated_gap_source_count"], detail["sc_stated_gap_finding_count"],
+        detail["sc_stated_gap_record_count"],
+    ) == (1, 1, 2)
+    assert detail["sc_finalized_record_count"] == 4
+    assert "PRIVATE" not in json.dumps(detail)
+    # An analysis that states no gap logs nothing.
+    logged.clear()
+    results._log_stated_gaps(producer, {"validation": {"status": "valid"}}, 4)
+    assert logged == []
 
 
 def test_stated_gaps_reach_every_reading_step_as_bounded_limitations():

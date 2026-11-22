@@ -83,6 +83,18 @@ class _NoHarnessExecutionError(Exception):
     """Stands in for the harness error class while its module is not loaded; never raised."""
 
 
+def _failure_rule(error):
+    """The closed rule a failure names. The harness error keeps it as ``validation_rule``."""
+    rule = getattr(error, "rule", None) or getattr(error, "validation_rule", None)
+    return rule if type(rule) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", rule) else None
+
+
+# An authoring call that returned no whole program: the reply was cut off, or it was empty.
+# Nothing was authored, so the call is spent and the author is asked again while calls remain.
+# A refused reply and a request the provider failed are not asked again here.
+_REPLY_INCOMPLETE_RULES = frozenset({"generation_incomplete", "reply_empty"})
+
+
 class NativeOrchestrationBridgeError(ValueError):
     def __init__(self, code, *, rule=None, detail=None):
         self.code = code
@@ -596,6 +608,7 @@ def _failure(step, exc, stage, context=None):
             "native_code": code, "stage": stage,
             "error_type": type(exc).__name__, "failure_code": failure_code,
             "execution_code": service_code or code,
+            **({"execution_rule": _failure_rule(exc)} if _failure_rule(exc) else {}),
             **native_error_diagnostics(exc),
         },
         level=logging.WARNING,
@@ -606,8 +619,7 @@ def _failure(step, exc, stage, context=None):
     )
     result["failure"].update({"native_code": code, "retryable": code == "native_storage_unavailable"})
     calculation_cause = None
-    if getattr(exc, "rule", None) in {"generation_incomplete", "lowering_call_limit",
-                                       "lowering_call_uncertain"}:
+    if _failure_rule(exc) in {"lowering_call_limit", "lowering_call_uncertain", *_REPLY_INCOMPLETE_RULES}:
         calculation_cause = "generation_incomplete"
     elif service_code == "relational_match_ambiguous":
         calculation_cause = "relationship_grain_invalid"
@@ -947,6 +959,16 @@ def _prepared_program_prompt(question, context_value, schema, *, correction=None
             "states what was wrong; use it. Do not change the approved sources, "
             "question, horizon, output fields, token budget or requested effects."
         )
+        if correction.get("reply_incomplete") is True:
+            instructions += (
+                " The reply after that finding ended before it held a whole program, so nothing "
+                "was read from it. Return the whole corrected program."
+            )
+        if correction.get("prior_attempt") is True:
+            instructions += (
+                " The rejected program and its finding are from the previous attempt at this "
+                "same calculation."
+            )
     payload = {
         "instructions": instructions, "question": question,
         "program_schema": schema, "complete_preparation": context_value,
@@ -1031,12 +1053,56 @@ def _saved_correction_admissible(correction):
 #
 # Overlapping effective intervals and an invalid allocation or cumulative value are not
 # listed: those are statements about the reference data itself, not about the program.
+# A key column whose cell is empty or is not a text or number value is returned as well (from
+# 0.261.478): the author named that column as the key, and the finding says which role and row.
 _RETURNED_PROGRAM_CHECKS = {
+    "relational_key_invalid": frozenset({"event_key", "detail_key", "cumulative_partition"}),
     "relational_columns_ambiguous": frozenset({"join_columns_ambiguous", "allocate_columns_ambiguous"}),
     "relational_selection_invalid": frozenset({"document_ids_mismatch"}),
     "relational_date_invalid": frozenset({"effective_value"}),
     "relational_match_ambiguous": frozenset({"right_cardinality", "right_match_cardinality", "left_reuse"}),
 }
+
+
+def _prior_attempt_correction(context, store, step):
+    """The last program of the previous attempt and what it was told, for a new attempt.
+
+    A next attempt authors the program again. Without this it starts from nothing and can spend
+    its calls finding what the previous attempt had already been told. The program is model
+    input only: it is shown to the author as rejected and is never run. Nothing is carried when
+    the previous attempt left no confirmed program with a finding this code would return.
+    """
+    from functions_orchestration_checkpoints import CheckpointError
+
+    try:
+        prior = store.load_prior_attempt_lowering(step["step_id"])
+    except CheckpointError:
+        return None
+    if not isinstance(prior, dict):
+        return None
+    correction = deepcopy(prior["last_failure"])
+    correction["program"] = deepcopy(prior["program"])
+    try:
+        if not _saved_correction_admissible(correction):
+            return None
+    except Exception:
+        return None
+    correction["prior_attempt"] = True
+    log_event(
+        "[ORCHESTRATION_NATIVE] Calculation program carried from the previous attempt.",
+        extra={
+            **workflow_log_context(
+                run_id=getattr(context, "run_id", None),
+                conversation_id=getattr(context, "conversation_id", None),
+                step_id=step["step_id"],
+            ),
+            "stage": "tabular_program_lowering",
+            "correction_category": correction["category"],
+            "correction_check": correction.get("check"),
+            "correction_origin": correction.get("origin") or "validation",
+        },
+    )
+    return correction
 
 
 def _log_program_returned(context, step, correction, state):
@@ -1380,6 +1446,8 @@ def _execute_prepared_relational(
                         if key in correction
                     },
                 )
+        elif state["phase"] == "context_checked" and state["calls_used"] == 0:
+            correction = _prior_attempt_correction(context, store, step)
         while True:
             if state["phase"] == "call_reserved":
                 raise NativeOrchestrationBridgeError(
@@ -1484,25 +1552,32 @@ def _execute_prepared_relational(
 
                     if not isinstance(exc, (json.JSONDecodeError, TabularRelationalError, HarnessExecutionError)):
                         raise
-                    if isinstance(exc, HarnessExecutionError) and (
-                        getattr(exc, "rule", None) != "generation_incomplete"
-                    ):
+                    reply_rule = _failure_rule(exc) if isinstance(exc, HarnessExecutionError) else None
+                    if isinstance(exc, HarnessExecutionError) and reply_rule not in _REPLY_INCOMPLETE_RULES:
                         raise
                     if isinstance(exc, json.JSONDecodeError):
                         exc = TabularRelationalError(
                             "relational_spec_invalid", detail={"check": "json_parse"},
                         )
                     elif isinstance(exc, HarnessExecutionError):
-                        correction = {
+                        incomplete = {
                             "category": "generation_incomplete",
-                            "check": "complete_generation", "step_index": 0,
+                            "check": "complete_generation" if reply_rule == "generation_incomplete" else reply_rule,
+                            "step_index": 0,
                         }
+                        _log_program_returned(context, step, incomplete, state)
+                        # A finding the author was already given still stands: this reply held
+                        # no program, so it changed nothing about the last one.
+                        correction = (
+                            {**correction, "reply_incomplete": True}
+                            if isinstance((correction or {}).get("program"), dict) else incomplete
+                        )
                         failed = deepcopy(state)
                         failed.pop("program", None)
                         failed.pop("program_sha256", None)
                         failed.update({
                             "phase": "failure_saved",
-                            "last_failure": correction,
+                            "last_failure": incomplete,
                             "completion_confirmed": False,
                             "token_usage": deepcopy(
                                 getattr(context, "prompt_token_usage", {}) or {}

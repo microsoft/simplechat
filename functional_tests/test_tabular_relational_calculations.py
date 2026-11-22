@@ -1,11 +1,12 @@
 # test_tabular_relational_calculations.py
 """
 Functional tests for complete multi-file calculations and per-row lineage.
-Version: 0.261.446
+Version: 0.261.478
 Implemented in: 0.261.437; 0.261.446
 Planner-visible grammar, column rules and content-free failure locations added in: 0.261.443
 Namespace-separated derived rejoins and evaluator diagnostics added in: 0.261.444
 Checked allocation and date-peer cumulative operations added in: 0.261.446
+Result columns that state whether the records hold an empty value added in: 0.261.478
 
 These offline cases use unrelated schemas, precise source values and the real
 CSV/Excel readers. They do not invoke a model or change source documents.
@@ -77,6 +78,44 @@ def run(spec, sources, *, limits=None, cancel_requested=None):
             cell_range=selected.get("cell_range"), table_id=selected.get("table_id"),
         )
     return calculate_relational_sources(spec, data, limits=limits, cancel_requested=cancel_requested)
+
+
+def test_result_columns_say_whether_an_output_field_holds_an_empty_value():
+    """0.261.478: an output field that does not declare ``nullable`` may evaluate to empty.
+
+    The column used to be declared non-nullable regardless, so the finished calculation was
+    refused when it was retained (``result_schema_invalid``) and its author was told nothing.
+    """
+    from functions_orchestration_result_contracts import RecordColumn, validate_record
+
+    def undeclared(name, source, value_type="string"):
+        return {"name": name, "type": value_type, "expression": {"source": source}}
+
+    spec = join_spec()
+    spec["steps"] = spec["steps"][:1]
+    spec["result"] = "matched"
+    spec["output"] = transform(
+        field("code", "sales.code"), undeclared("price", "catalog.price", "number"),
+        undeclared("sku", "catalog.sku"),
+    )
+    sources = {"sales": b"code,quantity\n007,3\n008,1\n", "catalog": b"sku,price\n007,0.10\n"}
+    result = run(spec, sources)
+    assert result["records"] == [
+        {"code": "007", "price": 0.1, "sku": "007"}, {"code": "008", "price": None, "sku": None},
+    ]
+    assert [(column["name"], column["nullable"]) for column in result["columns"]] == [
+        ("code", False), ("price", True), ("sku", True),
+    ]
+    columns = [RecordColumn.from_dict(column) for column in result["columns"]]
+    for record in result["records"]:
+        validate_record(record, columns)
+    # Every row matched: nothing is empty, so the same undeclared fields are not nullable.
+    matched = run(spec, {**sources, "sales": b"code,quantity\n007,3\n"})
+    assert [column["nullable"] for column in matched["columns"]] == [False, False, False]
+    # A field that declares it may not be empty is still stopped when it evaluates to empty.
+    spec["output"] = transform(field("code", "sales.code"), field("price", "catalog.price", value_type="number"))
+    with pytest.raises(TabularTransformationEvaluationError):
+        run(spec, sources)
 
 
 def test_keyed_calculation_preserves_zero_prefixed_ids_exact_money_and_lineage():

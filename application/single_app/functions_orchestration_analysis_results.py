@@ -108,6 +108,30 @@ def _native_completeness(reader):
     return status, coverage, tuple(checks), tuple(limitations)
 
 
+def _log_stated_gaps(producer, manifest, count):
+    """A complete analysis that states what the sources did not settle: how many, and where."""
+    validation = manifest.get("validation") or {}
+    gaps = [gap for gap in validation.get("stated_gaps") or [] if isinstance(gap, dict)]
+    if not gaps:
+        return
+    log_event("[ORCHESTRATION_ANALYSIS] A complete document analysis stated gaps.", extra={
+        **workflow_log_context(
+            run_id=producer.run_id, conversation_id=producer.conversation_id, step_id=producer.step_id,
+        ),
+        "stage": "analysis_result", "capability_id": producer.capability_id,
+        "stated_gap_count": len(gaps),
+        **{
+            f"stated_gap_{scope}_count": sum(gap.get("scope") == scope for gap in gaps)
+            for scope in ("source", "finding", "record")
+        },
+        "record_count": count,
+        **{
+            name: validation.get(name) for name in ("finalized_record_count", "unresolved_candidate_count")
+            if type(validation.get(name)) is int
+        },
+    })
+
+
 def _log_partial_analysis(producer, manifest, count, public_records):
     """Why a finished analysis is partial, as the validator's own codes and counts.
 
@@ -240,6 +264,8 @@ def persist_saved_analysis_result(
     findings = projection.iter_units() if projection is not None else _finding_units(reader)
     if status != "complete":
         _log_partial_analysis(producer, manifest, count, projection is not None)
+    else:
+        _log_stated_gaps(producer, manifest, count)
     outputs = [
         NamedOutput("findings", "records-v1", findings,
                     _completeness(status, count, coverage, checks, limitations), FINDING_COLUMNS),
