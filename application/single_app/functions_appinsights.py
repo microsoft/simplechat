@@ -165,6 +165,9 @@ LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "bindingoutcome", "correctioncategory", "correctionorigin", "taskstatus",
     # The named check behind a returned calculation, and why a document analysis is partial.
     "correctioncheck", "validationstatus", "executionstatus", "presentationstatus", "coveragestatus",
+    # The check that stopped an action or a model call, a refused selection's code, the cause a
+    # calculation ended on, and where a model's input limit came from.
+    "failurerule", "executionrule", "errorcode", "calculationcause", "limitsource", "limitstatus",
 })
 # Comma-separated output names from a capability contract; any other text is dropped.
 LOGGER_WORKFLOW_CODE_LIST_KEYS = frozenset({

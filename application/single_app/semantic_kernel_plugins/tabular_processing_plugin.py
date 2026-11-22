@@ -721,7 +721,11 @@ class TabularProcessingPlugin:
                 'exception_type': type(error).__name__,
                 # Which of this plugin's functions was running, and for a selection failure which
                 # rule refused it and how many choices were offered back. No names or values.
-                'operation': sys._getframe(1).f_code.co_name,
+                # The plugin function, not the worker closure it runs its file work in.
+                'operation': ([
+                    part for part in sys._getframe(1).f_code.co_qualname.split('.')
+                    if not part.startswith(('_', '<'))
+                ] or ['unknown'])[-1],
                 **({
                     'error_code': error.code, 'choice_count': len(error.choices),
                 } if isinstance(error, TabularSelectionError) and isinstance(error.code, str) else {}),

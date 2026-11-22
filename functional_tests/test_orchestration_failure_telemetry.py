@@ -1,7 +1,7 @@
 # test_orchestration_failure_telemetry.py
 """Specific orchestration failure rules reach telemetry without private plan text.
 
-Version: 0.261.444
+Version: 0.261.481
 Implemented in: 0.261.140
 Step, capability, format, and authority-reason codes covered in: 0.261.141
 Partial-input producer capability and step hash fields covered in: 0.261.191
@@ -9,6 +9,7 @@ Semantic chat outcomes and persisted-state correlation implemented in: 0.261.341
 Bounded, non-regex application-version validation implemented in: 0.261.342
 Two shared planning corrections covered in: 0.261.422
 Recovery guard detail through the Warning logger covered in: 0.261.444
+Diagnostic rule and code fields added in 0.261.478 reaching telemetry covered in: 0.261.480
 
 Uses real planner/validation/logging modules with offline provider replies.
 The synthetic invalid proposals test diagnostics, not the unknown historical
@@ -171,6 +172,23 @@ def test_workflow_hash_and_code_fields_do_not_preserve_arbitrary_text(harness):
     for key in (*telemetry.LOGGER_WORKFLOW_HASH_KEYS, *telemetry.LOGGER_WORKFLOW_CODE_KEYS):
         invalid = telemetry._build_logger_extra("Failure.", {key: "PRIVATE_VALUE"})
         assert f"sc_{key}" not in invalid
+
+
+def test_the_rule_and_code_fields_added_for_troubleshooting_reach_telemetry(harness):
+    """0.261.480: these were logged from 0.261.478 and dropped at this boundary."""
+    telemetry = importlib.import_module("functions_appinsights")
+    properties = telemetry._build_logger_extra("[ORCHESTRATION_ADAPTERS] Failure.", {
+        "failure_rule": "read_document_unselected", "execution_rule": "reply_empty",
+        "error_code": "sheet_selection_required", "calculation_cause": "generation_incomplete",
+        "limit_source": "compatibility_policy", "limit_status": "unknown",
+    })
+    assert properties["sc_failure_rule"] == "read_document_unselected"
+    assert properties["sc_execution_rule"] == "reply_empty"
+    assert properties["sc_error_code"] == "sheet_selection_required"
+    assert properties["sc_calculation_cause"] == "generation_incomplete"
+    assert (properties["sc_limit_source"], properties["sc_limit_status"]) == ("compatibility_policy", "unknown")
+    for key in ("failure_rule", "execution_rule", "error_code", "calculation_cause", "limit_source"):
+        assert f"sc_{key}" not in telemetry._build_logger_extra("Failure.", {key: "PRIVATE text"})
 
 
 def test_admission_diagnostic_identifies_sdk_type_without_private_record(harness, monkeypatch):

@@ -10,10 +10,11 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef } from 'react';
 import { clsx } from 'clsx';
 import { GlassButton } from '../ui/primitives';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
+import { GeneratedFileIcon } from './GeneratedFileIcon';
 import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
 import { formatFileSize } from '../../lib/documentExplorer';
 import {
-    committedOrchestrationArtifact, orchestrationOutputTypeLabel,
+    committedOrchestrationArtifact, orchestrationOutputRowLabel, orchestrationOutputTypeLabel,
     type OrchestrationOutput, type OrchestrationOutputRetry,
 } from '../../lib/orchestrationOutputs';
 import {
@@ -32,10 +33,6 @@ const STATE_LABELS = {
     cancelled: 'Cancelled',
 };
 const STATUS_FALLBACK = 'Check saved file status for the latest progress.';
-
-function rowLabel(rows: number): string {
-    return `${rows.toLocaleString()} ${rows === 1 ? 'row' : 'rows'}`;
-}
 
 function sizeLabel(bytes: number): string {
     // An empty file is still a finished file; the shared formatter reserves its dash for unknown sizes.
@@ -71,7 +68,8 @@ function OutputCard({
     const completed = output.state === 'completed' && !unavailable;
     const details = [
         orchestrationOutputTypeLabel(output.output_format),
-        completed && output.row_count !== null ? rowLabel(output.row_count) : '',
+        // Rows describe a file of records. A document or a deck has none to count.
+        completed ? orchestrationOutputRowLabel(output.output_format, output.row_count) : '',
         completed && output.size_bytes !== null ? sizeLabel(output.size_bytes) : '',
     ].filter(Boolean).join(' · ');
     // Waiting, rendering and completed say everything in the badge. Only an outcome the reader
@@ -91,18 +89,24 @@ function OutputCard({
     return (
         <article ref={cardRef} tabIndex={-1} aria-label={`File ${fileName}`} aria-describedby={describedBy}
             className="min-w-0 space-y-2 rounded-xl border border-edge bg-surface-2 p-3 text-xs">
-            <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                    <h4 className="break-all font-medium text-text-1">{fileName}</h4>
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <GeneratedFileIcon format={output.output_format} />
+                <div className="min-w-0 flex-1 basis-40">
+                    <h4 className="break-all text-sm font-medium text-text-1">{fileName}</h4>
                     <p className="mt-0.5 break-words text-text-3">{details}</p>
                 </div>
-                <p role="status" className={clsx('rounded px-2 py-0.5 font-medium',
+                {/* A finished file shows its download, which says "ready" better than a badge.
+                    The status stays in the page for assistive technology. */}
+                <p role="status" className={completed ? 'sr-only' : clsx('shrink-0 rounded px-2 py-0.5 font-medium',
                     unavailableStatus ? 'bg-warn-soft text-warn'
-                        : output.state === 'completed' ? 'bg-ok-soft text-ok'
                         : output.state === 'failed' ? 'bg-danger-soft text-danger'
                         : 'bg-surface-3 text-text-2')}>
                     {unavailableStatus ? 'Unavailable' : output.state ? STATE_LABELS[output.state] : 'Status unavailable'}
                 </p>
+                {artifact ? (
+                    <GeneratedArtifactCard key={artifact.artifact_message_id} artifact={artifact}
+                        conversationId={conversationId} embedded />
+                ) : null}
             </div>
             {describedBy ? (
                 <p id={descriptionId} className="break-words text-text-2">{note || retryNote}</p>
@@ -121,10 +125,7 @@ function OutputCard({
                     {action?.submitting ? 'Requesting file retry...' : action?.uncertain ? 'Retry same request' : 'Retry file'}
                 </GlassButton>
             ) : null}
-            {artifact ? (
-                <GeneratedArtifactCard key={artifact.artifact_message_id} artifact={artifact}
-                    conversationId={conversationId} embedded />
-            ) : completed ? (
+            {!artifact && completed ? (
                 <p className="text-text-3">Download details are not available in this response. Check saved file status.</p>
             ) : null}
         </article>

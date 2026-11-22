@@ -1,7 +1,7 @@
 # test_orchestration_relational_results.py
 """
 Functional tests for authorized, retained multi-file calculation results.
-Version: 0.261.478
+Version: 0.261.481
 Implemented in: 0.261.437; 0.261.446
 Evaluation findings returned to the authoring model added in: 0.261.470
 Previous attempt's program carried forward, incomplete replies asked again added in: 0.261.478
@@ -638,6 +638,17 @@ def test_a_refused_table_selection_logs_its_rule_and_operation(monkeypatch):
             "exception_type": "TabularSelectionError", "operation": "describe_tabular_file",
             "error_code": "sheet_selection_required", "choice_count": 2,
         }
+        # 0.261.480: file work runs in a worker closure; the log names the plugin function.
+        logged.clear()
+
+        class TabularProcessingPlugin:
+            def lookup_value(self):
+                def _sync_work():
+                    return plugin.TabularProcessingPlugin._tabular_error_payload(ValueError("PRIVATE"))
+                return _sync_work()
+
+        TabularProcessingPlugin().lookup_value()
+        assert logged[0][1]["operation"] == "lookup_value"
         logged.clear()
         plugin.TabularProcessingPlugin._tabular_error_payload(ValueError("PRIVATE"))
         assert set(logged[0][1]) == {"exception_type", "operation"}
@@ -721,7 +732,7 @@ def test_saved_lowering_program_requires_supported_completion_and_exact_digest(m
         )
 
 
-def test_program_correction_never_repairs_genuine_interval_or_numeric_faults():
+def test_program_correction_never_repairs_genuine_interval_or_numeric_faults(monkeypatch):
     native = importlib.import_module("functions_orchestration_native_results")
     relational = importlib.import_module("functions_tabular_relational")
     # From 0.261.477 a join whose matches contradict its declared cardinality is returned, for
@@ -758,6 +769,37 @@ def test_program_correction_never_repairs_genuine_interval_or_numeric_faults():
         assert failure["calculation_cause"] == "calculation_program_invalid"
         assert failure["calculation_revisable"] is True
     assert native._safe_program_correction(relational.TabularRelationalError("relational_key_invalid")) is None
+    # From 0.261.481 a cell that is not a date in the column a cumulative sum is ordered by is
+    # returned, like the effective-date column. An invalid cumulative value is not (below).
+    returned = native._safe_program_correction(relational.TabularRelationalError(
+        "relational_date_invalid", detail={"check": "cumulative_order", "value_index": 2, "step_index": 21},
+    ))
+    assert returned == {
+        "category": "relational_date_invalid", "check": "cumulative_order", "step_index": 21,
+        "location": {"value_index": 2},
+    }
+    assert native._saved_correction_admissible(returned)
+    assert native._failure({"step_id": "calculate"}, relational.TabularRelationalError(
+        "relational_date_invalid", detail={"check": "cumulative_order"},
+    ), "execution")["failure"]["calculation_revisable"] is True
+    # The record of a returned finding says where it is and whether it is the same one again.
+    logged = []
+    monkeypatch.setattr(native, "log_event", lambda message, extra=None, **_kwargs: logged.append(extra))
+    run = types.SimpleNamespace(run_id="PRIVATE_RUN", conversation_id="PRIVATE_CONVERSATION")
+    native._log_program_returned(run, {"step_id": "calculate"}, returned, {"calls_used": 1})
+    native._log_program_returned(
+        run, {"step_id": "calculate"}, returned, {"calls_used": 2},
+        given={**returned, "program": {"steps": []}},
+    )
+    native._log_program_returned(
+        run, {"step_id": "calculate"}, returned, {"calls_used": 3},
+        given={**returned, "location": {"value_index": 9}},
+    )
+    assert [entry["correction_repeated"] for entry in logged] == [False, True, False]
+    assert all(
+        (entry["native_step_index"], entry["native_value_index"]) == (21, 2) and "native_check" not in entry
+        for entry in logged
+    )
     transformations = importlib.import_module("functions_tabular_transformations")
     stopped = transformations.TabularTransformationEvaluationError("Numeric value is invalid")
     stopped.detail = {

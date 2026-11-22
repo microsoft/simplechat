@@ -412,7 +412,7 @@ export function GeneratedArtifactCard({
     );
 
     const approvalNotice = approval ? (
-        <div className={clsx('flex flex-wrap items-center gap-3 rounded-lg bg-surface-sunken px-3 py-2', !embedded && 'mt-3')}>
+        <div className={clsx('flex flex-wrap items-center gap-3 rounded-lg bg-surface-sunken px-3 py-2', embedded ? 'basis-full' : 'mt-3')}>
             <FileLock2
                 size={14}
                 className={clsx('shrink-0', withheld ? 'text-warn' : 'text-ok')}
@@ -450,10 +450,14 @@ export function GeneratedArtifactCard({
     ) : null;
 
     const fileControls = !running && !withheld && downloadUrl ? (
-        <div className={clsx('flex flex-wrap gap-2', !embedded && 'mt-3')}>
-            <GlassButton size="sm" variant="subtle" onClick={() => void download()} disabled={downloading}>
+        <div className={clsx('flex flex-wrap gap-2', embedded ? 'shrink-0' : 'mt-3')}>
+            {/* A file card already names the file and its type, so its button says only what it
+                does. The format stays in the accessible name, which is read without the row. */}
+            <GlassButton size="sm" variant="subtle" onClick={() => void download()} disabled={downloading}
+                aria-label={embedded
+                    ? `${downloading ? 'Downloading' : 'Download'} ${outputFormat.toUpperCase()}` : undefined}>
                 {downloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                {downloading ? 'Downloading' : 'Download'} {outputFormat.toUpperCase()}
+                {downloading ? 'Downloading' : 'Download'}{embedded ? '' : ` ${outputFormat.toUpperCase()}`}
             </GlassButton>
 
             {compact && hasArtifactPreview(artifact) && (
@@ -501,12 +505,14 @@ export function GeneratedArtifactCard({
         if (!approvalNotice && !fileControls) {
             return null;
         }
+        // No wrapper: the controls end the file card's row, and an approval notice wraps
+        // beneath it at full width.
         return (
-            <div className="min-w-0 space-y-2 [overflow-wrap:anywhere]">
-                {approvalNotice}
+            <>
                 {fileControls}
+                {approvalNotice}
                 {previewDialog}
-            </div>
+            </>
         );
     }
 
