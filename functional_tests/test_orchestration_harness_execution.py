@@ -1,8 +1,9 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.478
+Version: 0.261.480
 Implemented in: 0.261.127
+Delivery summary states rows only for files of records, and a readable size, in: 0.261.480
 Incomplete completion rejection added in: 0.261.445
 Prepared stop-only completion enforcement added in: 0.261.446
 Named rule on every model failure, read by the calculation owner, added in: 0.261.478
@@ -947,6 +948,24 @@ def test_delivery_summary_requires_a_current_committed_card():
     assert "ready (2 rows)" in lines[1]
     assert "unavailable" in lines[2] and "unavailable" in lines[3]
     assert "999" not in summary
+
+
+def test_delivery_summary_states_the_facts_that_fit_each_file_type():
+    def line(file_name, **facts):
+        output = {"output_id": "o", "file_name": file_name, "state": "completed", "available": True, **facts}
+        return _delivery_summary([output], [{"output_id": "o"}]).splitlines()[1]
+
+    # The reported case: a finished Word document carried zero records and a character count.
+    word = line("review.docx", output_format="docx", row_count=0, character_count=18898, size_bytes=41274)
+    assert word.endswith("ready (40.3 KB).")
+    assert "rows" not in word and "characters" not in word and "bytes" not in word
+    assert line("deck.pptx", row_count=0, size_bytes=2048).endswith("ready (2 KB).")
+    # Rows are a fact about a file of records, and zero is a real count there.
+    assert line("rows.csv", output_format="csv", row_count=50, size_bytes=1006).endswith("ready (50 rows, 1006 B).")
+    assert line("one.xlsx", row_count=1, size_bytes=5 * 1024 * 1024).endswith("ready (1 row, 5 MB).")
+    assert line("empty.csv", row_count=0, size_bytes=0).endswith("ready (0 rows, 0 B).")
+    assert line("notes.txt", row_count=0, character_count=0, size_bytes=0).endswith("ready (0 B).")
+    assert line("unknown.docx").endswith("ready.")
 
 
 def test_prepared_checkpoint_uses_the_actual_owning_result_guard(harness, monkeypatch):

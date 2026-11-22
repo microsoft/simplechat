@@ -1,10 +1,11 @@
 # test_v2_orchestration_outputs.py
 """
 Real-component coverage for independent orchestration file recovery.
-Version: 0.261.232
+Version: 0.261.480
 Implemented in: 0.261.127
 Simplified file cards covered in: 0.261.141
 Container-only file access messages covered in: 0.261.232
+Compact file row with a type icon and per-type details covered in: 0.261.480
 Refs: microsoft/simplechat#1509, microsoft/simplechat#1621
 
 Executes the production React thread/drawer, stores, SSE reader and HTTP clients
@@ -424,8 +425,12 @@ def test_empty_text_files_preserve_zero_counts_and_download_empty_bytes(outputs_
     empty_file = file_card(files, file_name)
     expect(empty_file.get_by_role("status")).to_have_text("Completed")
     label = "Text file" if output_format == "txt" else "Markdown file"
-    # Zero is a real count and a real size, never dropped as if it were missing.
-    expect(empty_file).to_contain_text(f"{label} · 0 rows · 0 B")
+    # Zero is a real size, never dropped as if it were missing. A text file has no rows to count.
+    expect(empty_file).to_contain_text(f"{label} · 0 B")
+    expect(empty_file).not_to_contain_text("rows")
+    expect(empty_file.locator(f"[data-file-icon='{output_format}']")).to_be_visible()
+    # A finished file shows its download in place of a badge; the status is still announced.
+    expect(empty_file.get_by_role("button", name=f"Download {output_format.upper()}", exact=True)).to_have_text("Download")
     expect(empty_file.get_by_role("button", name=re.compile("^Retry file "))).to_have_count(0)
     with page.expect_download() as downloading:
         empty_file.get_by_role("button", name=f"Download {output_format.upper()}", exact=True).click()
