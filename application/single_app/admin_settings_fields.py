@@ -708,20 +708,20 @@ ADMIN_SETTINGS_FIELDS = {
             "help": "Applies to everyone, including admins. When both are available, users can switch from their account menu.",
             "default": "both",
             "options": [
-                {"value": "both", "label": "Legacy and modern"},
+                {"value": "both", "label": "Classic and modern"},
                 {"value": "modern", "label": "Modern only"},
-                {"value": "classic", "label": "Legacy only"},
+                {"value": "classic", "label": "Classic only"},
             ],
         },
         {
             "key": "ui_default_mode",
             "type": "select",
             "label": "Default interface",
-            "help": "Used when both interfaces are available and the user has not chosen one. A missing modern bundle temporarily falls back to legacy.",
+            "help": "Used when both interfaces are available and the user has not chosen one. A missing modern bundle temporarily falls back to classic.",
             "default": "modern",
             "options": [
                 {"value": "modern", "label": "Modern"},
-                {"value": "classic", "label": "Legacy"},
+                {"value": "classic", "label": "Classic"},
             ],
         },
         {

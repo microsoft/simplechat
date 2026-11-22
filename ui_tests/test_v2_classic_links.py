@@ -1,13 +1,13 @@
 # test_v2_classic_links.py
 """
 Browser regressions for the V2 side of the classic to V2 redirect: a classic fragment that survives the
-server's redirect, and "Switch to legacy UI" from every page that has a classic counterpart.
+server's redirect, and "Switch to classic UI" from every page that has a classic counterpart.
 Version: 0.261.449
 Implemented in: 0.261.448
 
 A server never sees the part of a URL after ``#``, but a browser keeps it across a redirect, so
 ``/workspace#documents-tab`` arrives in V2 as ``/v2/workspace#documents-tab``. V2 replaces it, once and
-in place, with the route the page registry says it names. "Switch to legacy UI" in the account menu saves
+in place, with the route the page registry says it names. "Switch to classic UI" in the account menu saves
 the account preference and opens
 the classic version of the page on screen, carrying the open conversation from the chat page, and every
 address carries ``ui=classic`` so a server that has selected the modern interface serves the classic page
@@ -203,7 +203,7 @@ class Harness:
 
     @property
     def classic_link(self):
-        return self.page.get_by_role("button", name="Switch to legacy UI")
+        return self.page.get_by_role("button", name="Switch to classic UI")
 
     def open_account_menu(self, *, phone=False):
         if phone:
@@ -441,9 +441,9 @@ def test_the_link_is_reachable_and_named_for_a_keyboard_user(harness):
     for _ in range(8):
         harness.page.keyboard.press("Shift+Tab")
         reached.append(harness.page.evaluate("() => document.activeElement.textContent.trim()"))
-        if reached[-1] == "Switch to legacy UI":
+        if reached[-1] == "Switch to classic UI":
             break
-    assert reached[-1] == "Switch to legacy UI", reached
+    assert reached[-1] == "Switch to classic UI", reached
     harness.page.keyboard.press("Escape")
     expect(harness.page.locator("#sidebar-account-menu")).to_have_count(0)
 
