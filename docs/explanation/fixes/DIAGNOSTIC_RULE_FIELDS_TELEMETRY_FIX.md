@@ -1,6 +1,6 @@
 # Diagnostic Rule Fields Telemetry Fix
 
-Fixed in version: **0.261.480**
+Fixed in version: **0.261.480** (additions in 0.261.481)
 
 ## Issue
 
@@ -57,3 +57,22 @@ Before: the fields were logged and dropped; `operation` was `_sync_work`.
 After: the fields are kept as closed tokens; `operation` names the function.
 
 Not run against the deployed application.
+
+## Added in 0.261.481
+
+From the same run, two changes to the calculation authoring loop
+(`functions_orchestration_native_results.py`):
+
+- **A cell that is not a date in the column a cumulative sum is ordered by is returned to the
+  author** (`relational_date_invalid`, check `cumulative_order`). One calculation ended on it
+  with two of its three authoring calls unused. The author named that column as the date to
+  order on, as it names an effective-date column, whose finding was already returned. An
+  invalid cumulative value is still not returned.
+- **The record of a returned finding says where it is and whether it is the same again.**
+  "Calculation program returned to its author" gains the step index, operation, role and
+  indices of the finding, and `correction_repeated`: true when the author held the same
+  finding at the same place when it wrote this program. One run was told
+  `numeric_value_is_invalid` three times; the earlier record could not say whether that was
+  one place or three.
+
+Tests: `test_program_correction_never_repairs_genuine_interval_or_numeric_faults`.

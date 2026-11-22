@@ -1620,6 +1620,16 @@ def _plan_repair_guidance(error, *, handoff_present=False):
             'one workflow_handoff step instead of the steps that do not fit.\n'
             'Return the complete corrected plan as one JSON object for the same request.'
         )
+    if (getattr(error, 'code', None), getattr(error, 'rule', None)) == (
+        'source_unavailable', 'document_authorization_required',
+    ):
+        return (
+            f'The server rejected that plan: {error}\n'
+            "A step may name only document IDs this request supplies: the user's selected sources "
+            'and candidate_documents. An ID from earlier in the conversation is not available unless '
+            'it is supplied again here.\n'
+            'Return the complete corrected plan as one JSON object for the same request.'
+        )
     steer = ''
     if handoff_present and getattr(error, 'rule', None) == 'missing_final_response':
         steer = (
@@ -2494,6 +2504,9 @@ def plan_request(
             )
             repairable = (
                 exc.code in REPAIRABLE_PLAN_CODES
+                # A document ID outside this request's readable set is the planner's own
+                # choice of ID. It is told which, and the corrected plan is checked again.
+                or (exc.code, exc.rule) == ('source_unavailable', 'document_authorization_required')
                 or _can_repair_document_action_reference(exc, current_proposal, actions)
                 or (handoff_offered and exc.code in HANDOFF_REPAIRABLE_PLAN_CODES)
             ) and not context_failed

@@ -1055,11 +1055,14 @@ def _saved_correction_admissible(correction):
 # listed: those are statements about the reference data itself, not about the program.
 # A key column whose cell is empty or is not a text or number value is returned as well (from
 # 0.261.478): the author named that column as the key, and the finding says which role and row.
+# The column a cumulative sum is ordered by is the same kind of choice (from 0.261.481): the
+# author named it as the date to order on, like the effective-date column, and a cell in it
+# that is not a date is corrected by ordering on another column or filtering first.
 _RETURNED_PROGRAM_CHECKS = {
     "relational_key_invalid": frozenset({"event_key", "detail_key", "cumulative_partition"}),
     "relational_columns_ambiguous": frozenset({"join_columns_ambiguous", "allocate_columns_ambiguous"}),
     "relational_selection_invalid": frozenset({"document_ids_mismatch"}),
-    "relational_date_invalid": frozenset({"effective_value"}),
+    "relational_date_invalid": frozenset({"effective_value", "cumulative_order"}),
     "relational_match_ambiguous": frozenset({"right_cardinality", "right_match_cardinality", "left_reuse"}),
 }
 
@@ -1105,7 +1108,18 @@ def _prior_attempt_correction(context, store, step):
     return correction
 
 
-def _log_program_returned(context, step, correction, state):
+def _log_program_returned(context, step, correction, state, *, given=None):
+    """Record a finding going back to the author: where it is, and whether it is the same again.
+
+    ``given`` is the finding the author held when it wrote this program. The same finding at
+    the same place means the revision did not change what was wrong.
+    """
+    from functions_tabular_relational import NATIVE_DIAGNOSTIC_KEYS, safe_native_detail
+
+    place = safe_native_detail({
+        "step_index": correction.get("step_index"), **(correction.get("location") or {}),
+    })
+    same = ("category", "check", "step_index", "location")
     log_event(
         "[ORCHESTRATION_NATIVE] Calculation program returned to its author.",
         extra={
@@ -1120,6 +1134,10 @@ def _log_program_returned(context, step, correction, state):
             "correction_origin": correction.get("origin") or "validation",
             "calls_used": state["calls_used"],
             "calls_limit": LOWERING_MAX_CALLS,
+            **{NATIVE_DIAGNOSTIC_KEYS[key]: value for key, value in place.items() if key != "check"},
+            "correction_repeated": isinstance(given, dict) and all(
+                given.get(key) == correction.get(key) for key in same
+            ),
         },
     )
 
@@ -1591,9 +1609,10 @@ def _execute_prepared_relational(
                             raise
                         continue
                     candidate = program if isinstance(locals().get("program"), dict) else None
+                    given = correction
                     correction = _safe_program_correction(exc) if candidate is not None else None
                     if correction is not None:
-                        _log_program_returned(context, step, correction, state)
+                        _log_program_returned(context, step, correction, state, given=given)
                     failed = deepcopy(state)
                     if correction is None:
                         failed.pop("program", None)
@@ -1626,10 +1645,11 @@ def _execute_prepared_relational(
                     program, datasets, limits=limits, cancel_requested=cancel_requested,
                 )
             except (TabularRelationalError, TabularTransformationEvaluationError) as exc:
+                given = correction
                 correction = _safe_program_correction(exc)
                 if correction is not None:
                     correction["program"] = deepcopy(program)
-                    _log_program_returned(context, step, correction, state)
+                    _log_program_returned(context, step, correction, state, given=given)
                 failed = deepcopy(state)
                 if correction is None:
                     failed.pop("program", None)

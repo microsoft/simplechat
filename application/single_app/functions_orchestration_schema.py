@@ -1521,9 +1521,19 @@ def validate_dependency_plan(
                             code='source_binding_invalid', rule='document_limit_exceeded', argument_field=name,
                         )
                     if authorized_document_ids is not None and set(arguments[name]) - set(authorized_document_ids):
+                        # The IDs go back only to the planner that wrote them, so it can name
+                        # a document this request may read. Nothing says whether such a
+                        # document exists or who may read it.
                         raise _step_contract_error(
-                            'A required source is unavailable.', raw,
+                            'A step names a document that is not one of the documents available '
+                            'to this request.', raw,
                             code='source_unavailable', rule='document_authorization_required',
+                            feedback={
+                                'argument': name,
+                                'document_ids_not_available': sorted(
+                                    set(arguments[name]) - set(authorized_document_ids)
+                                )[:PLAN_FEEDBACK_MAX_STEPS],
+                            },
                         )
             if 'reference_document_ids' in arguments:
                 _validate_reference_id_list(arguments['reference_document_ids'], 'Reference document IDs')
