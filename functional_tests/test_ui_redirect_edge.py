@@ -248,12 +248,16 @@ def test_ui_classic_is_never_redirected_and_other_values_are():
     assert evaluate(path="/chats", query_string=b"ui=classic").reason == redirect_module.REASON_ESCAPE_HATCH
     assert evaluate(path="/chats", query_string=bytearray(b"ui=classic")).reason == redirect_module.REASON_ESCAPE_HATCH
     # Only the first ui value decides, and only the exact key does.
-    for query in ("ui=modern", "ui=modern&ui=classic", "UI=classic", "ui=", "ui", "ui=classic2", "xui=classic", "other=ui%3Dclassic"):
+    for query in ("UI=classic", "ui=", "ui", "ui=classic2", "xui=classic", "other=ui%3Dclassic"):
         assert location_of(path="/chats", query_string=query) == "/v2/chat", query
+    # ui=modern names the modern interface the same way, and the V2 address keeps the pair.
+    for query in ("ui=modern", "ui=modern&ui=classic", "ui=Modern"):
+        assert location_of(path="/chats", query_string=query) == "/v2/chat?ui=modern", query
 
 
-def test_the_escape_parameter_is_not_copied_into_the_redirect():
-    assert location_of(path="/chats", query_string="conversationId=x&ui=modern&utm_source=a") == "/v2/chat?conversationId=x"
+def test_only_the_modern_pair_is_carried_into_the_redirect():
+    assert location_of(path="/chats", query_string="conversationId=x&ui=modern&utm_source=a") == "/v2/chat?conversationId=x&ui=modern"
+    assert location_of(path="/chats", query_string="conversationId=x&ui=other&utm_source=a") == "/v2/chat?conversationId=x"
 
 
 def test_the_escape_check_is_shared_with_the_landing_page():

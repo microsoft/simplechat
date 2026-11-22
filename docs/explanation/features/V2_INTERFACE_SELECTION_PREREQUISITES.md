@@ -15,14 +15,14 @@ Version 0.261.448 built the prerequisites below. Version 0.261.449 adds the
 [interface selector](UI_INTERFACE_SELECTION.md): both interfaces are allowed by
 default, modern is the default, and the account menu remembers an explicit
 choice. Forced administrator policies override that choice without deleting it.
-The legacy escape described below works only when administrator policy permits
-legacy. Direct V2 URLs also return to legacy when legacy-only is enforced.
+The classic escape described below works only when administrator policy permits
+classic. Direct V2 URLs also return to classic when classic-only is enforced.
 
 | Prerequisite | What it does | Where |
 | --- | --- | --- |
 | Classic to V2 redirect | A `GET` of a classic page is answered with a `302` to its V2 counterpart, with the query string and mapped parameters carried across. | `functions_ui_redirect.py`, one hook in `app.py` |
 | V2 fragment translation | A browser keeps `#fragment` across a redirect, so V2 turns `/v2/workspace#documents-tab` into `/v2/workspace/documents`. | `lib/classicLinks.ts`, `lib/useClassicFragmentTranslation.ts` |
-| Switch to legacy UI | When both interfaces are allowed, the account menu saves the preference and opens the legacy version of the current page, carrying `ui=classic`. | `lib/classicLinks.ts`, `components/layout/Sidebar.tsx` |
+| Switch to classic UI | When both interfaces are allowed, the account menu saves the preference and opens the classic version of the current page, carrying `ui=classic`. | `lib/classicLinks.ts`, `components/layout/Sidebar.tsx` |
 | Return URLs | Every address the server builds to send a person back into the application was checked; the redirect covers all of them, so no URL helper was added. | [Return URLs](#return-urls) |
 | Bundle fallback | One shared test, "the modern interface is selected and the V2 bundle exists", used by the redirect and the landing page. A missing bundle means classic and one throttled `[UI_MODE]` warning, never a 503 loop. | `functions_ui_pages.py` |
 | Registry finalisation | The page registry has no `gap` rows left and a guard that keeps it so. | `ui_route_map.json`, `test_ui_route_parity_registry.py` |
@@ -126,7 +126,7 @@ candidate, and settings are read lazily, only for a classic page `GET` the regis
 
 ### The escape pair `ui=classic`
 
-"Switch to legacy UI" in V2 saves the account preference and appends `ui=classic` to the classic address. When legacy is permitted, the
+"Switch to classic UI" in V2 saves the account preference and appends `ui=classic` to the classic address. When classic is permitted, the
 redirect and the landing page both skip a request whose query's first `ui` value is `classic` (case
 insensitive, whitespace trimmed, the key matched exactly). Its semantics:
 
@@ -160,7 +160,7 @@ names:
 
 When the query string and the fragment both name a section, the query string wins, as in the server resolver.
 
-**Switch to legacy UI.** After a successful account-preference save, the menu uses `classicBackHref(pathname, search, hash, activeConversationId)`:
+**Switch to classic UI.** After a successful account-preference save, the menu uses `classicBackHref(pathname, search, hash, activeConversationId)`:
 
 - On the chat page it is the classic chat page carrying the open conversation, as it always was.
 - On any other page with a classic counterpart it is that counterpart: a settings tab opens `/profile?tab=...`

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.479)**
+### **(v0.261.480)**
 
 #### Bug Fixes
 
@@ -19,6 +19,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The message shown when a background export or analysis starts now reads as an application status ("The app started a background job to generate the complete JSON for all 826 rows") instead of the assistant agreeing to do it.
     *   The background export card has an **Answer in chat instead** button that cancels the run and answers the same request in chat. Classic interface only.
     *   (Ref: `route_backend_chats.py`, `chat-messages.js`, `ui_tests/test_chat_background_generated_export_status.py`)
+
+### **(v0.261.479)**
+
+#### User Interface Enhancements
+
+*   **Classic and Modern Use the Same Names and the Same Address Variable**
+    *   The server-rendered interface is now called **Classic** everywhere a person chooses an interface, matching the `ui=classic` address variable. Admin Settings offers **Classic and modern**, **Modern only** and **Classic only**, the default interface lists **Classic**, and the modern account menu says **Switch to classic UI**. Stored values are unchanged, so no setting or preference needs to be saved again.
+    *   Modern now has the matching variable. Adding `ui=modern` to a classic address opens its modern page for that visit, whatever the saved preference, the same way `ui=classic` keeps a page classic. **Switch to modern UI** lands on an address that carries `ui=modern`.
+    *   Administrator policy still decides: **Classic only** ignores `ui=modern`, as **Modern only** already ignores `ui=classic`. A missing modern bundle, a signed-out visitor or an account without an application role stays on the classic page.
+    *   (Ref: `functions_ui_redirect.py`, `functions_ui_mode.py`, `app.py`, `ui-switch.js`, `admin_settings_fields.py`, `branding.html`, `Sidebar.tsx`, `test_ui_modern_url_variable.py`, `UI_INTERFACE_SELECTION.md`)
 
 ### **(v0.261.476)**
 

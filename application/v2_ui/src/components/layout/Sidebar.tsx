@@ -186,7 +186,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
     const [switchingUi, setSwitchingUi] = useState(false);
     const [switchError, setSwitchError] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const switchToLegacy = async () => {
+    const switchToClassic = async () => {
         setSwitchingUi(true);
         setSwitchError(null);
         try {
@@ -328,11 +328,11 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                     {bootstrap?.ui?.can_switch && (
                         <button
                             type="button"
-                            onClick={() => { void switchToLegacy(); }}
+                            onClick={() => { void switchToClassic(); }}
                             disabled={switchingUi}
                             className={clsx(itemClass, 'w-full text-left disabled:opacity-50')}
                         >
-                            <ChevronLeft size={15} /> {switchingUi ? 'Switching interface...' : 'Switch to legacy UI'}
+                            <ChevronLeft size={15} /> {switchingUi ? 'Switching interface...' : 'Switch to classic UI'}
                         </button>
                     )}
                     {switchError && <p role="alert" className="px-3 py-2 text-sm text-danger">{switchError}</p>}

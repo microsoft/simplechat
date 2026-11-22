@@ -2,7 +2,7 @@
 """Decide which browser interface a request is served.
 
 SimpleChat ships two interfaces on one backend: the server-rendered classic
-(legacy) interface and the React V2 (modern) interface under ``/v2``. This
+interface and the React V2 (modern) interface under ``/v2``. This
 module is the one seam the rest of the application asks "which one?".
 
 Administrator policy takes precedence over an account preference and the default.
@@ -68,8 +68,13 @@ def get_ui_policy(settings=None, user_settings=None):
 
 
 def allows_classic_escape(settings=None):
-    """A one-page legacy link cannot override a modern-only administrator policy."""
+    """A one-page classic link (``ui=classic``) cannot override a modern-only administrator policy."""
     return get_ui_policy(settings, {})["policy"] != UI_MODE_MODERN
+
+
+def allows_modern_request(settings=None):
+    """A modern link (``ui=modern``) cannot override a classic-only administrator policy."""
+    return get_ui_policy(settings, {})["policy"] != UI_MODE_CLASSIC
 
 
 def get_ui_mode(settings=None, user_settings=None):
