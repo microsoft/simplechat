@@ -4,11 +4,11 @@ Implemented in version: **0.261.449**, recorded in `application/single_app/confi
 
 ## Overview
 
-Admins can govern access to the modern React interface and the legacy interface
+Admins can govern access to the modern React interface and the classic interface
 from **Appearance > Branding > Appearance** in either admin UI. Allowing both
 supports a gradual rollout without asking users to keep special bookmarks.
 
-Choose **Modern only**, **Legacy only**, or **Legacy and modern**. The restriction
+Choose **Modern only**, **Classic only**, or **Classic and modern**. The restriction
 applies to admins too. When both are available, **Default interface** applies to
 accounts that have not explicitly chosen an interface. Unconfigured deployments
 allow both and default to modern.
@@ -17,7 +17,7 @@ allow both and default to modern.
 
 `functions_ui_mode.py` resolves `ui_mode_policy` (`both`, `classic`, `modern`),
 then the account's `preferredUiMode`, then `ui_default_mode` (`modern`, `classic`).
-The internal value `classic` means the interface labeled Legacy.
+The stored value and the `ui=classic` address variable use the same name, `classic`.
 
 V1's settings form and V2's admin settings schema share enum validation. The
 authenticated `/api/user/settings` endpoint stores the preference on the current
@@ -40,7 +40,7 @@ bundle, and `ui_route_map.json`; no new packages or external browser assets are 
 ## User workflow
 
 When both interfaces are allowed, open the account menu and choose **Switch to
-modern UI** or **Switch to legacy UI**. The account preference is saved before
+modern UI** or **Switch to classic UI**. The account preference is saved before
 navigating, follows the account across browsers and sign-ins, and keeps the
 corresponding page or open conversation where supported.
 
@@ -51,17 +51,24 @@ explicit choice.
 
 ## Availability and parity
 
-Modern-only ignores the one-page `ui=classic` escape. Legacy-only maps direct V2
-links back to legacy; V2-only destinations return to legacy chat.
+Both interfaces are named by the same address variable (0.261.479). `ui=classic` keeps
+one page classic, and `ui=modern` on a classic address opens its modern page for that
+visit whatever the saved preference. **Switch to modern UI** lands on a modern address
+carrying `ui=modern`, as **Switch to classic UI** lands on one carrying `ui=classic`.
+Neither variable changes the saved preference.
+
+Modern-only ignores the one-page `ui=classic` escape, and classic-only ignores
+`ui=modern`. Classic-only maps direct V2
+links back to classic; V2-only destinations return to classic chat.
 
 **Availability exception:** if the modern bundle is missing, navigation temporarily
-falls back to legacy, even under modern-only, and emits a throttled `[UI_MODE]`
+falls back to classic, even under modern-only, and emits a throttled `[UI_MODE]`
 warning. Build or redeploy the V2 bundle to restore modern routing.
 
 The registered signed-in core pages have modern counterparts. Pre-sign-in Terms
 of Use now uses a modern standalone template when modern is selected. Public
 landing/policy pages and authentication flows can remain server-rendered without
-being legacy application pages. Teams sign-in is a shared standalone page.
+being classic application pages. Teams sign-in is a shared standalone page.
 Deployment-supplied Python custom pages still need to support the embed contract;
 this feature does not rewrite extension code.
 

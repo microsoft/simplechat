@@ -17,7 +17,7 @@ fragment translate, and a status saying how complete the V2 page is. A pure-Pyth
 - **Where does this classic URL lead in V2?** This drives the classic to V2 redirect
   (`functions_ui_redirect.py`), so notification links, emails and bookmarks keep working when the
   V2 interface is the default.
-- **Where is the classic version of this V2 URL?** This drives "Switch to legacy UI" in V2, which
+- **Where is the classic version of this V2 URL?** This drives "Switch to classic UI" in V2, which
   opens the classic version of the page on screen (`lib/classicLinks.ts`).
 
 A generator copies the registry into the V2 bundle, and a guard test fails when a classic page
@@ -260,12 +260,12 @@ The generator validates the registry first, so a malformed row stops it with the
 ### How the redirect uses it
 
 `functions_ui_redirect.py` calls `resolve_v2_target` from a `before_request` hook in `app.py`, and
-V2 calls the TypeScript twin after saving a switch to legacy from the account menu.
+V2 calls the TypeScript twin after saving a switch to classic from the account menu.
 The forward redirect runs when administrator policy and the account preference
 select modern. The registry cannot decide everything, so the
 hook checks what a URL does not say: that the visitor is signed in with an app role (the `home`
 and `terms-of-use` rows are partial because their signed-out and pre-sign-in states stay
-server-rendered with modern or legacy templates), that a custom page open to any signed-in user is not redirected (it is served
+server-rendered with modern or classic templates), that a custom page open to any signed-in user is not redirected (it is served
 chrome-less on its own, because `/v2` needs the User role), and that the V2 bundle exists. The
 rules, their placement among the other hooks, the `ui=classic` escape pair, the V2 fragment
 translation and the server-built return URLs are
