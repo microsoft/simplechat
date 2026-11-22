@@ -23794,7 +23794,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1efe008e2c581b6fba7ba111b9f58c173d9afb42f4cf6d3d34b1f6006b33e98b"
+        "module_sha256": "41535517496fda508a859d08f76876d3e11b76549da1d1e7440def1b106906a4"
       },
       "classification": "sdk-compatible",
       "contract": "SDK mapping reads and ETag-fenced replacement preserve unrelated settings; stale-group recovery tests execute the real owner. Re-reviewed 0.261.463: the module change adds two orchestration setting defaults (enable_chat_orchestration_reactive_loop, chat_orchestration_max_recovery_rounds); this owner's body, Cosmos response consumers and storage calls are unchanged.",
@@ -23816,7 +23816,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1efe008e2c581b6fba7ba111b9f58c173d9afb42f4cf6d3d34b1f6006b33e98b"
+        "module_sha256": "41535517496fda508a859d08f76876d3e11b76549da1d1e7440def1b106906a4"
       },
       "classification": "sdk-compatible",
       "contract": "Bootstrap reads only mapping.get for Redis policy and passes the container into AppSettingsStore; interface and stale-group probes execute the real bootstrap. Re-reviewed 0.261.463: the module change adds two orchestration setting defaults (enable_chat_orchestration_reactive_loop, chat_orchestration_max_recovery_rounds); this owner's body, Cosmos response consumers and storage calls are unchanged.",
@@ -23843,7 +23843,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1efe008e2c581b6fba7ba111b9f58c173d9afb42f4cf6d3d34b1f6006b33e98b"
+        "module_sha256": "41535517496fda508a859d08f76876d3e11b76549da1d1e7440def1b106906a4"
       },
       "classification": "sdk-compatible",
       "contract": "Point mapping.get supplies a plain nested history list; deduplication and bounded history update the mapping before upsert, whose return is unused. Re-reviewed 0.261.463: the module change adds two orchestration setting defaults (enable_chat_orchestration_reactive_loop, chat_orchestration_max_recovery_rounds); this owner's body, Cosmos response consumers and storage calls are unchanged.",
@@ -23870,7 +23870,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1efe008e2c581b6fba7ba111b9f58c173d9afb42f4cf6d3d34b1f6006b33e98b"
+        "module_sha256": "41535517496fda508a859d08f76876d3e11b76549da1d1e7440def1b106906a4"
       },
       "classification": "sdk-compatible",
       "contract": "Point mapping is mutated and upserted; returned SDK write response is unused and the owner returns a boolean. Re-reviewed 0.261.463: the module change adds two orchestration setting defaults (enable_chat_orchestration_reactive_loop, chat_orchestration_max_recovery_rounds); this owner's body, Cosmos response consumers and storage calls are unchanged.",
@@ -23892,7 +23892,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1efe008e2c581b6fba7ba111b9f58c173d9afb42f4cf6d3d34b1f6006b33e98b"
+        "module_sha256": "41535517496fda508a859d08f76876d3e11b76549da1d1e7440def1b106906a4"
       },
       "classification": "sdk-compatible",
       "contract": "Point mapping.get returns the plain nested history list; the SDK top-level wrapper never enters a strict domain validator. Re-reviewed 0.261.463: the module change adds two orchestration setting defaults (enable_chat_orchestration_reactive_loop, chat_orchestration_max_recovery_rounds); this owner's body, Cosmos response consumers and storage calls are unchanged.",
@@ -23924,7 +23924,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1efe008e2c581b6fba7ba111b9f58c173d9afb42f4cf6d3d34b1f6006b33e98b"
+        "module_sha256": "41535517496fda508a859d08f76876d3e11b76549da1d1e7440def1b106906a4"
       },
       "classification": "sdk-compatible",
       "contract": "Authorized SDK mapping is read/mutated through mapping operations and cloned by the existing cache boundary; interface persistence tests cover real reads and writes. Re-reviewed 0.261.463: the module change adds two orchestration setting defaults (enable_chat_orchestration_reactive_loop, chat_orchestration_max_recovery_rounds); this owner's body, Cosmos response consumers and storage calls are unchanged.",
@@ -23946,7 +23946,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1efe008e2c581b6fba7ba111b9f58c173d9afb42f4cf6d3d34b1f6006b33e98b"
+        "module_sha256": "41535517496fda508a859d08f76876d3e11b76549da1d1e7440def1b106906a4"
       },
       "classification": "sdk-compatible",
       "contract": "Authorized SDK point response is cloned by the existing settings boundary before nested defaults, without writes. Re-reviewed 0.261.463: the module change adds two orchestration setting defaults (enable_chat_orchestration_reactive_loop, chat_orchestration_max_recovery_rounds); this owner's body, Cosmos response consumers and storage calls are unchanged.",
@@ -23983,7 +23983,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1efe008e2c581b6fba7ba111b9f58c173d9afb42f4cf6d3d34b1f6006b33e98b"
+        "module_sha256": "41535517496fda508a859d08f76876d3e11b76549da1d1e7440def1b106906a4"
       },
       "classification": "sdk-compatible",
       "contract": "Authorized SDK point mapping retains all fields while nested settings are merged; upsert response is unused and real HTTP preference tests verify persistence. Re-reviewed 0.261.463: the module change adds two orchestration setting defaults (enable_chat_orchestration_reactive_loop, chat_orchestration_max_recovery_rounds); this owner's body, Cosmos response consumers and storage calls are unchanged.",
