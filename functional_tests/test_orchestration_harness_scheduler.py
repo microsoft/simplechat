@@ -1,8 +1,9 @@
 # test_orchestration_harness_scheduler.py
 """Bounded scheduler queries, real claims, publication and headless loop integration.
 
-Version: 0.261.139
+Version: 0.261.482
 Implemented in: 0.261.127
+A paused run that needs a signed-in session left to its request: 0.261.482
 Single orchestration contract updated in: 0.261.139
 Production scheduler/continuation/runner/state machines run with external I/O doubled.
 Owner modules are imported inside fixture-backed tests after offline initialization.
@@ -912,6 +913,101 @@ def test_scheduler_reopens_native_once_per_tick_with_new_result_epochs(harness, 
         assert messages[0]["timestamp"] == message["timestamp"]
         assert messages[0]["content"] == "All 37 rows were prepared."
         assert harness.blobs.file_uploads == 0
+
+
+def test_scheduler_leaves_a_paused_run_that_needs_a_session_to_its_request(harness, monkeypatch):
+    """0.261.482: the scheduler has no session, so it does not claim a run only a session can read."""
+    harness.settings.update({
+        "enable_tabular_generation_plan": False,
+        "enable_tabular_completion_driven_checkpointing": False,
+        "tabular_generated_output_inline_max_rows": 1,
+    })
+    with harness.native_io() as native:
+        harness.create(
+            [
+                harness.helpers.native_step(),
+                harness.helpers.compose_step(inputs={"rows": {
+                    "binding": harness.helpers.input_binding("compute", "records"), "allow_partial": False,
+                }}),
+            ],
+            replies=["All 37 rows were prepared."], final_response=harness.helpers.input_binding("prepare"),
+            seeds={"document_ids": ["document-1"], "doc_scope": "personal"},
+            original_seeds={"document_ids": ["document-1"], "doc_scope": "personal"},
+        )
+        frames = harness.prepare().execute()
+        assert harness.helpers.decoded_frames(frames)[-1]["status"] == "waiting"
+        original = harness.read()
+        # Its results name no external source, so the pause is recorded as one anything may continue.
+        assert original["continuation_requires_session"] is False
+        opens = []
+        open_result = native.results.open_native_tabular_result
+        monkeypatch.setattr(
+            native.results, "open_native_tabular_result",
+            lambda **kwargs: opens.append(kwargs) or open_result(**kwargs),
+        )
+        replace_record(harness.runs, "run-1", "conversation-1", continuation_requires_session=True)
+        marked = harness.read()
+        result, _, _ = tick(harness, max_outputs=0)
+        assert result["ok"] is True and result["errors"] == []
+        assert [(row["action"], row["state"]) for row in result["runs"]] == [("deferred", "session_required")]
+        assert result["counts"]["runs_executed"] == 0 and opens == []
+        current = harness.read()
+        assert current["status"] == "waiting" and current["execution_lease"] is None
+        assert current["recovery_version"] == marked["recovery_version"]
+        assert current["pending_results"] == original["pending_results"]
+        # Only the exact marker defers: any other value is the scheduler's to continue as before.
+        replace_record(harness.runs, "run-1", "conversation-1", continuation_requires_session="true")
+        continued, _, _ = tick(harness, max_outputs=0)
+        assert continued["ok"] is True and continued["counts"]["runs_executed"] == 1 and len(opens) == 1
+        # A marked run is still closed at its deadline, with no session and no further work.
+        replace_record(harness.runs, "run-1", "conversation-1", continuation_requires_session=True)
+        late = datetime.fromisoformat(original["execution_deadline_at"]) + timedelta(seconds=1)
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return late.astimezone(tz) if tz is not None else late.replace(tzinfo=None)
+
+        monkeypatch.setattr(harness.recovery, "_now", lambda: late)
+        monkeypatch.setattr(harness.continuation, "_now", lambda: late)
+        monkeypatch.setattr(harness.execution, "datetime", Clock)
+        closed, _, _ = tick(harness, max_outputs=0, clock=lambda: late)
+        timed_out = harness.read()
+        assert closed["ok"] is True, closed
+        assert timed_out["status"] == "failed" and timed_out["failure"]["code"] == "run_timeout"
+        assert len(opens) == 1 and not harness.model_calls
+
+
+def test_a_pause_is_marked_from_the_results_the_run_holds(harness):
+    """0.261.482: finished results are asked about; a lineage that cannot be read needs a session."""
+    decide = harness.execution.HarnessExecution._continuation_requires_session
+    unavailable = importlib.import_module("functions_orchestration_results").ResultUnavailableError
+    asked, answers = [], [True, False, unavailable("result_unavailable"), PermissionError()]
+
+    def names_external_source(references):
+        asked.append(list(references))
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    execution = SimpleNamespace(
+        context=SimpleNamespace(
+            task_results={
+                "finished": SimpleNamespace(status="complete", outputs=("finished-output",)),
+                "limited": SimpleNamespace(status="partial", outputs=("limited-output",)),
+                "pending": SimpleNamespace(status="pending", outputs=("pending-output",)),
+            },
+            result_aliases={"earlier": "not-a-result-reference"},
+        ),
+        services=SimpleNamespace(results=SimpleNamespace(lineage_names_external_source=names_external_source)),
+    )
+    assert [decide(execution, {}, True) for _ in range(4)] == [True, False, True, True]
+    assert asked == [["finished-output", "limited-output"]] * 4
+    # Without restored results the saved answer stands, and only the exact marker counts.
+    assert decide(execution, {"continuation_requires_session": True}, False) is True
+    assert decide(execution, {"continuation_requires_session": "true"}, False) is False
+    assert decide(execution, {}, False) is False and len(asked) == 4
 
 
 @pytest.mark.parametrize("role", ["gather", "reason"])

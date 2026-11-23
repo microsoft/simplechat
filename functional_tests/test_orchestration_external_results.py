@@ -1,8 +1,9 @@
 # test_orchestration_external_results.py
 """
 Bounded external Gather provenance, admission and current authorization.
-Version: 0.261.125
+Version: 0.261.482
 Implemented in: 0.261.125
+Lineage check for a result that names an external source added in: 0.261.482
 
 No external resource is fetched. Server catalogs and current access metadata are
 external-I/O doubles; real contracts, private storage and readers are exercised.
@@ -207,6 +208,40 @@ def test_transitive_external_lineage_is_authorized_using_the_original_producer()
     fixture.audiences.clear()
     with pytest.raises(PermissionError):
         child_reader.read_text()
+
+
+def test_a_result_prepared_from_an_external_source_is_known_without_a_session():
+    """0.261.482: a paused run is marked from its results' lineage, which needs no session."""
+    fixture = ExternalFixture("fact_memory")
+    task = fixture.retain(source_policy="snapshot")
+    child = fixture.service.persist_task_result(
+        producer=fixture.consumer(), role="reason", status="complete",
+        outputs=[NamedOutput("summary", "text-v1", "Prepared from retained facts.", complete(1))],
+        sources=[], origin="grounded", guard_token="child-token",
+        upstream=(task.output("knowledge"),), source_policy="snapshot",
+    )
+    # No catalog and no authorizer: what work without a signed-in session has.
+    service = fixture.reopen(catalog=False, authorizer=False)
+    fixture.calls.clear()
+    assert service.lineage_names_external_source([task.output("knowledge")]) is True
+    assert service.lineage_names_external_source([child.output("summary")]) is True
+    assert service.lineage_names_external_source([]) is False
+    # Nothing was authorized against a session and no content was read.
+    assert fixture.calls == []
+    with pytest.raises(ResultContractError):
+        service.lineage_names_external_source([child.output("summary").to_dict()])
+    with pytest.raises(ResultUnavailableError):
+        service.open_result(child.output("summary")).read_text()
+
+    plain = ExternalFixture()
+    generated = plain.service.persist_task_result(
+        producer=plain.consumer(), role="reason", status="complete",
+        outputs=[NamedOutput("summary", "text-v1", "Prepared from nothing external.", complete(1))],
+        sources=[], origin="generated", guard_token="child-token",
+    )
+    assert plain.reopen(catalog=False, authorizer=False).lineage_names_external_source(
+        [generated.output("summary")],
+    ) is False
 
 
 @pytest.mark.parametrize("aliases", [
