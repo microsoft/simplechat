@@ -128,11 +128,19 @@ def test_schema_v2_streaming_uses_model_route_and_validates_agent_binding():
         resolved_routes.append(kwargs.get("resolved_route"))
         assert kwargs["allow_insecure_custom_endpoints"] is True
         assert kwargs["custom_endpoint_ca_bundle_path"] == "configured-ca.pem"
+        assert kwargs["model_id"] == "model-1"
+        client_calls.append({
+            "apply_model_persona": kwargs["apply_model_persona"],
+        })
         return object(), "openai_style"
 
     namespace = {
         "settings": settings,
-        "get_streaming_model_endpoint_candidates": lambda *_args, **_kwargs: [copy.deepcopy(endpoint)],
+        "get_streaming_model_endpoint_candidates": lambda *_args, **_kwargs: [{
+            **copy.deepcopy(endpoint),
+            "_endpoint_scope": "global",
+            "_endpoint_scope_id": "global",
+        }],
         "keyvault_model_endpoint_get_helper": lambda saved_endpoint, *_args, **_kwargs: saved_endpoint,
         "SecretReturnType": SimpleNamespace(VALUE="value"),
         "normalize_model_endpoints": lambda values: (values, False),
@@ -146,6 +154,7 @@ def test_schema_v2_streaming_uses_model_route_and_validates_agent_binding():
         "ModelEndpointBehavior": ModelEndpointBehavior,
         "_normalize_model_icon_payload": lambda value: value,
         "normalize_model_response_length_from_model": lambda _model: None,
+        "apply_model_profile": lambda model, *_args, **_kwargs: model,
         "_build_model_endpoint_behavior_name": lambda _model, deployment: deployment,
         "build_model_endpoint_sync_chat_client": build_client,
         "MODEL_ENDPOINT_PROVIDER_ALLOWLIST": {"custom", "aoai", "aifoundry", "new_foundry", "anthropic", "claude"},
@@ -158,6 +167,7 @@ def test_schema_v2_streaming_uses_model_route_and_validates_agent_binding():
             "model_id": "model-1",
         },
     }
+    client_calls = []
     exec(compile(ast.Module(body=[wrapper, resolver], type_ignores=[]), "<stream-route-resolution>", "exec"), namespace)
     request = {
         "model_endpoint_id": "endpoint-1", "model_id": "model-1",
@@ -172,6 +182,7 @@ def test_schema_v2_streaming_uses_model_route_and_validates_agent_binding():
     assert result[6] == "openai"
     assert resolved_routes == [expected_route]
     assert expected_route["protocol"] == "openai_style"
+    assert client_calls[-1]["apply_model_persona"] is True
 
     agent_result = namespace["resolve_streaming_multi_endpoint_gpt_config"](
         settings,
@@ -181,6 +192,7 @@ def test_schema_v2_streaming_uses_model_route_and_validates_agent_binding():
     )
     assert agent_result[1] == expected_route["request_model"]
     assert resolved_routes == [expected_route, expected_route]
+    assert client_calls[-1]["apply_model_persona"] is False
 
     namespace["_resolve_canonical_chat_agent"] = lambda *_args, **_kwargs: {
         "id": "agent-1",
@@ -217,6 +229,38 @@ def test_schema_v2_streaming_uses_model_route_and_validates_agent_binding():
     assert default_result is not None
     assert default_result[1] == expected_route["request_model"]
     assert resolved_routes == [expected_route, expected_route, expected_route]
+
+    personal_endpoint = {
+        **copy.deepcopy(endpoint),
+        "_endpoint_scope": "user",
+        "_endpoint_scope_id": "actor",
+    }
+    global_endpoint = {
+        **copy.deepcopy(endpoint),
+        "_endpoint_scope": "global",
+        "_endpoint_scope_id": "global",
+    }
+    namespace["get_streaming_model_endpoint_candidates"] = lambda *_args, **_kwargs: [
+        personal_endpoint,
+        global_endpoint,
+    ]
+    scoped_request = {
+        **request,
+        "model_scope_type": "personal",
+        "model_scope_id": "actor",
+    }
+    scoped_result = namespace["resolve_streaming_multi_endpoint_gpt_config"](
+        settings, scoped_request, "actor", active_group_ids=[],
+    )
+    assert scoped_result[14] == "user"
+    try:
+        namespace["resolve_streaming_multi_endpoint_gpt_config"](
+            settings, request, "actor", active_group_ids=[]
+        )
+    except LookupError as exc:
+        assert "scope is required" in str(exc)
+    else:
+        raise AssertionError("Duplicate endpoint IDs across scopes must be disambiguated.")
 
 
 def test_group_endpoint_candidates_recheck_membership_before_read():

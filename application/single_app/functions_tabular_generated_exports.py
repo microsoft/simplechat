@@ -4269,7 +4269,9 @@ def _resolve_tabular_budget_model_selection(gpt_model, settings, model_context):
         or gpt_model or ''
     ).strip()
     if requested_endpoint_id:
-        endpoint = resolve_model_endpoint_from_context(settings, model_context) or {}
+        endpoint = resolve_model_endpoint_from_context(
+            settings, model_context, authorize=True
+        ) or {}
         if str(endpoint.get('id') or '').strip() != requested_endpoint_id:
             endpoint = {}
         matches = [

@@ -144,6 +144,10 @@ from functions_prompt_variables import (
     PromptKnowledgeFillError,
     fill_prompt_variables,
 )
+from functions_model_persona import (
+    validate_model_persona_collection_size,
+    validate_model_persona_settings_document,
+)
 from functions_settings import (
     ADMIN_SETTINGS_SECRET_REDACTED_VALUE,
     WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
@@ -186,7 +190,7 @@ from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_m365_connections import ensure_m365_workflow_encryption_key
 from functions_safety_remediation import count_pending_safety_warnings
 from functions_source_review import (
-    get_source_review_runtime_capabilities,
+    peek_source_review_runtime_capabilities,
     is_source_review_enabled_for_user,
     is_url_access_enabled_for_user,
 )
@@ -235,7 +239,7 @@ from functions_model_endpoint_validation import (
     validate_custom_model_endpoint,
     validate_custom_model_endpoints,
 )
-from functions_documents import get_audio_runtime_capabilities
+from functions_documents import peek_audio_runtime_capabilities
 from functions_cosmos_throughput import get_cosmos_resource_config
 from config import IS_DEVELOPMENT, VERSION
 from support_menu_config import has_visible_support_latest_features
@@ -1633,7 +1637,9 @@ def _find_model_endpoint(endpoints, endpoint_id):
 def _model_endpoint_response(saved_endpoints, endpoint_id, status):
     """Return one saved endpoint, sanitized, as the response to a write."""
     saved = _find_model_endpoint(saved_endpoints, endpoint_id)
-    sanitized = sanitize_model_endpoints_for_frontend([saved]) if saved else []
+    sanitized = sanitize_model_endpoints_for_frontend(
+        [saved], include_hidden_persona_text=True
+    ) if saved else []
     return jsonify({"endpoint": sanitized[0] if sanitized else {}}), status
 
 
@@ -1648,9 +1654,14 @@ def _persist_global_model_endpoints(
     Whole-state embedding checks and default reconciliation still apply, and
     obsolete secrets are removed only after the settings commit.
     """
+    validate_model_persona_collection_size(endpoints)
     settings = read_embedding_settings()
     if not isinstance(settings, dict):
         raise AIConnectionError("AI connection settings are unavailable.", "settings_unavailable")
+    validate_model_persona_settings_document({
+        **settings,
+        "model_endpoints": endpoints,
+    })
     preflight_embedding_settings(settings, {**settings, "model_endpoints": endpoints})
     changed = [
         endpoint for endpoint in endpoints
@@ -2144,7 +2155,7 @@ def register_route_backend_v2_admin(bp):
         readouts = {}
 
         try:
-            capabilities = get_source_review_runtime_capabilities()
+            capabilities = peek_source_review_runtime_capabilities()
             readouts["source_review_js_runtime"] = {
                 "ok": bool(capabilities.get("js_rendering_available")),
                 "message": capabilities.get("message")
@@ -2167,7 +2178,7 @@ def register_route_backend_v2_admin(bp):
             }
 
         try:
-            audio = get_audio_runtime_capabilities()
+            audio = peek_audio_runtime_capabilities()
             broad = bool(audio.get("broad_transcoding_available"))
             supported = ", ".join(audio.get("supported_extensions") or []) or "none"
             message = audio.get("message") or "Audio runtime support has not been checked."
@@ -2376,7 +2387,8 @@ def register_route_backend_v2_admin(bp):
         # adding one the caller never sent would write it into the page's stored copy.
         if "model_endpoints" in redacted:
             redacted["model_endpoints"] = sanitize_model_endpoints_for_frontend(
-                redacted.get("model_endpoints")
+                redacted.get("model_endpoints"),
+                include_hidden_persona_text=True,
             )
         # A saved capability list may still name a retired capability. The checkbox set
         # shows its replacement selected, so editing the list keeps it.
@@ -2975,7 +2987,9 @@ def register_route_backend_v2_admin(bp):
             return (
                 jsonify(
                     {
-                        "endpoints": sanitize_model_endpoints_for_frontend(endpoints),
+                        "endpoints": sanitize_model_endpoints_for_frontend(
+                            endpoints, include_hidden_persona_text=True
+                        ),
                         "multi_endpoint_enabled": bool(
                             settings.get("enable_multi_model_endpoints", False)
                         ),
@@ -3070,7 +3084,9 @@ def register_route_backend_v2_admin(bp):
             if not endpoint:
                 return jsonify({"error": "Model endpoint not found."}), 404
 
-            sanitized = sanitize_model_endpoints_for_frontend([endpoint])
+            sanitized = sanitize_model_endpoints_for_frontend(
+                [endpoint], include_hidden_persona_text=True
+            )
             return jsonify({"endpoint": sanitized[0] if sanitized else {}}), 200
         except AIConnectionError as exc:
             return _ai_connection_error_response(exc)

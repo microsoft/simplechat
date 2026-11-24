@@ -1,8 +1,9 @@
 # test_group_bulk_endpoint_save_writer.py
 """
 Functional test for the legacy bulk group model endpoint save on the etag guard.
-Version: 0.261.428
+Version: 0.261.461
 Implemented in: 0.261.160
+Persona hidden-text/edit-status regression added in: 0.261.461
 
 ``POST /api/group/model-endpoints`` saved the whole endpoint list through
 ``update_group_model_endpoints``, which read the group and upserted that copy back:
@@ -234,6 +235,21 @@ def test_a_member_is_still_refused_before_anything_is_staged(env):
     env.as_user("member")
     response = save(env, [rotated(env)])
     assert response.status_code == 403
+    assert env.vault.writes == [] and env.write_calls() == []
+
+
+def test_a_read_only_group_is_refused_before_persona_text_or_secrets_are_saved(env):
+    stored = env.stored_group(GROUP_A)
+    stored["status"] = "locked"
+    env.groups.seed(stored)
+    endpoint = rotated(env)
+    endpoint["models"][0]["persona_enabled"] = True
+    endpoint["models"][0]["persona_markdown"] = "Hidden operator persona"
+    endpoint["models"][0]["persona_text_visible"] = False
+
+    response = save(env, [endpoint])
+    assert response.status_code == 403
+    assert response.get_json()["error"] == "Model endpoint editing requires an active group."
     assert env.vault.writes == [] and env.write_calls() == []
 
 

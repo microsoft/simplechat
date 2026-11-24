@@ -45,6 +45,36 @@
             "problemMatcher": []
         },
         {
+            "label": "SimpleChat: Publish MAG1 container (confirm)",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/deployers/azurecli/publish-simplechat.ps1",
+                "-ImageName",
+                "${input:containerImage}",
+                "-SubscriptionId",
+                "ad0718de-b45e-4887-b30d-0aafeb405c5d",
+                "-ResourceGroupName",
+                "scswiftiesb1-dev-rg",
+                "-AcrName",
+                "scswiftiesb1devacr",
+                "-WebAppName",
+                "scswiftiesb1-dev-app",
+                "-UseWebhook"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "SimpleChat: Publish beta container (confirm)",
             "type": "process",
             "command": "pwsh",

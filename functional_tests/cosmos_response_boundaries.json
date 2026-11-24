@@ -1433,9 +1433,7 @@
     },
     "functional_tests/test_cosmos_wave1_cache_fallback.py::FakeCosmosContainer": {
       "boundary": {
-        "imports_sha256": "f068f1e3fce9ebbde6e0966d2bee8119adcb8b7dd7498d9b596960c333e9a9da",
-        "inherited_bases": [],
-        "kind": "class",
+        "sha256": "a0987efad2e64e379db5b202faf84e6989fdc4ce0fe55f7b02db0d0b748e47e5",
         "methods": [
           "create_item",
           "delete_item",
@@ -1443,30 +1441,112 @@
           "replace_item",
           "upsert_item"
         ],
-        "sha256": "a0987efad2e64e379db5b202faf84e6989fdc4ce0fe55f7b02db0d0b748e47e5"
+        "kind": "class",
+        "inherited_bases": [],
+        "imports_sha256": "159e2564a4dcd55e911ff0a3f22c966a1f9596a91a518d84b8f3be70f427e43f"
       },
       "classification": "sdk-default",
-      "contract": "Cache fallback test container returns installed SDK CosmosDict point/write responses by default with ETag generation and IfNotModified checks.",
+      "contract": "Point reads and write responses use the installed CosmosDict by default, with ETag generation and explicit plain compatibility mode.",
       "tests": [
         "functional_tests/test_cosmos_wave1_cache_fallback.py"
       ]
     },
-    "functional_tests/test_cosmos_wave1_cache_fallback.py::StreamAppendConflictContainer": {
+    "functional_tests/test_cosmos_wave1_cache_fallback.py::StreamPatchContainer": {
       "boundary": {
-        "imports_sha256": "f068f1e3fce9ebbde6e0966d2bee8119adcb8b7dd7498d9b596960c333e9a9da",
+        "sha256": "d9fa0d476c083cb5ff6d0c79b41751932235172e0eda2e0090ccfc28c6511c36",
+        "methods": [
+          "patch_item",
+          "read_item",
+          "upsert_item"
+        ],
+        "kind": "class",
         "inherited_bases": [
           "FakeCosmosContainer"
         ],
-        "kind": "class",
-        "methods": [
-          "replace_item"
-        ],
-        "sha256": "648361a62b86ad6e07191cfc6d37f0e236367f000da1a78f7492e3d14dd82d06"
+        "imports_sha256": "159e2564a4dcd55e911ff0a3f22c966a1f9596a91a518d84b8f3be70f427e43f"
       },
       "classification": "sdk-default",
-      "contract": "Inherits FakeCosmosContainer SDK-default CosmosDict point/write responses and injects one concurrent 412 conflict before delegating to super().replace_item.",
+      "contract": "Applies conditional replay and expiry Patches, returns SDK documents by default, and injects committed reply loss.",
       "tests": [
-        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_stream_event_fallback_retries_concurrent_append"
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_progress_survives_replay_expiry_for_cold_readers_and_terminal_status",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_replay_index_only_changes_new_verified_documents_and_cold_workers_reconcile",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_scoped_direct_deltas_make_exactly_one_storage_call_each",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_stream_event_fallback_does_not_duplicate_a_committed_append_after_a_lost_reply"
+      ]
+    },
+    "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_direct_content_does_not_claim_replay_when_the_item_is_full::point-seam-1": {
+      "classification": "fault-injection",
+      "contract": "Raises a scoped transport error on the fallback read after a 413 to ensure rejected content never enters the worker-local replay list.",
+      "tests": [
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_direct_content_does_not_claim_replay_when_the_item_is_full"
+      ],
+      "boundary": {
+        "sha256": "3f1b8d89fff1097891a70acd73d6c029307c940344cb7bf0d45490dc6d1dbf8a",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "159e2564a4dcd55e911ff0a3f22c966a1f9596a91a518d84b8f3be70f427e43f"
+      }
+    },
+    "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_discovery_does_not_report_a_read_outage_as_no_stream::point-seam-1": {
+      "classification": "fault-injection",
+      "contract": "Throws a transport read error so an unavailable pointer cannot be mistaken for a missing pointer.",
+      "tests": [
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_discovery_does_not_report_a_read_outage_as_no_stream"
+      ],
+      "boundary": {
+        "sha256": "3f1b8d89fff1097891a70acd73d6c029307c940344cb7bf0d45490dc6d1dbf8a",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "159e2564a4dcd55e911ff0a3f22c966a1f9596a91a518d84b8f3be70f427e43f"
+      }
+    },
+    "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_discovery_initialization_retries_and_reports_unconfirmed_writes::point-seam-1": {
+      "classification": "fault-injection",
+      "contract": "Throws one write transport error and delegates the retry to the SDK-default container.",
+      "tests": [
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_discovery_initialization_retries_and_reports_unconfirmed_writes"
+      ],
+      "boundary": {
+        "sha256": "6a243708058fa603b27697ec772b5f5d85ea18a0d68f40bba352db40d6ec21e7",
+        "methods": [
+          "upsert_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "159e2564a4dcd55e911ff0a3f22c966a1f9596a91a518d84b8f3be70f427e43f"
+      }
+    },
+    "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_discovery_initialization_retries_and_reports_unconfirmed_writes::point-seam-2": {
+      "classification": "fault-injection",
+      "contract": "Throws on all writes so the startup retry reports an explicitly unconfirmed outcome.",
+      "tests": [
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_discovery_initialization_retries_and_reports_unconfirmed_writes"
+      ],
+      "boundary": {
+        "sha256": "d547a5885ef83c6a37b6f5eaf0a820bd15bb23dc6e0c5b69535c97ccd8d8084f",
+        "methods": [
+          "upsert_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "159e2564a4dcd55e911ff0a3f22c966a1f9596a91a518d84b8f3be70f427e43f"
+      }
+    },
+    "functional_tests/test_cosmos_wave1_cache_fallback.py::test_stream_event_fallback_is_shared_between_workers::point-seam-1": {
+      "boundary": {
+        "sha256": "3f1b8d89fff1097891a70acd73d6c029307c940344cb7bf0d45490dc6d1dbf8a",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "159e2564a4dcd55e911ff0a3f22c966a1f9596a91a518d84b8f3be70f427e43f"
+      },
+      "classification": "fault-injection",
+      "contract": "Raises a scoped transport error on replay reads after successful appends to verify that the write response hydrated cross-worker local replay.",
+      "tests": [
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_stream_event_fallback_is_shared_between_workers"
       ]
     },
     "functional_tests/test_cosmos_wave2a_chat_bootstrap_cache.py::FakeCosmosContainer": {
@@ -1549,9 +1629,7 @@
     },
     "functional_tests/test_cosmos_wave3a_indexing_maintenance.py::FakeCosmosContainer": {
       "boundary": {
-        "imports_sha256": "18008d80cf9d671fafcc37867b8583636b646ec1b96d387bccc70d740611d87d",
-        "inherited_bases": [],
-        "kind": "class",
+        "sha256": "241bf99d2627ed8cca738a1e4b1a50295146eb1f921cdbed3f5da0664d25e22e",
         "methods": [
           "create_item",
           "delete_item",
@@ -1559,7 +1637,9 @@
           "replace_item",
           "upsert_item"
         ],
-        "sha256": "241bf99d2627ed8cca738a1e4b1a50295146eb1f921cdbed3f5da0664d25e22e"
+        "kind": "class",
+        "inherited_bases": [],
+        "imports_sha256": "ab30a1f3ff23d98b434489a25907398db33917c4310348a9ece19adbae23945b"
       },
       "classification": "sdk-default",
       "contract": "Point reads and returned creates/replaces/upserts use the installed SDK CosmosDict; nested data and query rows stay plain dictionaries. ETags, immutable partition keys, and conflict fault injection are enforced.",
@@ -7350,24 +7430,25 @@
     },
     "ui_tests/fixtures/chat_stop_runtime.py::StopMessageContainer": {
       "boundary": {
-        "imports_sha256": "a26f0f4151fa8cc6518fe4893e6fecaa3d464ab26f3927865e43ff52f52f1afc",
-        "inherited_bases": [
-          "AtomicMemoryContainer"
-        ],
-        "kind": "class",
+        "sha256": "5f6775e09bd514da05c1f1cdbe39106a2cab0e66ee7d116b3b3b30527332710b",
         "methods": [
           "delete_item",
           "read_item",
           "replace_item"
         ],
-        "sha256": "5f6775e09bd514da05c1f1cdbe39106a2cab0e66ee7d116b3b3b30527332710b"
+        "kind": "class",
+        "inherited_bases": [
+          "AtomicMemoryContainer"
+        ],
+        "imports_sha256": "c4519d82c74cae7c3ad5e028e039e33610b5f15baaba7b9b7f87a3dbc14b03b6"
       },
       "classification": "sdk-default",
       "contract": "Inherits installed CosmosDict point/write responses, partitioned ETags and SDK-formatted atomic batches. Query projections remain plain JSON; the missing-read barrier preserves the original 404 during concurrent publication. Optional unconditional writes match the SDK API and do not bypass supplied ETag conditions.",
       "tests": [
         "functional_tests/test_chat_stream_stop_control.py::test_duplicate_outbox_materialization_preserves_intervening_message_mutation",
-        "functional_tests/test_chat_stream_stop_control.py::test_retry_selection_and_late_publication_share_the_question_etag_fence",
-        "functional_tests/test_chat_stream_stop_control.py::test_history_metadata_route_owners_use_sdk_point_documents"
+        "functional_tests/test_chat_stream_stop_control.py::test_durable_terminal_status_overrides_stale_active_replay_cache",
+        "functional_tests/test_chat_stream_stop_control.py::test_history_metadata_route_owners_use_sdk_point_documents",
+        "functional_tests/test_chat_stream_stop_control.py::test_retry_selection_and_late_publication_share_the_question_etag_fence"
       ]
     }
   },
@@ -7587,40 +7668,45 @@
   "owners": {
     "application/single_app/app_settings_cache.py::_append_stream_session_event_fallback": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "20fc93bec7731b05bc685c03329690e16902e77c15b383e060fd65098045051e",
+        "sha256": "e7933be26466289b7f6efbb46975a020c40638713ebaa538ba75dcb5f2b8794c",
         "points": [
           {
-            "method": "read_item",
+            "method": "patch_item",
             "receiver": "container",
             "response": "consumed"
           },
           {
-            "method": "replace_item",
-            "receiver": "container",
-            "response": "unused"
-          },
-          {
             "method": "create_item",
             "receiver": "container",
-            "response": "unused"
+            "response": "consumed"
+          },
+          {
+            "method": "read_item",
+            "receiver": "container",
+            "response": "consumed"
           }
         ],
         "queries": [],
-        "sha256": "2fc56697c3fb9c7afeee564bc4af2ea7e4ef1895f8509334e11c316fe6b82939"
+        "batches": [],
+        "module_sha256": "425ef0e3e6d02009ec05d87b14618804a05f97f2dd21d77ac758be7172aa3c49"
       },
       "classification": "sdk-compatible",
-      "contract": "_append_stream_session_event_fallback: read_item CosmosDict is accessed as a Mapping for payload list and _etag before conditional IfNotModified replace_item; replace_item and create_item responses are discarded.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Reads Patch/create responses or the 412 retry read as mappings. Copies the nested replay list and projects scalar progress. Watermarks fence append and counters on retry; a missing optimized replay fails rather than creating a reset ledger. The conditional array-path check binds each append to its existing replay format, without exposing any raw point document.",
       "tests": [
-        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_stream_event_fallback_is_shared_between_workers",
-        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_stream_event_fallback_retries_concurrent_append"
-      ]
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_content_does_not_recreate_a_missing_replay_log",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_direct_content_does_not_claim_replay_when_the_item_is_full",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_replay_index_only_changes_new_verified_documents_and_cold_workers_reconcile",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_replay_keeps_one_retry_watermark_per_writer_not_per_chunk",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_replay_uses_one_conditional_patch_through_the_installed_sdk",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_scoped_direct_deltas_make_exactly_one_storage_call_each",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_stream_event_fallback_does_not_duplicate_a_committed_append_after_a_lost_reply",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_stream_event_fallback_is_shared_between_workers"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/app_settings_cache.py::_bump_cosmos_cache_version": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "20fc93bec7731b05bc685c03329690e16902e77c15b383e060fd65098045051e",
+        "sha256": "94fb0eb8a5eee38d044e6ed3f7db37c3fbf2cea2db3f829fc53d063bbde6de16",
         "points": [
           {
             "method": "upsert_item",
@@ -7629,7 +7715,8 @@
           }
         ],
         "queries": [],
-        "sha256": "94fb0eb8a5eee38d044e6ed3f7db37c3fbf2cea2db3f829fc53d063bbde6de16"
+        "batches": [],
+        "module_sha256": "425ef0e3e6d02009ec05d87b14618804a05f97f2dd21d77ac758be7172aa3c49"
       },
       "classification": "response-unused",
       "contract": "_bump_cosmos_cache_version: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
@@ -7638,8 +7725,7 @@
     },
     "application/single_app/app_settings_cache.py::_delete_cosmos_cache_entry": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "20fc93bec7731b05bc685c03329690e16902e77c15b383e060fd65098045051e",
+        "sha256": "c7470f5d5ecc0525f11daaa1b6e2acf5a4a1ddd302a2dfe27d67830404cb8e34",
         "points": [
           {
             "method": "delete_item",
@@ -7648,38 +7734,17 @@
           }
         ],
         "queries": [],
-        "sha256": "c7470f5d5ecc0525f11daaa1b6e2acf5a4a1ddd302a2dfe27d67830404cb8e34"
+        "batches": [],
+        "module_sha256": "425ef0e3e6d02009ec05d87b14618804a05f97f2dd21d77ac758be7172aa3c49"
       },
       "classification": "response-unused",
       "contract": "_delete_cosmos_cache_entry: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
       "evidence_scope": "source-review",
       "tests": []
     },
-    "application/single_app/app_settings_cache.py::_get_cosmos_cache_entry": {
-      "boundary": {
-        "batches": [],
-        "module_sha256": "20fc93bec7731b05bc685c03329690e16902e77c15b383e060fd65098045051e",
-        "points": [
-          {
-            "method": "read_item",
-            "receiver": "_get_cosmos_cache_container()",
-            "response": "consumed"
-          }
-        ],
-        "queries": [],
-        "sha256": "d41e20b1a45eaae5cd9d8288f398ac59ec6796f671457f4b6f7d35e7b535a018"
-      },
-      "classification": "sdk-compatible",
-      "contract": "_get_cosmos_cache_entry: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
-      "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
-    },
     "application/single_app/app_settings_cache.py::_initialize_stream_session_cache_fallback": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "20fc93bec7731b05bc685c03329690e16902e77c15b383e060fd65098045051e",
+        "sha256": "442514493ee5bcd66e493bb8b148577c9b29abb47206ac967d957a7100bcb36b",
         "points": [
           {
             "method": "create_item",
@@ -7688,17 +7753,46 @@
           }
         ],
         "queries": [],
-        "sha256": "2cfd9858f7115d531fc4baa0a25726ad27525259f5330e482626cafb6f0e7156"
+        "batches": [],
+        "module_sha256": "425ef0e3e6d02009ec05d87b14618804a05f97f2dd21d77ac758be7172aa3c49"
       },
       "classification": "response-unused",
-      "contract": "_initialize_stream_session_cache_fallback: create_item response is discarded when seeding the empty stream-event list; existing metadata/events entries are written through _set_cosmos_cache_entry.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "The create response is discarded when seeding an empty replay list and append-marker array; existing replay is not overwritten.",
+      "tests": [
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_replay_index_only_changes_new_verified_documents_and_cold_workers_reconcile",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_stream_event_fallback_patches_in_one_request_and_upgrades_legacy_items"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/app_settings_cache.py::_read_cosmos_cache_document": {
+      "boundary": {
+        "sha256": "4d738efdebe661af05685e77cec62daf4baf0d2a25d418a96b031be753250d0b",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "_get_cosmos_cache_container()",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "425ef0e3e6d02009ec05d87b14618804a05f97f2dd21d77ac758be7172aa3c49"
+      },
+      "classification": "sdk-compatible",
+      "contract": "Consumes CosmosDict as a Mapping. Strict reads surface storage failures. Only the scoped progress reader bypasses text expiry and returns scalar counters, not the expired replay payload.",
+      "tests": [
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_discovery_does_not_choose_stale_local_submission",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_discovery_does_not_report_a_read_outage_as_no_stream",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_progress_survives_replay_expiry_for_cold_readers_and_terminal_status",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_scoped_direct_deltas_make_exactly_one_storage_call_each",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_redis_write_failure_persists_user_ui_cache_to_cosmos",
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_stream_event_fallback_is_shared_between_workers"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/app_settings_cache.py::_read_cosmos_cache_version": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "20fc93bec7731b05bc685c03329690e16902e77c15b383e060fd65098045051e",
+        "sha256": "ee8d7a9b4f1e28bcb5e92a7079a51a38a58985900c62778a5557ce1f4dcc728d",
         "points": [
           {
             "method": "read_item",
@@ -7707,19 +7801,40 @@
           }
         ],
         "queries": [],
-        "sha256": "ee8d7a9b4f1e28bcb5e92a7079a51a38a58985900c62778a5557ce1f4dcc728d"
+        "batches": [],
+        "module_sha256": "425ef0e3e6d02009ec05d87b14618804a05f97f2dd21d77ac758be7172aa3c49"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_cosmos_cache_version: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Reads the version scalar from a Mapping before normalizing it; does not expose a CosmosDict.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_redis_initialization_failure_assigns_fallback_functions"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/app_settings_cache.py::_renew_cosmos_stream_expiry": {
+      "classification": "response-unused",
+      "contract": "Discards the conditional expiry Patch response using no_response. The attempt-only predicate additionally checks active state; never modifies control metadata payload.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_discovery_renewal_is_one_conditional_patch"
+      ],
+      "boundary": {
+        "sha256": "0aaa4a7325f2556c3d714da325e40cefefc2fda9a78e4b3165bc6dd8db0513b1",
+        "points": [
+          {
+            "method": "patch_item",
+            "receiver": "_get_cosmos_cache_container()",
+            "response": "unused"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "425ef0e3e6d02009ec05d87b14618804a05f97f2dd21d77ac758be7172aa3c49"
+      }
     },
     "application/single_app/app_settings_cache.py::_set_cosmos_cache_entry": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "20fc93bec7731b05bc685c03329690e16902e77c15b383e060fd65098045051e",
+        "sha256": "64c1263f1410ca12ff48600ebc167a6e33588a2148b5c7c8033e3ccff6dfd7a6",
         "points": [
           {
             "method": "upsert_item",
@@ -7728,12 +7843,15 @@
           }
         ],
         "queries": [],
-        "sha256": "64c1263f1410ca12ff48600ebc167a6e33588a2148b5c7c8033e3ccff6dfd7a6"
+        "batches": [],
+        "module_sha256": "425ef0e3e6d02009ec05d87b14618804a05f97f2dd21d77ac758be7172aa3c49"
       },
       "classification": "response-unused",
-      "contract": "_set_cosmos_cache_entry: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "Cosmos upsert result is discarded; discovery initialization retries an unsuccessful write and raises when it cannot confirm publication.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_cosmos_wave1_cache_fallback.py::test_cosmos_discovery_initialization_retries_and_reports_unconfirmed_writes"
+      ]
     },
     "application/single_app/app_settings_store.py::AppSettingsStore._read_cosmos": {
       "boundary": {
@@ -23791,8 +23909,7 @@
     },
     "application/single_app/functions_settings.py::_clear_stale_active_group": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "06c8dcb0c5c815dce6f0658b99eb65dda520f021b15cc71a05ee3bd835092d97",
+        "sha256": "8056026bd02ac3384eb8dab465006a366b652bd48d8aafde5a586cf9eab7444d",
         "points": [
           {
             "method": "read_item",
@@ -23806,7 +23923,8 @@
           }
         ],
         "queries": [],
-        "sha256": "8056026bd02ac3384eb8dab465006a366b652bd48d8aafde5a586cf9eab7444d"
+        "batches": [],
+        "module_sha256": "1c33784bf70f859317a18ed9002b64b74382c3281a6bc4b7875781e7ea112839"
       },
       "classification": "review-required",
       "contract": "",
@@ -23814,8 +23932,7 @@
     },
     "application/single_app/functions_settings.py::_get_app_settings_store": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "06c8dcb0c5c815dce6f0658b99eb65dda520f021b15cc71a05ee3bd835092d97",
+        "sha256": "bc6d3efd58cae9b3e1b692f5b541b9c385fbe1ee6ce71a0ad64fff5df44f7748",
         "points": [
           {
             "method": "read_item",
@@ -23824,7 +23941,8 @@
           }
         ],
         "queries": [],
-        "sha256": "bc6d3efd58cae9b3e1b692f5b541b9c385fbe1ee6ce71a0ad64fff5df44f7748"
+        "batches": [],
+        "module_sha256": "1c33784bf70f859317a18ed9002b64b74382c3281a6bc4b7875781e7ea112839"
       },
       "classification": "review-required",
       "contract": "",
@@ -23832,8 +23950,7 @@
     },
     "application/single_app/functions_settings.py::add_search_to_history": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "06c8dcb0c5c815dce6f0658b99eb65dda520f021b15cc71a05ee3bd835092d97",
+        "sha256": "4b3c61716e5517b6dfc5f67cbb532a034281458e33c20375ddddb3dd2cfad6a8",
         "points": [
           {
             "method": "read_item",
@@ -23847,7 +23964,8 @@
           }
         ],
         "queries": [],
-        "sha256": "4b3c61716e5517b6dfc5f67cbb532a034281458e33c20375ddddb3dd2cfad6a8"
+        "batches": [],
+        "module_sha256": "1c33784bf70f859317a18ed9002b64b74382c3281a6bc4b7875781e7ea112839"
       },
       "classification": "review-required",
       "contract": "",
@@ -23855,8 +23973,7 @@
     },
     "application/single_app/functions_settings.py::clear_user_search_history": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "06c8dcb0c5c815dce6f0658b99eb65dda520f021b15cc71a05ee3bd835092d97",
+        "sha256": "2ec265bcf42c91c40cce1b307cdd449f453755c1c7c5b9219fc4e1212f1cc867",
         "points": [
           {
             "method": "read_item",
@@ -23870,7 +23987,8 @@
           }
         ],
         "queries": [],
-        "sha256": "2ec265bcf42c91c40cce1b307cdd449f453755c1c7c5b9219fc4e1212f1cc867"
+        "batches": [],
+        "module_sha256": "1c33784bf70f859317a18ed9002b64b74382c3281a6bc4b7875781e7ea112839"
       },
       "classification": "review-required",
       "contract": "",
@@ -23878,8 +23996,7 @@
     },
     "application/single_app/functions_settings.py::get_user_search_history": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "06c8dcb0c5c815dce6f0658b99eb65dda520f021b15cc71a05ee3bd835092d97",
+        "sha256": "6037312077f10d0f3a4fee3eab19d7f4be707853317ee1d4a7765d4e0e956471",
         "points": [
           {
             "method": "read_item",
@@ -23888,7 +24005,8 @@
           }
         ],
         "queries": [],
-        "sha256": "6037312077f10d0f3a4fee3eab19d7f4be707853317ee1d4a7765d4e0e956471"
+        "batches": [],
+        "module_sha256": "1c33784bf70f859317a18ed9002b64b74382c3281a6bc4b7875781e7ea112839"
       },
       "classification": "review-required",
       "contract": "",
@@ -23896,8 +24014,7 @@
     },
     "application/single_app/functions_settings.py::get_user_settings": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "06c8dcb0c5c815dce6f0658b99eb65dda520f021b15cc71a05ee3bd835092d97",
+        "sha256": "e63e62388d227292584451585cef9d22de7f5e5bb633569d9b85fcdf0aa75f1a",
         "points": [
           {
             "method": "read_item",
@@ -23916,7 +24033,8 @@
           }
         ],
         "queries": [],
-        "sha256": "e63e62388d227292584451585cef9d22de7f5e5bb633569d9b85fcdf0aa75f1a"
+        "batches": [],
+        "module_sha256": "1c33784bf70f859317a18ed9002b64b74382c3281a6bc4b7875781e7ea112839"
       },
       "classification": "review-required",
       "contract": "",
@@ -23924,8 +24042,7 @@
     },
     "application/single_app/functions_settings.py::read_user_settings_snapshot": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "06c8dcb0c5c815dce6f0658b99eb65dda520f021b15cc71a05ee3bd835092d97",
+        "sha256": "c45411751c857573b8d0ec86a6a340a8e060204799d9d92915cd9e2866e3eda8",
         "points": [
           {
             "method": "read_item",
@@ -23934,7 +24051,8 @@
           }
         ],
         "queries": [],
-        "sha256": "c45411751c857573b8d0ec86a6a340a8e060204799d9d92915cd9e2866e3eda8"
+        "batches": [],
+        "module_sha256": "1c33784bf70f859317a18ed9002b64b74382c3281a6bc4b7875781e7ea112839"
       },
       "classification": "review-required",
       "contract": "",
@@ -23942,8 +24060,7 @@
     },
     "application/single_app/functions_settings.py::update_user_settings": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "06c8dcb0c5c815dce6f0658b99eb65dda520f021b15cc71a05ee3bd835092d97",
+        "sha256": "49a20867f8b2e08c4e3c6de3847fcb2db4aa09802e9f549b03289d950bca6683",
         "points": [
           {
             "method": "read_item",
@@ -23967,7 +24084,8 @@
           }
         ],
         "queries": [],
-        "sha256": "49a20867f8b2e08c4e3c6de3847fcb2db4aa09802e9f549b03289d950bca6683"
+        "batches": [],
+        "module_sha256": "1c33784bf70f859317a18ed9002b64b74382c3281a6bc4b7875781e7ea112839"
       },
       "classification": "review-required",
       "contract": "",
@@ -27559,8 +27677,7 @@
     },
     "application/single_app/route_backend_chats.py::_build_tabular_related_document_catalog": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "82662957f069353aefbf2a550a0c79d4812d7390c33162431d2ca95d6607cba8",
         "points": [],
         "queries": [
           {
@@ -27569,7 +27686,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "82662957f069353aefbf2a550a0c79d4812d7390c33162431d2ca95d6607cba8"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27577,8 +27695,7 @@
     },
     "application/single_app/route_backend_chats.py::_create_personal_conversation": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "fe575c723ec7aa2ecdc1e1fbe7eb10d77fe71508f0d629aa8836b974abdd9618",
         "points": [
           {
             "method": "upsert_item",
@@ -27592,7 +27709,8 @@
           }
         ],
         "queries": [],
-        "sha256": "fe575c723ec7aa2ecdc1e1fbe7eb10d77fe71508f0d629aa8836b974abdd9618"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27600,8 +27718,7 @@
     },
     "application/single_app/route_backend_chats.py::_get_user_message_image_context": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "9e47c6d3efd9690037f39ffbb8a98eb7bfa2457a76d9f4810161a8bb8d2b83b4",
         "points": [
           {
             "method": "read_item",
@@ -27610,7 +27727,8 @@
           }
         ],
         "queries": [],
-        "sha256": "9e47c6d3efd9690037f39ffbb8a98eb7bfa2457a76d9f4810161a8bb8d2b83b4"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27618,8 +27736,7 @@
     },
     "application/single_app/route_backend_chats.py::_load_user_message_response_context": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "0c5fba39f955b382d6e3aaae020f036a56bdfc83993b061349c5a1790f1e482f",
         "points": [
           {
             "method": "read_item",
@@ -27628,7 +27745,8 @@
           }
         ],
         "queries": [],
-        "sha256": "0c5fba39f955b382d6e3aaae020f036a56bdfc83993b061349c5a1790f1e482f"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27636,8 +27754,7 @@
     },
     "application/single_app/route_backend_chats.py::_persist_screened_assistant": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "db36e208d8a06836694662e40cccb56a47aaf21e44f52759443b78d8d50a62b2",
         "points": [
           {
             "method": "delete_item",
@@ -27646,7 +27763,8 @@
           }
         ],
         "queries": [],
-        "sha256": "db36e208d8a06836694662e40cccb56a47aaf21e44f52759443b78d8d50a62b2"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27654,8 +27772,7 @@
     },
     "application/single_app/route_backend_chats.py::_read_agent_citation_artifact_payloads": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "6405a74b2bc9f5b3fec1e8dd855b4cf7286ce55f64019fa0ca3ee0e2b471f26e",
         "points": [],
         "queries": [
           {
@@ -27664,7 +27781,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "6405a74b2bc9f5b3fec1e8dd855b4cf7286ce55f64019fa0ca3ee0e2b471f26e"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27672,8 +27790,7 @@
     },
     "application/single_app/route_backend_chats.py::_read_recent_assistant_messages": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "046e824243430a02a5b186cd6e9d37d7e4b3b1c0388ad3620877f5594c0b75df",
         "points": [],
         "queries": [
           {
@@ -27682,7 +27799,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "046e824243430a02a5b186cd6e9d37d7e4b3b1c0388ad3620877f5594c0b75df"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27690,8 +27808,7 @@
     },
     "application/single_app/route_backend_chats.py::_reject_chat_submission": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "288e129d9b351e7154851236aa8dc9e729c3717bdd3f70eabb8b8ae115486315",
         "points": [
           {
             "method": "upsert_item",
@@ -27710,7 +27827,8 @@
           }
         ],
         "queries": [],
-        "sha256": "288e129d9b351e7154851236aa8dc9e729c3717bdd3f70eabb8b8ae115486315"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27718,8 +27836,7 @@
     },
     "application/single_app/route_backend_chats.py::_resolve_authorized_conversation_context": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "fab1e43b2782cf73dbcb57a0054fce275c34a46f670d5cb3a1dbc341a40a69a3",
         "points": [
           {
             "method": "read_item",
@@ -27728,7 +27845,8 @@
           }
         ],
         "queries": [],
-        "sha256": "fab1e43b2782cf73dbcb57a0054fce275c34a46f670d5cb3a1dbc341a40a69a3"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27736,8 +27854,7 @@
     },
     "application/single_app/route_backend_chats.py::_resolve_chat_selected_document_metadata": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "b74514b35b7026cc4e9b74ca6e636b73bdc2aeb5b43b9b831a1b889933ba86bc",
         "points": [],
         "queries": [
           {
@@ -27746,7 +27863,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "b74514b35b7026cc4e9b74ca6e636b73bdc2aeb5b43b9b831a1b889933ba86bc"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27754,8 +27872,7 @@
     },
     "application/single_app/route_backend_chats.py::_rollback_agent_citation_artifacts": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "f4b52dfb5a5a24a71a8b31c0839f7901ad49bc60e59be4104c6fbad5895e3ed8",
         "points": [
           {
             "method": "delete_item",
@@ -27775,7 +27892,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "f4b52dfb5a5a24a71a8b31c0839f7901ad49bc60e59be4104c6fbad5895e3ed8"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27783,8 +27901,7 @@
     },
     "application/single_app/route_backend_chats.py::_save_chat_user_metadata": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "2eb3087c2648dc63a4e2153648111740ea6f09191e5cc4cf3e112692f13ec7f2",
         "points": [
           {
             "method": "upsert_item",
@@ -27793,7 +27910,8 @@
           }
         ],
         "queries": [],
-        "sha256": "2eb3087c2648dc63a4e2153648111740ea6f09191e5cc4cf3e112692f13ec7f2"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27801,8 +27919,7 @@
     },
     "application/single_app/route_backend_chats.py::persist_agent_citation_artifacts": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "2ddf8a15d4535a230894dce969eec6547280a76d58c36b1517babbfa9cd59858",
         "points": [
           {
             "method": "upsert_item",
@@ -27816,7 +27933,8 @@
           }
         ],
         "queries": [],
-        "sha256": "2ddf8a15d4535a230894dce969eec6547280a76d58c36b1517babbfa9cd59858"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27824,8 +27942,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._answer_raced_block_submission": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "665b15455527190885836ef2693e580d7bb12f1095f5f852b3025e49300bf11f",
         "points": [
           {
             "method": "read_item",
@@ -27834,7 +27951,8 @@
           }
         ],
         "queries": [],
-        "sha256": "665b15455527190885836ef2693e580d7bb12f1095f5f852b3025e49300bf11f"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27842,8 +27960,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._find_originating_user_request": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "87cabd89ec423b1d136ca31f57302e7968915917aed47f813fde7509038cd88d",
         "points": [],
         "queries": [
           {
@@ -27852,7 +27969,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "87cabd89ec423b1d136ca31f57302e7968915917aed47f813fde7509038cd88d"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27860,8 +27978,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._get_latest_chat_thread_id": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "a038c79bedcf74e8e6845e86eb121bb297b509576060664c4f4665b4a194da0c",
         "points": [],
         "queries": [
           {
@@ -27870,7 +27987,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "a038c79bedcf74e8e6845e86eb121bb297b509576060664c4f4665b4a194da0c"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27878,8 +27996,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._load_block_revision_message": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "c123ca933146d12ce4abf1d4fe6908b5b85669bec2683a9596570165bfc55305",
         "points": [
           {
             "method": "read_item",
@@ -27888,7 +28005,8 @@
           }
         ],
         "queries": [],
-        "sha256": "c123ca933146d12ce4abf1d4fe6908b5b85669bec2683a9596570165bfc55305"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27896,8 +28014,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._load_or_create_analyze_conversation": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "bdca4fcc9d084df866c382d171029a7b50682ed4277ae576a76eb6242b6eba50",
         "points": [
           {
             "method": "read_item",
@@ -27911,7 +28028,8 @@
           }
         ],
         "queries": [],
-        "sha256": "bdca4fcc9d084df866c382d171029a7b50682ed4277ae576a76eb6242b6eba50"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27919,8 +28037,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats._resolve_document_action_selected_documents": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "25a6045d75aaf20cb18064c0862a5f129752ef8170f85a29e3bf068189cd9204",
         "points": [],
         "queries": [
           {
@@ -27929,7 +28046,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "25a6045d75aaf20cb18064c0862a5f129752ef8170f85a29e3bf068189cd9204"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27937,8 +28055,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.add_message_image_revision_api": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "738633127c1ba804260536f901a7797409fd8d518e35920ec3ee14efd10786d5",
         "points": [
           {
             "method": "read_item",
@@ -27947,7 +28064,8 @@
           }
         ],
         "queries": [],
-        "sha256": "738633127c1ba804260536f901a7797409fd8d518e35920ec3ee14efd10786d5"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -27955,8 +28073,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_api": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "513d5b8b883813cae5a623a9aaf8190cfed4b28fa6df4caa7eb29bc9806d751d",
         "points": [
           {
             "method": "read_item",
@@ -28036,7 +28153,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "afe598ce295b3fd26c8eff98d63d42daa2c97c2864e941b53c9609b7cd3da3ab"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -28044,8 +28162,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "7e1a2783caa6632e800ecda3706917c71e7ca30a42138cced4a6142f76063a32",
         "points": [],
         "queries": [
           {
@@ -28054,7 +28171,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "fc3aa314ad0829b843591307c270b815fdc40d0f3f5b71b5c21b1fc8ac147c0b"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -28062,8 +28180,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api.generate": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "1ed6c200be35a19582709661522e5937920fe090e82f976c8f8c56633a6f14f2",
         "points": [
           {
             "method": "read_item",
@@ -28123,7 +28240,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "514182a5a3bd8c4e544479dc4abb16c18967c2dccb5fd5cd02e74763b60c4200"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -28131,8 +28249,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api.generate.finalize_cancelled_stream_response": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "4af6717085b47b65d568ff3038d1ef8bd5c2adeb1e470cb79238e93183d52eba",
         "points": [
           {
             "method": "replace_item",
@@ -28141,7 +28258,8 @@
           }
         ],
         "queries": [],
-        "sha256": "4af6717085b47b65d568ff3038d1ef8bd5c2adeb1e470cb79238e93183d52eba"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -28149,8 +28267,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.execute_document_action_chat_request": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "d58366b0356ee1583b35a2116430f06d1cb0304e1186f95ed19fff72b1714b06",
         "points": [
           {
             "method": "read_item",
@@ -28179,7 +28296,8 @@
           }
         ],
         "queries": [],
-        "sha256": "d58366b0356ee1583b35a2116430f06d1cb0304e1186f95ed19fff72b1714b06"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -28187,8 +28305,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.execute_saved_analysis_chat_request": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "d05f7e80e44a9a9bebac52069256e6b2fe5a14d0b135ad25d8df2b925d464565",
         "points": [
           {
             "method": "read_item",
@@ -28228,7 +28345,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "d05f7e80e44a9a9bebac52069256e6b2fe5a14d0b135ad25d8df2b925d464565"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -28236,8 +28354,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.generate_image_from_proposal": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "69be4b24e818f4e852ff30fa1031f467c574c9693590231d7f5c858a19dfaa36",
         "points": [
           {
             "method": "read_item",
@@ -28251,7 +28368,8 @@
           }
         ],
         "queries": [],
-        "sha256": "69be4b24e818f4e852ff30fa1031f467c574c9693590231d7f5c858a19dfaa36"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -28259,8 +28377,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.generate_image_from_proposal.read_conversation_image": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "7d6b5464e658524d26adfb6f6f7ff1e53a30f1bca4ef34bfc5db702897cc5377",
         "points": [
           {
             "method": "read_item",
@@ -28269,7 +28386,8 @@
           }
         ],
         "queries": [],
-        "sha256": "7d6b5464e658524d26adfb6f6f7ff1e53a30f1bca4ef34bfc5db702897cc5377"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -28277,8 +28395,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.image_proposal_status": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "bf6e633a6029e92fb26ac8044b8e88a6b593fa8103188190d93797a3aabc91d2",
         "points": [],
         "queries": [
           {
@@ -28287,7 +28404,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "bf6e633a6029e92fb26ac8044b8e88a6b593fa8103188190d93797a3aabc91d2"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -28295,8 +28413,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.mask_message_api": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "4f023bbdec15c4ce11a324c31963c4689df6b465abdaf0d74b959c59aa099053",
         "points": [
           {
             "method": "read_item",
@@ -28316,7 +28433,8 @@
             "response": "consumed"
           }
         ],
-        "sha256": "4f023bbdec15c4ce11a324c31963c4689df6b465abdaf0d74b959c59aa099053"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -28324,8 +28442,7 @@
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.set_message_visual_style_api": {
       "boundary": {
-        "batches": [],
-        "module_sha256": "4def160d7c5c10aed0775602436f8443bbf6bdb6755cb0ba16193c7bee3cd4ab",
+        "sha256": "ef785c631c95a57e1290f86dbf05a4c37972705387f146a543f7968ae5b7c7bf",
         "points": [
           {
             "method": "read_item",
@@ -28334,7 +28451,8 @@
           }
         ],
         "queries": [],
-        "sha256": "ef785c631c95a57e1290f86dbf05a4c37972705387f146a543f7968ae5b7c7bf"
+        "batches": [],
+        "module_sha256": "5ae4b0ef110800bd86cf6fb9de5b9339e92a5b5c91af3d3b97cbaecf4c384c24"
       },
       "classification": "review-required",
       "contract": "",
@@ -33454,8 +33572,6 @@
   },
   "schema_version": 1,
   "source_review_baseline": {
-    "application/single_app/app_settings_cache.py::_get_cosmos_cache_entry": "67a11037253ab31cae4bad5ca152532182ff14bf7fb9a05dd92c92543bc146a5",
-    "application/single_app/app_settings_cache.py::_read_cosmos_cache_version": "f68452b283d9b9e468247732acf7a56d7a8c2c5178d63cf5443f96bf1b4394f6",
     "application/single_app/app_settings_store.py::AppSettingsStore._read_cosmos": "56597c9f9be5567c646e0dfff7123209205054b9bd512c49db3175dd05060fb5",
     "application/single_app/app_settings_store.py::AppSettingsStore._write": "d211afdc1a48792598479fe6a2f216f41e6c2929df544d46f796ff8410a52a82",
     "application/single_app/content_screening/repository.py::ScreeningRepository.count": "c7618b8a8001e74d1a9993be4ccb88d44d2accace184d13703bca73d9a284a96",

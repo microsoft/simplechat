@@ -441,7 +441,10 @@ class AssistHandles:
                 continue
             handle = f'model_{position}'
             self.models.append((handle, model))
-            self.model_handles.setdefault((model['endpoint_id'], model['model_id']), handle)
+            self.model_handles.setdefault((
+                model['endpoint_id'], model['model_id'],
+                _string(model.get('scope_type')), _string(model.get('scope_id')),
+            ), handle)
             self._register(handle, ('model', model))
         default_model = self.options.get('default_model')
         self.default_model = default_model if isinstance(default_model, dict) and default_model.get('valid') is True else None
@@ -600,8 +603,18 @@ class AssistHandles:
     def agent_handle(self, agent):
         return self.agent_handles.get(_agent_key(agent)) if isinstance(agent, dict) else None
 
-    def model_handle(self, endpoint_id, model_id):
-        return self.model_handles.get((_string(endpoint_id), _string(model_id)))
+    def model_handle(self, endpoint_id, model_id, scope_type='', scope_id=''):
+        key = (_string(endpoint_id), _string(model_id), _string(scope_type), _string(scope_id))
+        exact = self.model_handles.get(key)
+        if exact:
+            return exact
+        if scope_type or scope_id:
+            return None
+        matches = [
+            handle for candidate, handle in self.model_handles.items()
+            if candidate[:2] == key[:2]
+        ]
+        return matches[0] if len(matches) == 1 else None
 
 
 _RESERVED_WORDS = frozenset({'start', 'all', 'none', 'auto', 'selected', 'tasks', 'relevance'})
@@ -669,7 +682,13 @@ def _workflow_runner_view(draft, handles):
     model_id = _string(draft.get('model_id'))
     if not endpoint_id and not model_id:
         return {'type': 'model', 'model': 'default_model'}
-    return {'type': 'model', 'model': handles.model_handle(endpoint_id, model_id)}
+    return {
+        'type': 'model',
+        'model': handles.model_handle(
+            endpoint_id, model_id,
+            draft.get('model_scope_type'), draft.get('model_scope_id'),
+        ),
+    }
 
 
 def _task_runner_view(runner, handles):
@@ -678,7 +697,13 @@ def _task_runner_view(runner, handles):
     if runner_type == 'agent':
         return {'type': 'agent', 'agent': handles.agent_handle(runner.get('selected_agent'))}
     if runner_type == 'model':
-        return {'type': 'model', 'model': handles.model_handle(runner.get('model_endpoint_id'), runner.get('model_id'))}
+        return {
+            'type': 'model',
+            'model': handles.model_handle(
+                runner.get('model_endpoint_id'), runner.get('model_id'),
+                runner.get('model_scope_type'), runner.get('model_scope_id'),
+            ),
+        }
     return {'type': 'inherit'}
 
 
@@ -1799,6 +1824,8 @@ class _Applier:
         self._set(self.candidate, 'runner_type', 'model')
         self._set(self.candidate, 'model_endpoint_id', '' if model is None else model['endpoint_id'])
         self._set(self.candidate, 'model_id', '' if model is None else model['model_id'])
+        self._set(self.candidate, 'model_scope_type', '' if model is None else model.get('scope_type', ''))
+        self._set(self.candidate, 'model_scope_id', '' if model is None else model.get('scope_id', ''))
 
     def op_set_task_runner(self, op):
         _index, task = self._task(op['task'])
@@ -1820,9 +1847,14 @@ class _Applier:
         else:
             model = self._model(op['model'])
             if (current.get('type') == 'model' and current.get('model_endpoint_id') == model['endpoint_id']
-                    and current.get('model_id') == model['model_id']):
+                    and current.get('model_id') == model['model_id']
+                    and current.get('model_scope_type') == model.get('scope_type', '')
+                    and current.get('model_scope_id') == model.get('scope_id', '')):
                 return
-            runner = {'type': 'model', 'model_endpoint_id': model['endpoint_id'], 'model_id': model['model_id']}
+            runner = {
+                'type': 'model', 'model_endpoint_id': model['endpoint_id'], 'model_id': model['model_id'],
+                'model_scope_type': model.get('scope_type', ''), 'model_scope_id': model.get('scope_id', ''),
+            }
         task['runner'] = runner
         self.touched_tasks.add(task['id'])
 

@@ -495,6 +495,7 @@ body.chat-shell-page.sidebar-nav-enabled .chat-page-shell {
 .chat-searchable-select-items {
   max-height: 40vh;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding: 0;
 }
 
@@ -518,6 +519,30 @@ body.chat-shell-page.sidebar-nav-enabled .chat-page-shell {
   object-fit: cover;
   overflow: hidden;
   width: 1.25rem;
+}
+
+.chat-model-persona-indicator {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 auto;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+}
+
+.chat-searchable-select-item .chat-model-persona-indicator:focus-visible {
+    outline: 2px solid var(--bs-primary);
+    outline-offset: 1px;
+}
+
+.chat-model-persona-inspector {
+    background: var(--bs-body-bg);
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+.chat-model-persona-inspector-content {
+    overflow-wrap: anywhere;
 }
 
 img.chat-searchable-select-item-icon {

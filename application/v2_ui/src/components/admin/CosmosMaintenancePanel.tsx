@@ -9,8 +9,8 @@
 //
 // Shares the app maintenance status with DAI Metrics and Conversation Cache.
 
-import { useEffect, useRef, useState } from 'react';
-import { ScanSearch, Trash2, Zap } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ClipboardCopy, RefreshCw, ScanSearch, Trash2, Zap } from 'lucide-react';
 import { ApiError, api } from '../../lib/apiClient';
 import type { AdminField } from '../../lib/adminFields';
 import { describeMaintenanceStatus, formatCount, formatTimestamp, humanizeStatus, type ToneText } from '../../lib/scaleFormat';
@@ -43,8 +43,171 @@ import {
 } from './OperationalReadouts';
 
 const RUN_PATH = '/api/admin/settings/app-maintenance/run';
+const REPLAY_INDEX_PATH = '/api/admin/settings/cosmos-replay-indexing';
 
 type MaintenanceAction = 'apply-indexes' | 'dry-run' | 'delete';
+type ReplayAction = 'apply' | 'verify' | 'disable';
+type ReplayIndexStatus = {
+    enabled: boolean;
+    redis_enabled: boolean;
+    database: string;
+    container: string;
+    excluded_path: string;
+    policy_state: 'ready' | 'missing' | 'conflict' | 'unavailable' | 'manual' | 'pending';
+    proposed_policy: Record<string, unknown> | null;
+};
+
+function CosmosReplayIndexControl({ seen }: { seen: boolean }) {
+    const [status, setStatus] = useState<ReplayIndexStatus | null>(null);
+    const [message, setMessage] = useState<ToneText | null>(null);
+    const [busy, setBusy] = useState<ReplayAction | 'refresh' | null>(null);
+    const [confirm, setConfirm] = useState<'apply' | 'verify' | null>(null);
+    const [readersReady, setReadersReady] = useState(false);
+
+    const refresh = useCallback(async () => {
+        setBusy('refresh');
+        setMessage(null);
+        try {
+            setStatus(await api.get<ReplayIndexStatus>(REPLAY_INDEX_PATH));
+        } catch {
+            setMessage({ tone: 'danger', text: 'Could not read Cosmos replay indexing status.' });
+        } finally {
+            setBusy(null);
+        }
+    }, []);
+    useEffect(() => {
+        if (seen) void refresh();
+    }, [seen, refresh]);
+
+    const update = async (action: ReplayAction) => {
+        setBusy(action);
+        setMessage(null);
+        try {
+            setStatus(await api.post<ReplayIndexStatus>(REPLAY_INDEX_PATH, {
+                action, ...(action !== 'disable' ? { readers_ready: readersReady } : {}),
+            }));
+            setMessage({
+                tone: 'ok',
+                text: action === 'disable'
+                    ? 'New streams use indexed replay again. The existing exclusion is unchanged.'
+                    : 'Verified. New Cosmos streams can omit replay text from the index.',
+            });
+        } catch (error) {
+            const body = error instanceof ApiError
+                ? error.payload as { error?: string; status?: ReplayIndexStatus } | null
+                : null;
+            if (body?.status) setStatus(body.status);
+            setMessage({ tone: 'danger', text: body?.error || 'Could not confirm the replay indexing change.' });
+        } finally {
+            setBusy(null);
+            setConfirm(null);
+        }
+    };
+
+    const active = status?.enabled && status.policy_state === 'ready' && !status.redis_enabled;
+    const policyText = status ? JSON.stringify(status.proposed_policy || { path: status.excluded_path }, null, 2) : '';
+    const copyPolicy = async () => {
+        try {
+            await navigator.clipboard.writeText(policyText);
+            toast.success(status?.proposed_policy ? 'Merged policy copied.' : 'Replay exclusion copied.');
+        } catch {
+            toast.error('Could not copy automatically. Select and copy the JSON.');
+        }
+    };
+    const showPolicy = status && !status.redis_enabled && status.policy_state !== 'ready'
+        && status.policy_state !== 'conflict';
+    return (
+        <ReadoutGroup title="Optimize Cosmos replay when Redis is off">
+            <div data-testid="cosmos-replay-indexing" className="space-y-3">
+                <p className="text-sm text-text-2">
+                    Reduce Cosmos write cost for long replies by excluding only replay text from indexing. Chunks still save one at a time.
+                </p>
+                {status && (
+                    <p role="status" className="text-sm text-text-2">
+                        {status.redis_enabled
+                            ? 'Inactive: Redis is enabled.'
+                            : active ? 'Active for new Cosmos streams.'
+                                : status.policy_state === 'manual' ? 'Manual action required.'
+                                    : status.policy_state === 'pending' ? 'Awaiting Azure policy confirmation.'
+                                        : status.policy_state === 'conflict' ? 'Current index policy conflicts with this exclusion.'
+                                            : status.enabled ? 'Inactive until the exclusion can be verified.' : 'Off.'}
+                    </p>
+                )}
+                <OpsMessage message={message} />
+                <div className="flex flex-wrap gap-2">
+                    <OpsButton icon={RefreshCw} busy={busy === 'refresh'} disabled={busy !== null} onClick={() => void refresh()}>
+                        Refresh policy
+                    </OpsButton>
+                    {status && !status.redis_enabled && !active && status.policy_state !== 'conflict' && (
+                        <>
+                            {(status.policy_state === 'missing' || status.policy_state === 'ready') && (
+                                <OpsButton icon={Zap} disabled={busy !== null} onClick={() => {
+                                    setReadersReady(false);
+                                    setConfirm('apply');
+                                }}>
+                                    Enable replay exclusion
+                                </OpsButton>
+                            )}
+                            <OpsButton icon={ScanSearch} disabled={busy !== null} onClick={() => {
+                                setReadersReady(false);
+                                setConfirm('verify');
+                            }}>
+                                Verify policy
+                            </OpsButton>
+                        </>
+                    )}
+                    {status?.enabled && (
+                        <OpsButton icon={Zap} busy={busy === 'disable'} disabled={busy !== null} onClick={() => void update('disable')}>
+                            Disable replay exclusion
+                        </OpsButton>
+                    )}
+                </div>
+                {showPolicy && (
+                    <details>
+                        <summary className="cursor-pointer text-sm font-medium text-text-2">Manual policy instructions</summary>
+                        <div className="mt-2 space-y-2">
+                            <p className="text-sm text-text-2">
+                                In the Azure portal, open Data Explorer, then {status.database} / {status.container} → Scale &amp; Settings → Indexing Policy.
+                                {' '}{status.proposed_policy
+                                    ? 'Refresh here first so the merged policy includes Azure’s latest rules. Review, paste, and save the merged JSON.'
+                                    : 'Add this entry to the existing excludedPaths array without replacing the rest of the policy.'}
+                                {' '}Then return here and select Verify policy.
+                            </p>
+                            <textarea aria-label={status.proposed_policy ? 'Merged index policy' : 'Replay exclusion entry'} readOnly
+                                value={policyText} rows={7}
+                                className="w-full rounded-md border border-edge bg-surface-2 p-2 font-mono text-xs text-text-1" />
+                            <OpsButton icon={ClipboardCopy} onClick={() => void copyPolicy()}>
+                                {status.proposed_policy ? 'Copy merged policy' : 'Copy exclusion entry'}
+                            </OpsButton>
+                        </div>
+                    </details>
+                )}
+                {confirm !== null && (
+                    <ConfirmActionModal
+                        title={confirm === 'apply' ? 'Enable Cosmos replay exclusion' : 'Verify Cosmos replay exclusion'}
+                        confirmLabel={confirm === 'apply' ? 'Apply and verify' : 'Verify and enable'}
+                        confirmDisabled={!readersReady}
+                        busy={busy === confirm}
+                        onConfirm={() => void update(confirm)}
+                        onClose={() => setConfirm(null)}
+                    >
+                        <p>
+                            {confirm === 'apply'
+                                ? 'Adds only the replay-only exclusion if it is missing. Throughput and unrelated indexes are unchanged.'
+                                : 'Checks the existing policy only; it does not update Azure.'}
+                            {' '}Existing streams keep their current replay format.
+                        </p>
+                        <label className="flex items-start gap-2">
+                            <input type="checkbox" className="mt-1" checked={readersReady}
+                                onChange={(event) => setReadersReady(event.target.checked)} />
+                            <span>All app workers sharing this container can read both replay formats.</span>
+                        </label>
+                    </ConfirmActionModal>
+                )}
+            </div>
+        </ReadoutGroup>
+    );
+}
 
 export function CosmosMaintenancePanel({ field }: { field: AdminField }) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -166,6 +329,7 @@ export function CosmosMaintenancePanel({ field }: { field: AdminField }) {
 
                 <OpsMessage message={message} />
                 <OpsMessage message={loadError} />
+                <CosmosReplayIndexControl seen={seen} />
 
                 {!hasData && maintenance.loading ? <ReadoutSkeleton rows={8} /> : null}
 

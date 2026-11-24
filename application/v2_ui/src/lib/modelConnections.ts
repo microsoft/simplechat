@@ -112,6 +112,9 @@ export interface ConnectionModel extends ConnectionCapacity {
     enabled?: boolean;
     isDiscovered?: boolean;
     responseLength?: number | string | null;
+    persona_enabled?: boolean;
+    persona_markdown?: string;
+    persona_text_visible?: boolean;
     icon?: ResourceIcon | Record<string, never>;
     supportsChat?: boolean;
     supportsImageGeneration?: boolean;
@@ -572,7 +575,11 @@ export function validateConnection(
     { requireDiscovery = false }: { requireDiscovery?: boolean } = {},
 ): Record<string, string> {
     if (connection.provider === 'custom') {
-        return { ...validateCustomConnection(connection, requireDiscovery), ...validateEmbeddingConfiguration(connection) };
+        return {
+            ...validateCustomConnection(connection, requireDiscovery),
+            ...validateEmbeddingConfiguration(connection),
+            ...validateModelPersonas(connection),
+        };
     }
     const errors: Record<string, string> = {};
     const provider = text(connection.provider) || 'aoai';
@@ -672,7 +679,28 @@ export function validateConnection(
         }
     }
 
-    return { ...errors, ...validateEmbeddingConfiguration(connection) };
+    return {
+        ...errors,
+        ...validateEmbeddingConfiguration(connection),
+        ...validateModelPersonas(connection),
+    };
+}
+
+function validateModelPersonas(connection: ModelConnection): Record<string, string> {
+    const errors: Record<string, string> = {};
+    (connection.models ?? []).forEach((model, index) => {
+        const markdown = typeof model.persona_markdown === 'string' ? model.persona_markdown : '';
+        if (Array.from(markdown).length > 8000) {
+            errors[`model_${index}_persona`] = 'Keep the model persona at 8,000 characters or fewer.';
+        }
+        if (model.persona_enabled !== undefined && typeof model.persona_enabled !== 'boolean') {
+            errors[`model_${index}_persona`] = 'Choose whether the model persona is enabled.';
+        }
+        if (model.persona_text_visible !== undefined && typeof model.persona_text_visible !== 'boolean') {
+            errors[`model_${index}_persona`] = 'Choose whether persona text is visible to users.';
+        }
+    });
+    return errors;
 }
 
 function validateEmbeddingConfiguration(connection: ModelConnection): Record<string, string> {

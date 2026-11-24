@@ -1,9 +1,10 @@
 # test_model_endpoint_normalization_backend.py
 """
 Functional test for backend model endpoint normalization.
-Version: 0.261.428
+Version: 0.261.461
 Implemented in: 0.239.155; schema-v2 normalization and migration in 0.261.041
 Editor JSON round-trip coverage added in: 0.261.042
+Model persona normalization, preservation, and visibility added in: 0.261.461
 
 This test ensures model endpoints are normalized with stable IDs and enabled
 flags so frontend consumers receive consistent identifiers. It also verifies
@@ -153,6 +154,112 @@ def test_model_endpoint_normalization_backend():
         _restore_modules(original_modules)
 
     print("✅ Backend model endpoint normalization passed.")
+
+
+def test_model_persona_normalization_validation_and_projection():
+    """Validate persona fields and project hidden text only to authorized editors."""
+    functions_settings, original_modules = _load_functions_settings_module()
+    try:
+        endpoint = {
+            "id": "persona-endpoint",
+            "name": "Persona endpoint",
+            "provider": "custom",
+            "api_type": "openai",
+            "connection": {"endpoint": "https://gateway.example/api"},
+            "models": [{
+                "id": "model-1",
+                "modelName": "chat-model",
+                "persona_enabled": True,
+                "persona_markdown": "You are concise.",
+                "persona_text_visible": False,
+            }],
+        }
+        normalized, changed = functions_settings.normalize_model_endpoints([endpoint])
+        assert changed is True
+        assert normalized[0]["models"][0]["persona_enabled"] is True
+
+        ordinary = functions_settings.sanitize_model_endpoints_for_frontend(normalized)
+        assert ordinary[0]["models"][0]["persona_enabled"] is True
+        assert ordinary[0]["models"][0]["persona_text_visible"] is False
+        assert "persona_markdown" not in ordinary[0]["models"][0]
+
+        editor = functions_settings.sanitize_model_endpoints_for_frontend(
+            normalized, include_hidden_persona_text=True
+        )
+        assert editor[0]["models"][0]["persona_markdown"] == "You are concise."
+
+        visible = copy.deepcopy(endpoint)
+        visible["models"][0]["persona_text_visible"] = True
+        visible_projection = functions_settings.sanitize_model_endpoints_for_frontend([visible])
+        assert visible_projection[0]["models"][0]["persona_markdown"] == "You are concise."
+
+        invalid = copy.deepcopy(endpoint)
+        invalid["models"][0]["persona_enabled"] = "true"
+        try:
+            functions_settings.normalize_model_endpoints([invalid])
+        except functions_settings.AIConnectionError as exc:
+            assert exc.code == "invalid_model_persona"
+        else:
+            raise AssertionError("A non-boolean persona toggle must be rejected.")
+
+        oversized = copy.deepcopy(endpoint)
+        oversized["models"][0]["persona_markdown"] = "x" * 8001
+        try:
+            functions_settings.normalize_model_endpoints([oversized])
+        except functions_settings.AIConnectionError as exc:
+            assert exc.code == "invalid_model_persona"
+        else:
+            raise AssertionError("An oversized persona must be rejected.")
+    finally:
+        _restore_modules(original_modules)
+
+
+def test_model_persona_merge_preserves_omitted_fields():
+    """Keep persona data when an older editor submits the same model ID."""
+    functions_settings, original_modules = _load_functions_settings_module()
+    try:
+        existing = {
+            "id": "endpoint-1",
+            "models": [{
+                "id": "model-1",
+                "modelName": "chat-model",
+                "persona_enabled": True,
+                "persona_markdown": "Saved persona",
+                "persona_text_visible": False,
+            }],
+        }
+        incoming = {
+            "id": "endpoint-1",
+            "models": [{"id": "model-1", "modelName": "chat-model"}],
+        }
+        merged = functions_settings.merge_model_endpoint_payload(existing, incoming)
+        assert merged["models"][0]["persona_enabled"] is True
+        assert merged["models"][0]["persona_markdown"] == "Saved persona"
+        assert merged["models"][0]["persona_text_visible"] is False
+
+        explicit = {
+            "id": "endpoint-1",
+            "models": [{
+                "id": "model-1",
+                "modelName": "chat-model",
+                "persona_enabled": False,
+                "persona_markdown": "",
+                "persona_text_visible": True,
+            }],
+        }
+        replaced = functions_settings.merge_model_endpoint_payload(existing, explicit)
+        assert replaced["models"][0]["persona_enabled"] is False
+        assert replaced["models"][0]["persona_markdown"] == ""
+        assert replaced["models"][0]["persona_text_visible"] is True
+
+        logged = functions_settings.sanitize_settings_for_logging({
+            "model_endpoints": [{
+                "models": [{"persona_markdown": "short but sensitive persona"}],
+            }],
+        })
+        assert logged["model_endpoints"][0]["models"][0]["persona_markdown"] == "[REDACTED]"
+    finally:
+        _restore_modules(original_modules)
 
 
 def _endpoint_with_metadata():

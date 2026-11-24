@@ -66,6 +66,11 @@ from functions_model_endpoint_validation import (
     resolve_custom_model_endpoint_addresses,
     validate_custom_model_endpoint_url,
 )
+from functions_model_persona import (
+    bound_model_persona,
+    bound_model_persona_metadata,
+    prepend_model_persona_request,
+)
 from functions_model_endpoint_urls import (
     resolve_model_inference_endpoint,
     CUSTOM_OPENAI_OPERATION_SUFFIXES,
@@ -186,37 +191,65 @@ def validate_model_endpoint_request(route, request):
             require(capability)
 
 
-def _guard_resource_create(resource, method_name, route, *, async_only=False):
+def _guard_resource_create(
+    resource, method_name, route, *, persona_markdown="", async_only=False
+):
     original_create = getattr(resource, method_name)
     if iscoroutinefunction(original_create):
         async def guarded_create(**kwargs):
-            validate_model_endpoint_request(route, kwargs)
-            return await original_create(**kwargs)
+            request = prepend_model_persona_request(kwargs, persona_markdown)
+            if route is not None:
+                validate_model_endpoint_request(route, request)
+            return await original_create(**request)
     else:
         if async_only:
             return
         def guarded_create(**kwargs):
-            validate_model_endpoint_request(route, kwargs)
-            return original_create(**kwargs)
+            request = prepend_model_persona_request(kwargs, persona_markdown)
+            if route is not None:
+                validate_model_endpoint_request(route, request)
+            return original_create(**request)
     guarded_create._simplechat_route_policy = deepcopy(route)
+    if persona_markdown:
+        guarded_create._simplechat_model_persona = persona_markdown
     setattr(resource, method_name, guarded_create)
 
 
-def bind_model_endpoint_request_policy(client, route):
-    """Bind an isolated route policy to one sync or async SDK client."""
-    if route is None:
+def bind_model_endpoint_request_policy(
+    client, route, *, persona_markdown=""
+):
+    """Bind isolated route and persona policy to one sync or async SDK client."""
+    if route is None and not persona_markdown:
         return client
     if getattr(client, "_simplechat_route_policy_bound", False):
         return client
-    policy = deepcopy(route)
-    client._simplechat_route_policy = policy
+    policy = deepcopy(route) if route is not None else None
+    if policy is not None:
+        client._simplechat_route_policy = policy
+    if persona_markdown:
+        client._simplechat_model_persona = persona_markdown
     chat = getattr(client, "chat", None)
     completions = getattr(chat, "completions", None) if chat else None
     if completions is not None:
-        _guard_resource_create(completions, "create", policy)
-    responses = getattr(client, "responses", None)
-    if responses is not None:
-        _guard_resource_create(responses, "create", policy)
+        _guard_resource_create(
+            completions,
+            "create",
+            policy,
+            persona_markdown=persona_markdown,
+        )
+        if persona_markdown:
+            completions._simplechat_model_persona = persona_markdown
+    if not isinstance(client, OpenAIStyleChatCompletionClient):
+        responses = getattr(client, "responses", None)
+        if responses is not None:
+            _guard_resource_create(
+                responses,
+                "create",
+                policy,
+                persona_markdown=persona_markdown,
+            )
+            if persona_markdown:
+                responses._simplechat_model_persona = persona_markdown
     client._simplechat_route_policy_bound = True
     return client
 
@@ -359,10 +392,26 @@ def bind_callable_with_timeout(
 ):
     """Return a chat.completions.create callable bounded by a short timeout and retry cap."""
     timeout_obj = build_openai_client_timeout(read_timeout_seconds=timeout_seconds)
+    route_policy = getattr(client, "_simplechat_route_policy", None)
+    persona_markdown = bound_model_persona(client)
+    persona_metadata = bound_model_persona_metadata(client)
+
+    def bind_scoped(scoped_client):
+        bound = bind_model_endpoint_request_policy(
+            scoped_client,
+            route_policy,
+            persona_markdown=persona_markdown,
+        )
+        if persona_metadata is not None:
+            bound._simplechat_model_persona_metadata = deepcopy(persona_metadata)
+        return bound
+
     with_options = getattr(client, "with_options", None) if client is not None else None
     if callable(with_options) and not isinstance(client, OpenAIStyleChatCompletionClient):
         try:
-            scoped_client = with_options(timeout=timeout_obj, max_retries=max_retries)
+            scoped_client = bind_scoped(
+                with_options(timeout=timeout_obj, max_retries=max_retries)
+            )
             scoped_create = getattr(getattr(scoped_client, "chat", None), "completions", None)
             scoped_create = getattr(scoped_create, "create", None)
             if callable(scoped_create):
@@ -374,7 +423,7 @@ def bind_callable_with_timeout(
     if callable(inner_with_options) and isinstance(client, OpenAIStyleChatCompletionClient):
         try:
             scoped_inner = inner_with_options(timeout=timeout_obj, max_retries=max_retries)
-            return OpenAIStyleChatCompletionClient(
+            scoped_client = OpenAIStyleChatCompletionClient(
                 scoped_inner,
                 sanitize_errors=client._sanitize_errors,
                 api_type=client._api_type,
@@ -382,7 +431,9 @@ def bind_callable_with_timeout(
                 request_url=client._request_url,
                 inference_api=client._inference_api,
                 model_name=client._model_name,
-            ).chat.completions.create
+                custom_profile=client._custom_profile,
+            )
+            return bind_scoped(scoped_client).chat.completions.create
         except Exception:
             pass
     return create_callable
@@ -2188,6 +2239,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     resolved_route: dict | None = Field(default=None, exclude=True, repr=False)
     custom_client: Any = Field(default=None, exclude=True)
     prompt_execution_settings: OpenAIChatPromptExecutionSettings | None = Field(default=None)
+    model_persona_markdown: str = Field(default="", exclude=True, repr=False)
 
     def __init__(
         self,
@@ -2208,6 +2260,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         operation_url: str = "",
         resolved_route: dict | None = None,
         custom_client: Any = None,
+        model_persona_markdown: str = "",
     ):
         super().__init__(
             ai_model_id=deployment_name,
@@ -2226,6 +2279,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             operation_url=operation_url,
             resolved_route=resolved_route,
             custom_client=custom_client,
+            model_persona_markdown=model_persona_markdown,
         )
 
     def get_prompt_execution_settings_class(self):
@@ -2448,7 +2502,9 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     def _build_client(self):
         if self.custom_client is not None:
             return bind_model_endpoint_request_policy(
-                self.custom_client, self.resolved_route
+                self.custom_client,
+                self.resolved_route,
+                persona_markdown=self.model_persona_markdown,
             )
         return bind_model_endpoint_request_policy(build_anthropic_chat_client(
             endpoint=self.endpoint,
@@ -2463,7 +2519,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             custom_endpoint_ca_bundle_path=self.custom_endpoint_ca_bundle_path,
             operation_url=self.operation_url,
             client_cert=self.client_cert,
-        ), self.resolved_route)
+        ), self.resolved_route, persona_markdown=self.model_persona_markdown)
 
     def _build_request_kwargs(self, chat_history, settings, *, stream: bool) -> Dict[str, Any]:
         request_kwargs: Dict[str, Any] = {

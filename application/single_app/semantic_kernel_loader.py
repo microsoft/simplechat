@@ -354,6 +354,7 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
                 resolved_model_endpoint
                 or agent_config.get("model_endpoint_config")
             ),
+            apply_model_persona=False,
         )
         return chat_service
 

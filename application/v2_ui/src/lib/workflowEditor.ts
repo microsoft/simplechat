@@ -192,6 +192,8 @@ export type WorkflowAgentReference = WorkflowAgentOption;
 export interface WorkflowModelOption {
     endpoint_id: string;
     model_id: string;
+    scope_type?: string;
+    scope_id?: string;
     label: string;
     provider: string;
     loop_eligible?: boolean;
@@ -434,6 +436,8 @@ export interface WorkflowTaskRunner {
     selected_agent?: WorkflowAgentReference;
     model_endpoint_id?: string;
     model_id?: string;
+    model_scope_type?: string;
+    model_scope_id?: string;
 }
 
 export interface WorkflowTaskApproval {
@@ -623,6 +627,8 @@ export interface WorkflowDefinition {
     selected_agent?: WorkflowAgentReference;
     model_endpoint_id?: string;
     model_id?: string;
+    model_scope_type?: string;
+    model_scope_id?: string;
     m365_run_as_user_id?: string;
     chat_capabilities_enabled: boolean;
     chat_execution?: WorkflowChatExecution;
@@ -1148,6 +1154,8 @@ export function newWorkflowDefinition(scope: WorkflowScope, options?: WorkflowEd
         runner_type: 'model',
         model_endpoint_id: '',
         model_id: '',
+        model_scope_type: '',
+        model_scope_id: '',
         m365_run_as_user_id: '',
         chat_capabilities_enabled: true,
         ...(options?.chat_execution?.default ? { chat_execution: structuredClone(options.chat_execution.default) } : {}),
@@ -1190,12 +1198,20 @@ function normalizeRunner(value: unknown, structured = false): WorkflowTaskRunner
     const type = ['inherit', 'agent', 'model'].includes(String(value.type))
         ? value.type as WorkflowTaskRunnerType
         : 'inherit';
+    const structuredBase = structured ? { ...value } : {};
+    delete structuredBase.model_scope_type;
+    delete structuredBase.model_scope_id;
+    const bindingSummary = isRecord(value.model_binding_summary) ? value.model_binding_summary : {};
     return {
-        ...(structured ? value : {}),
+        ...structuredBase,
         type,
         selected_agent: agentReference(value.selected_agent),
         model_endpoint_id: text(value.model_endpoint_id),
         model_id: text(value.model_id),
+        ...(type === 'model' ? {
+            model_scope_type: text(value.model_scope_type || bindingSummary.scope_type || bindingSummary.scope),
+            model_scope_id: text(value.model_scope_id || bindingSummary.scope_id),
+        } : {}),
     };
 }
 
@@ -1808,6 +1824,15 @@ export function normalizeWorkflowDefinition(
         selected_agent: agentReference(record.selected_agent),
         model_endpoint_id: text(record.model_endpoint_id),
         model_id: text(record.model_id),
+        model_scope_type: text(
+            record.model_scope_type
+            || (isRecord(record.model_binding_summary) ? record.model_binding_summary.scope_type : '')
+            || (isRecord(record.model_binding_summary) ? record.model_binding_summary.scope : '')
+        ),
+        model_scope_id: text(
+            record.model_scope_id
+            || (isRecord(record.model_binding_summary) ? record.model_binding_summary.scope_id : '')
+        ),
         m365_run_as_user_id: text(record.m365_run_as_user_id),
         chat_capabilities_enabled: record.chat_capabilities_enabled === true,
         trigger_type: trigger,
@@ -1852,6 +1877,8 @@ export function workflowForSave(
         ...(draft.runner_type === 'agent' && draft.selected_agent ? { selected_agent: draft.selected_agent } : { selected_agent: undefined }),
         model_endpoint_id: draft.runner_type === 'model' ? draft.model_endpoint_id || '' : '',
         model_id: draft.runner_type === 'model' ? draft.model_id || '' : '',
+        model_scope_type: draft.runner_type === 'model' ? draft.model_scope_type || '' : '',
+        model_scope_id: draft.runner_type === 'model' ? draft.model_scope_id || '' : '',
         m365_run_as_user_id: text(draft.m365_run_as_user_id ?? original?.m365_run_as_user_id),
         chat_capabilities_enabled: draft.chat_capabilities_enabled,
         chat_execution: draft.chat_execution === undefined ? undefined : normalizeWorkflowChatExecution(draft.chat_execution),
@@ -2206,12 +2233,17 @@ export function workflowTaskHasLocalRunner(
     const runner = task.runner.type === 'inherit' ? {
         type: workflow.runner_type, selected_agent: workflow.selected_agent,
         model_endpoint_id: workflow.model_endpoint_id, model_id: workflow.model_id,
+        model_scope_type: workflow.model_scope_type, model_scope_id: workflow.model_scope_id,
     } : task.runner;
     if (runner.type === 'agent') {
         return options.agents.find((agent) => workflowAgentKey(agent) === workflowAgentKey(runner.selected_agent))?.loop_eligible === true;
     }
     const eligible = runner.model_endpoint_id || runner.model_id
-        ? options.models.find((model) => model.endpoint_id === runner.model_endpoint_id && model.model_id === runner.model_id)?.loop_eligible
+        ? options.models.find((model) =>
+            model.endpoint_id === runner.model_endpoint_id
+            && model.model_id === runner.model_id
+            && (!runner.model_scope_type || model.scope_type === runner.model_scope_type)
+            && (!runner.model_scope_id || model.scope_id === runner.model_scope_id))?.loop_eligible
         : options.default_model?.loop_eligible;
     return eligible !== false;
 }

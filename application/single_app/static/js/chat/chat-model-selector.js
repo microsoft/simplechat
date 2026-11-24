@@ -22,6 +22,7 @@ let suppressScopeNarrowing = false;
 let pendingScopeNarrowingModel = null;
 let scopeClearActionInitialized = false;
 let dropdownHideListenerInitialized = false;
+let personaViewportListenerInitialized = false;
 
 function compareByName(leftValue, rightValue) {
     return String(leftValue || '').localeCompare(String(rightValue || ''), undefined, {
@@ -158,6 +159,204 @@ function createOptionIconElement(iconPayload) {
     return iconWrapper;
 }
 
+function personaTooltip(markdown) {
+    const preview = String(markdown || '')
+        .replace(/[#>*_`~[\]()!-]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return `Persona enabled${preview ? `: ${preview.slice(0, 240)}` : ''}`;
+}
+
+function refreshPersonaDropdownPlacement(focusTarget) {
+    window.requestAnimationFrame(() => {
+        const dropdown = bootstrap.Dropdown.getInstance(modelDropdownButton);
+        dropdown?.update?.();
+        const items = modelDropdownItems;
+        if (!items || !modelDropdownMenu || !modelDropdownButton) {
+            return;
+        }
+        const hasInspector = Boolean(items.querySelector('.chat-model-persona-inspector'));
+        if (!hasInspector) {
+            items.style.maxHeight = '';
+            dropdown?.update?.();
+            focusTarget?.scrollIntoView({ block: 'nearest' });
+            return;
+        }
+
+        const buttonRect = modelDropdownButton.getBoundingClientRect();
+        const visualViewport = window.visualViewport;
+        const viewportTop = visualViewport?.offsetTop || 0;
+        const viewportHeight = visualViewport?.height || window.innerHeight;
+        const viewportBottom = viewportTop + viewportHeight;
+        const placement = dropdown?._popper?.state?.placement || '';
+        const availableSideHeight = placement.startsWith('top')
+            ? Math.max(0, buttonRect.top - viewportTop - 24)
+            : Math.max(0, viewportBottom - buttonRect.bottom - 24);
+        const availableMenuHeight = Math.min(
+            availableSideHeight,
+            viewportHeight * 0.6,
+        );
+        const menuStyle = window.getComputedStyle(modelDropdownMenu);
+        const nonItemsHeight = Array.from(modelDropdownMenu.children).reduce((height, child) => {
+            if (child === items || child.classList.contains('d-none')) {
+                return height;
+            }
+            return height + child.getBoundingClientRect().height;
+        }, parseFloat(menuStyle.paddingTop || '0') + parseFloat(menuStyle.paddingBottom || '0'));
+        items.style.maxHeight = `${Math.max(48, availableMenuHeight - nonItemsHeight)}px`;
+        dropdown?.update?.();
+        window.requestAnimationFrame(() => {
+            focusTarget?.scrollIntoView({ block: 'nearest' });
+        });
+    });
+}
+
+function initializePersonaViewportListener() {
+    if (personaViewportListenerInitialized) {
+        return;
+    }
+    const refreshOpenInspector = () => {
+        const inspector = modelDropdownItems?.querySelector('.chat-model-persona-inspector');
+        if (inspector) {
+            refreshPersonaDropdownPlacement(inspector);
+        }
+    };
+    window.addEventListener('resize', refreshOpenInspector);
+    window.addEventListener('orientationchange', refreshOpenInspector);
+    window.visualViewport?.addEventListener('resize', refreshOpenInspector);
+    personaViewportListenerInitialized = true;
+}
+
+function createPersonaIndicator(option, interactive) {
+    if (option.dataset.personaEnabled !== 'true') {
+        return null;
+    }
+
+    const indicator = document.createElement(interactive ? 'span' : 'span');
+    indicator.className = interactive
+        ? 'chat-model-persona-indicator btn btn-sm btn-light border rounded-circle p-0'
+        : 'chat-model-persona-indicator text-primary';
+    indicator.title = personaTooltip(option.dataset.personaMarkdown);
+    if (interactive) {
+        indicator.tabIndex = 0;
+        indicator.setAttribute('role', 'button');
+        indicator.setAttribute('aria-label', `View persona for ${option.textContent.trim()}`);
+        indicator.setAttribute('aria-expanded', 'false');
+    }
+
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-person';
+    icon.setAttribute('aria-hidden', 'true');
+    indicator.appendChild(icon);
+
+    if (!interactive) {
+        indicator.setAttribute('aria-hidden', 'true');
+        return indicator;
+    }
+    initializePersonaViewportListener();
+
+    const openPersona = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const item = indicator.closest('.chat-searchable-select-item[data-option-index]');
+        const items = item?.parentElement;
+        if (!item || !items) {
+            return;
+        }
+        const current = items.querySelector('.chat-model-persona-inspector');
+        if (current?.dataset.personaFor === item.dataset.optionIndex) {
+            current._closePersona?.(true);
+            return;
+        }
+        current?._closePersona?.();
+
+        const inspector = document.createElement('div');
+        inspector.className = 'chat-model-persona-inspector border rounded-3 mx-2 mt-1 mb-2 p-3';
+        inspector.dataset.personaFor = item.dataset.optionIndex;
+        inspector.setAttribute('role', 'dialog');
+        inspector.setAttribute('aria-label', `Persona for ${option.textContent.trim()}`);
+        inspector.tabIndex = 0;
+
+        const heading = document.createElement('div');
+        heading.className = 'd-flex align-items-center gap-2 small fw-semibold text-primary mb-2';
+        const headingIcon = document.createElement('i');
+        headingIcon.className = 'bi bi-person';
+        headingIcon.setAttribute('aria-hidden', 'true');
+        heading.append(headingIcon, document.createTextNode('Persona enabled'));
+
+        const content = document.createElement('div');
+        content.className = 'chat-model-persona-inspector-content';
+        content.tabIndex = 0;
+        if (option.dataset.personaMarkdown) {
+            content.innerHTML = DOMPurify.sanitize(marked.parse(option.dataset.personaMarkdown), {
+                ALLOWED_TAGS: ['a', 'blockquote', 'br', 'code', 'em', 'h1', 'h2', 'h3', 'li', 'ol', 'p', 'pre', 'strong', 'ul'],
+                ALLOWED_ATTR: ['href', 'title'],
+                ALLOW_DATA_ATTR: false,
+            });
+        } else {
+            content.className += ' small text-muted';
+            content.textContent = 'The persona text is not visible to you.';
+        }
+        inspector.append(heading, content);
+
+        const closePersona = (restoreFocus = false) => {
+            window.removeEventListener('keydown', handleInspectorKeyboard, true);
+            inspector.remove();
+            indicator.setAttribute('aria-expanded', 'false');
+            if (restoreFocus) {
+                indicator.focus();
+            }
+            refreshPersonaDropdownPlacement(restoreFocus ? indicator : null);
+        };
+        const handleInspectorKeyboard = keyEvent => {
+            if (keyEvent.key === 'Escape') {
+                keyEvent.preventDefault();
+                keyEvent.stopImmediatePropagation();
+                closePersona(true);
+                return;
+            }
+            if (!['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End'].includes(keyEvent.key)) {
+                return;
+            }
+            if (!inspector.contains(keyEvent.target)) {
+                return;
+            }
+            const scrollContainer = inspector.closest('.chat-searchable-select-items');
+            if (!scrollContainer) {
+                return;
+            }
+            keyEvent.preventDefault();
+            keyEvent.stopImmediatePropagation();
+            if (keyEvent.key === 'Home') {
+                scrollContainer.scrollTop = 0;
+            } else if (keyEvent.key === 'End') {
+                scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            } else if (keyEvent.key === 'PageDown') {
+                scrollContainer.scrollTop += Math.max(40, scrollContainer.clientHeight * 0.9);
+            } else if (keyEvent.key === 'PageUp') {
+                scrollContainer.scrollTop -= Math.max(40, scrollContainer.clientHeight * 0.9);
+            } else {
+                scrollContainer.scrollTop += keyEvent.key === 'ArrowDown' ? 40 : -40;
+            }
+        };
+        inspector._closePersona = closePersona;
+        inspector.addEventListener('click', clickEvent => clickEvent.stopPropagation());
+        inspector.addEventListener('keydown', keyEvent => keyEvent.stopPropagation());
+        window.addEventListener('keydown', handleInspectorKeyboard, true);
+        item.after(inspector);
+        indicator.setAttribute('aria-expanded', 'true');
+        content.focus({ preventScroll: true });
+        refreshPersonaDropdownPlacement(inspector);
+    };
+    indicator.addEventListener('click', openPersona);
+    indicator.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            openPersona(event);
+        }
+    });
+    return indicator;
+}
+
 function renderModelOptionContent(option, optionLabel) {
     const wrapper = document.createElement('span');
     wrapper.className = 'd-flex align-items-center gap-2 min-w-0';
@@ -169,6 +368,24 @@ function renderModelOptionContent(option, optionLabel) {
     textEl.className = 'chat-searchable-select-item-text text-truncate';
     textEl.textContent = optionLabel;
     wrapper.appendChild(textEl);
+    const personaIndicator = createPersonaIndicator(option, true);
+    if (personaIndicator) {
+        wrapper.appendChild(personaIndicator);
+    }
+    return wrapper;
+}
+
+function renderSelectedModelContent(option, optionLabel) {
+    const wrapper = document.createElement('span');
+    wrapper.className = 'd-flex align-items-center gap-1.5 min-w-0';
+    const label = document.createElement('span');
+    label.className = 'text-truncate';
+    label.textContent = optionLabel;
+    wrapper.appendChild(label);
+    const personaIndicator = createPersonaIndicator(option, false);
+    if (personaIndicator) {
+        wrapper.appendChild(personaIndicator);
+    }
     return wrapper;
 }
 
@@ -401,6 +618,12 @@ function rebuildModelOptions(sections, restoreOptions = {}) {
             modelOption.dataset.scopeName = option.scope_name || '';
             modelOption.dataset.searchText = option.searchText || '';
             modelOption.dataset.modelIcon = JSON.stringify(option.icon || {});
+            modelOption.dataset.personaEnabled = String(option.persona_enabled === true);
+            modelOption.dataset.personaMarkdown = option.persona_markdown || '';
+            if (option.persona_enabled) {
+                modelOption.textContent = `${modelOption.textContent} (Persona)`;
+                modelOption.title = option.persona_markdown || 'Persona enabled';
+            }
             modelOption.disabled = option.disabled;
             modelOption.selected = !option.disabled && option.selection_key === selectedSelectionKey;
             optGroup.appendChild(modelOption);
@@ -498,6 +721,9 @@ function initializeDropdownHideListener() {
     }
 
     modelDropdown.addEventListener('hidden.bs.dropdown', async () => {
+        modelDropdownItems?.querySelectorAll('.chat-model-persona-inspector').forEach(inspector => {
+            inspector._closePersona?.();
+        });
         if (!pendingScopeNarrowingModel) {
             return;
         }
@@ -562,6 +788,7 @@ export function initializeModelSelector() {
             emptySearchMessage: 'No matching models found',
             getOptionSearchText: option => option.dataset.searchText || option.textContent.trim(),
             renderOptionContent: renderModelOptionContent,
+            renderSelectedContent: renderSelectedModelContent,
             dropdownConfig: FLOATING_SELECTOR_DROPDOWN_CONFIG,
         });
     }
@@ -626,9 +853,13 @@ function findModelOptionForMetadata(modelSelection = {}) {
     const options = Array.from(modelSelect.options).filter(option => !option.disabled);
 
     if (endpointId && modelId) {
+        const scopeType = String(modelSelection.model_scope_type || '').trim();
+        const scopeId = String(modelSelection.model_scope_id || '').trim();
         const endpointMatch = options.find(option => (
             option.dataset.endpointId === endpointId
             && option.dataset.modelId === modelId
+            && (!scopeType || option.dataset.scopeType === scopeType)
+            && (!scopeId || option.dataset.scopeId === scopeId)
         ));
         if (endpointMatch) {
             return endpointMatch;

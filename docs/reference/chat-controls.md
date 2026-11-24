@@ -1123,6 +1123,12 @@ for binding compatibility, capability admission, source access, and limits.
 
 ## Message Retry and attempt history (V2 interface)
 
+As of **0.261.470** (`application/single_app/config.py`), message action bars
+stay visible in browsers that do not support hovering. Other browsers still
+reveal the bar when you hover over a message or focus one of its actions with
+the keyboard. Choose **More actions** to open its menu; it does not open on
+its own.
+
 Implemented in version: **0.261.317** (`application/single_app/config.py`).
 Use **Retry** when you want another answer to the question you are viewing,
 including an edited question. It reuses that attempt's saved model or agent,
@@ -1364,10 +1370,10 @@ repeats them as you, in the workflow's own conversation. See
 [Repeat a chat plan on a schedule]({{ '/guides/create-a-workflow/' | relative_url }}#repeat-a-chat-plan-on-a-schedule).
 
 Starting in **0.261.338**, the entry point is a calendar icon beside Copy and
-Retry in the answer's message action bar. Hover over the answer or tab into its
-actions to reveal it. The scheduling card stays out of the conversation until
-you choose the icon; it then expands below the answer and remains visible
-until collapsed.
+Retry in the answer's message action bar. If the bar is hidden, hover over
+the answer or tab into its actions to reveal it. The scheduling card stays
+out of the conversation until you choose the icon; it then expands below
+the answer and remains visible until collapsed.
 
 {% include media.html src="reference/chat-controls-saved-chat-plan-card.png" alt="Save this chat plan card under an orchestrated answer, showing the request, time handling, cadence, step cap, the numbered steps and the Save workflow button." title="Save this chat plan card" capture="Capture an expanded Save this chat plan card under a finished orchestrated answer, showing the Request, Time, Cadence, Step cap, Runs as and Alerts lines, the numbered steps with their kind of work, the schedule fields and the Save workflow button. Redact the conversation title, the request and the step titles." %}
 

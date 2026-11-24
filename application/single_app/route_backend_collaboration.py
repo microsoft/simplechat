@@ -744,6 +744,8 @@ def _build_collaboration_stream_request_payload(data, source_conversation_id, me
         'model_id': data.get('model_id'),
         'model_endpoint_id': data.get('model_endpoint_id'),
         'model_provider': data.get('model_provider'),
+        'model_scope_type': data.get('model_scope_type'),
+        'model_scope_id': data.get('model_scope_id'),
         'prompt_info': data.get('prompt_info'),
         'agent_info': data.get('agent_info'),
         'reasoning_effort': data.get('reasoning_effort'),

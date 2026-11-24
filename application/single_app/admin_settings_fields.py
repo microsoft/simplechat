@@ -298,6 +298,7 @@ REQUIRES_MODES = ("block", "warn")
 # has no editor for it, so refusing is safe and keeps a malformed or hostile
 # payload from destroying the endpoint configuration.
 NON_PATCHABLE_KEYS = {
+    "enable_cosmos_replay_index_exclusion": "Use Cosmos Maintenance to verify the policy and manage replay indexing.",
     "model_endpoints": (
         "Model endpoints hold credentials that are stripped before they reach "
         "the browser, so they cannot be saved from here."
@@ -9262,6 +9263,9 @@ ADMIN_SECTION_STATUS = {
 # there is something to edit. They are named here with the reason instead, and
 # the settings GET sends this list so the scan can skip them.
 SUPPRESSED_CAPABILITY_KEYS = {
+    "enable_cosmos_replay_index_exclusion": (
+        "Cosmos Maintenance owns this setting because enablement requires policy verification and reader readiness."
+    ),
     "enable_gpt_apim": (
         "Belongs to the classic single endpoint and is edited on the "
         "server-rendered model-endpoints pane. A connection carries its own API "

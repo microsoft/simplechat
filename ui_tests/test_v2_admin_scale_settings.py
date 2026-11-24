@@ -1,7 +1,7 @@
 # test_v2_admin_scale_settings.py
 """
 Browser coverage for the V2 Admin Settings Scale group.
-Version: 0.261.396
+Version: 0.261.472
 Implemented in: 0.261.274
 Durable indexing failure diagnostics updated in: 0.261.396
 
@@ -242,6 +242,14 @@ class ScaleApi:
         self.redis_status = copy.deepcopy(REDIS_STATUS)
         self.maintenance = copy.deepcopy(MAINTENANCE_STATUS)
         self.throughput = copy.deepcopy(THROUGHPUT_STATUS)
+        self.replay_index = {
+            "enabled": False, "redis_enabled": True, "policy_state": "missing",
+            "database": "SimpleChat", "container": "settings", "excluded_path": "/stream_replay_events/[]/?",
+            "proposed_policy": {
+                "indexingMode": "consistent", "automatic": True, "includedPaths": [{"path": "/*"}],
+                "excludedPaths": [{"path": "/stream_replay_events/[]/?"}],
+            },
+        }
         # A held status read stands in for Azure Resource Manager and Azure Monitor taking
         # several seconds, which is when a second click could otherwise send a second change.
         self.hold_status = False
@@ -252,6 +260,8 @@ class ScaleApi:
             ("POST", f"{SETTINGS_API}/redis-explorer/value"): self._explorer_value,
             ("GET", f"{SETTINGS_API}/app-maintenance/status"): self._maintenance_status,
             ("POST", f"{SETTINGS_API}/app-maintenance/run"): self._maintenance_run,
+            ("GET", f"{SETTINGS_API}/cosmos-replay-indexing"): self._get_replay_index,
+            ("POST", f"{SETTINGS_API}/cosmos-replay-indexing"): self._update_replay_index,
             ("GET", f"{SETTINGS_API}/cosmos-throughput/status"): self._throughput_status,
             ("POST", f"{SETTINGS_API}/cosmos-throughput/validate-access"): self._validate_access,
             ("POST", f"{SETTINGS_API}/cosmos-throughput/scale"): self._scale,
@@ -276,6 +286,19 @@ class ScaleApi:
 
     def calls_to(self, suffix):
         return [call for call in self.calls if call["path"].endswith(suffix)]
+
+    def _get_replay_index(self, route):
+        self._record(route)
+        route.fulfill(json=self.replay_index)
+
+    def _update_replay_index(self, route):
+        body = self._record(route)
+        if body["action"] == "apply":
+            self.replay_index["policy_state"] = "manual"
+            route.fulfill(status=409, json={"error": "The replay exclusion is not confirmed.", "status": self.replay_index})
+            return
+        self.replay_index["enabled"] = body["action"] == "verify"
+        route.fulfill(json=self.replay_index)
 
     def _redis_status(self, route):
         self._record(route)
@@ -625,6 +648,48 @@ def test_maintenance_changes_ask_first_and_send_the_v1_requests(scale_ui):
         "run_stale_cache_cleanup": False,
     }
     expect(maintenance).to_contain_text("Index updates were submitted for 2 container(s).")
+
+
+def test_cosmos_replay_exclusion_manual_flow_confirms_workers_and_preserves_redis_default(scale_ui):
+    page, api = scale_ui.page, scale_ui.api
+    scale_ui.open(width=1440, height=1024, ready_region="Redis Cache")
+    panel = page.get_by_test_id("cosmos-replay-indexing")
+    panel.scroll_into_view_if_needed()
+    expect(panel).to_contain_text("Inactive: Redis is enabled")
+    expect(panel.get_by_role("button", name="Enable replay exclusion")).to_have_count(0)
+
+    api.replay_index["redis_enabled"] = False
+    panel.get_by_role("button", name="Refresh policy").click()
+    panel.get_by_role("button", name="Enable replay exclusion").click()
+    dialog = page.get_by_role("dialog", name="Enable Cosmos replay exclusion")
+    confirm = dialog.get_by_role("button", name="Apply and verify")
+    expect(confirm).to_be_disabled()
+    dialog.get_by_role("checkbox").check()
+    confirm.click()
+    expect(panel).to_contain_text("Manual action required")
+    panel.get_by_text("Manual policy instructions", exact=True).click()
+    policy = panel.get_by_role("textbox", name="Merged index policy")
+    expect(policy).to_be_visible()
+    assert "/stream_replay_events/[]/?" in policy.input_value()
+    assert "SimpleChat / settings" in panel.inner_text()
+
+    api.replay_index["policy_state"] = "ready"
+    panel.get_by_role("button", name="Verify policy").click()
+    dialog = page.get_by_role("dialog", name="Verify Cosmos replay exclusion")
+    dialog.get_by_role("checkbox").check()
+    dialog.get_by_role("button", name="Verify and enable").click()
+    expect(panel).to_contain_text("Active for new Cosmos streams")
+    panel.get_by_role("button", name="Disable replay exclusion").click()
+    expect(panel).to_contain_text("The existing exclusion is unchanged")
+    updates = [call["body"] for call in api.calls_to("/cosmos-replay-indexing") if call["method"] == "POST"]
+    assert updates == [
+        {"action": "apply", "readers_ready": True},
+        {"action": "verify", "readers_ready": True},
+        {"action": "disable"},
+    ]
+    conflict = "Failed to load resource: the server responded with a status of 409 (Conflict)"
+    assert scale_ui.errors.count(conflict) == 1, scale_ui.errors
+    scale_ui.errors.remove(conflict)
 
 
 @pytest.mark.parametrize("width", [390, 1920])

@@ -3197,6 +3197,7 @@ def register_route_backend_orchestration(bp):
                         identity_context=planning_identity,
                     )
                     seeds['model'] = planner_model.answer_model_selection()
+                    seeds['apply_model_persona'] = planner_model.answer_model_persona_enabled()
                     turn_context['original_seeds'] = {
                         **(turn_context.get('original_seeds') or seeds),
                         'model': dict(seeds['model']),

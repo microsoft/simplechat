@@ -1,7 +1,7 @@
 # chat_stop_runtime.py
 """Real Flask chat/attempt/history owners with isolated SDK-shaped storage I/O.
 
-Version: 0.261.430
+Version: 0.261.472
 Implemented in: 0.261.430
 Shared by route regressions and persisted-payload browser reload tests.
 """
@@ -22,6 +22,7 @@ from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from test_support.offline_bootstrap import offline_app_imports
 from test_support.orchestration_revisions import AtomicMemoryContainer
 from test_chat_soft_deleted_message_visibility_fix import FakeContainer as QueryInterpreter
+from test_cosmos_wave1_cache_fallback import StreamPatchContainer
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -163,16 +164,30 @@ def stop_world(stop_modules, monkeypatch):
     monkeypatch.setattr(chats, "cosmos_messages_container", messages)
     monkeypatch.setattr(chats, "cosmos_conversations_container", conversations)
     monkeypatch.setattr(chats, "log_event", lambda *args, **kwargs: None)
-    cache_meta, cache_events = {}, {}
-    monkeypatch.setattr(chats.app_settings_cache, "get_stream_session_meta", lambda key: deepcopy(cache_meta.get(key)))
-    monkeypatch.setattr(chats.app_settings_cache, "set_stream_session_meta",
-                        lambda key, value, **kwargs: cache_meta.__setitem__(key, deepcopy(value)))
-    monkeypatch.setattr(chats.app_settings_cache, "initialize_stream_session_cache",
-                        lambda key, value, **kwargs: (cache_meta.__setitem__(key, deepcopy(value)), cache_events.__setitem__(key, [])))
-    monkeypatch.setattr(chats.app_settings_cache, "append_stream_session_event",
-                        lambda key, value, **kwargs: cache_events.setdefault(key, []).append(value))
-    monkeypatch.setattr(chats.app_settings_cache, "get_stream_session_events",
-                        lambda key, start_index=0: cache_events.get(key, [])[start_index:])
+    cache_module = chats.app_settings_cache
+    replay_container = StreamPatchContainer()
+    for name in (
+        "APP_SETTINGS_STORE", "APP_CACHE_DEPENDENCIES", "APP_REDIS_CLIENT", "app_cache_is_using_redis",
+        "get_settings_cache", "update_settings_cache", "get_app_settings_cache_version",
+        "initialize_stream_session_cache", "set_stream_session_meta", "get_stream_session_meta",
+        "append_stream_session_event", "publish_stream_content", "can_publish_stream_content",
+        "get_stream_session_events", "delete_stream_session_cache", "get_user_ui_settings_cache",
+        "set_user_ui_settings_cache", "delete_user_ui_settings_cache", "get_governance_cache_version",
+        "bump_governance_cache_version",
+    ):
+        monkeypatch.setattr(cache_module, name, getattr(cache_module, name))
+    for name in ("APP_STREAM_SESSION_METADATA", "APP_STREAM_SESSION_EVENTS"):
+        monkeypatch.setattr(cache_module, name, {})
+
+    def unexpected_redis(**kwargs):
+        raise AssertionError("The offline replay fixture must not connect to Redis.")
+
+    cache_module.configure_app_cache({}, dependencies=cache_module.AppCacheDependencies(
+        settings_container=replay_container,
+        governance_container=replay_container,
+        create_redis_client=unexpected_redis,
+        log_event=lambda *args, **kwargs: None,
+    ))
     monkeypatch.setattr(chats, "CHAT_STREAM_REGISTRY", chats.ActiveConversationStreamRegistry())
     app = Flask("durable-stop")
     app.config["TESTING"] = True

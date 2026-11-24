@@ -170,16 +170,30 @@ def _resolve_action_model(settings, context, user_id):
     supplied = getattr(context, 'model_context', None) or {}
     model_context = {
         key: supplied[key]
-        for key in ('endpoint_id', 'model_id', 'model_deployment', 'provider')
-        if supplied.get(key)
+        for key in (
+            'endpoint_id', 'model_id', 'model_deployment', 'provider',
+            'scope_type', 'scope_id', 'apply_model_persona',
+        )
+        if supplied.get(key) or (
+            key == 'apply_model_persona'
+            and supplied.get(key) is False
+        )
     }
+    if supplied and 'apply_model_persona' not in model_context:
+        model_context['apply_model_persona'] = False
     if not model_context and settings.get('enable_multi_model_endpoints'):
         default = settings.get('default_model_selection') or {}
         model_context = {
             key: default[key] for key in ('endpoint_id', 'model_id', 'provider') if default.get(key)
         }
+        if model_context:
+            model_context.update(scope_type='global', scope_id='global')
     model_context['user_id'] = user_id
-    model_context['active_group_ids'] = list(getattr(context, 'active_group_ids', None) or [])
+    model_context['active_group_ids'] = list(
+        supplied.get('active_group_ids')
+        or getattr(context, 'active_group_ids', None)
+        or []
+    )
     deployment = model_context.get('model_deployment') or getattr(context, 'gpt_model', None)
     endpoint = resolve_model_endpoint_from_context(settings, model_context, authorize=True)
     if endpoint is None:

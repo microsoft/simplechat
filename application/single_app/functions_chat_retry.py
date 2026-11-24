@@ -22,7 +22,14 @@ from functions_message_deletion import is_soft_deleted_message
 from functions_orchestration_planning import PLANNING_METADATA
 
 
-MODEL_FIELDS = ('model_deployment', 'model_id', 'model_endpoint_id', 'model_provider')
+MODEL_FIELDS = (
+    'model_deployment',
+    'model_id',
+    'model_endpoint_id',
+    'model_provider',
+    'model_scope_type',
+    'model_scope_id',
+)
 AGENT_FIELDS = ('id', 'name', 'display_name', 'is_global', 'is_group', 'group_id', 'group_name', 'catalog_key')
 
 
@@ -135,6 +142,7 @@ def resolve_replay_selection(metadata, overrides, *, models, agents, allow_legac
         catalog_fields = {
             'model_deployment': 'deployment_name', 'model_id': 'model_id',
             'model_endpoint_id': 'endpoint_id', 'model_provider': 'provider',
+            'model_scope_type': 'scope_type', 'model_scope_id': 'scope_id',
         }
         candidates = [
             candidate for candidate in models

@@ -76,7 +76,8 @@ def _load_budget_helpers(selected_endpoint=None, service=None):
     budget_warnings = []
     service_builds = []
 
-    def resolve_endpoint(settings, model_context):
+    def resolve_endpoint(settings, model_context, authorize=False):
+        assert authorize is True
         endpoint_reads.append((settings, model_context))
         return selected_endpoint
 

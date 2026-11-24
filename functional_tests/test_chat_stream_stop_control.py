@@ -2,7 +2,7 @@
 # test_chat_stream_stop_control.py
 """
 Functional test for chat stream stop control.
-Version: 0.261.430
+Version: 0.261.472
 Implemented in: 0.241.097
 Durable submission/terminal authority corrected in: 0.261.430
 
@@ -59,7 +59,7 @@ def test_chat_stream_stop_control_wiring() -> None:
     assert_contains(route_content, "STREAM_STATUS_CANCEL_REQUESTED = 'cancel_requested'", "chat route")
     assert_contains(route_content, "STREAM_STATUS_CANCELED = 'canceled'", "chat route")
     assert_contains(route_content, "def request_cancel(self, reason='user_requested'):", "chat stream session")
-    assert_contains(route_content, "def is_cancel_requested(self):", "chat stream session")
+    assert_contains(route_content, "def is_cancel_requested(self,", "chat stream session")
     assert_contains(route_content, "def _build_stream_cancel_event(", "cancel event builder")
     assert_contains(route_content, "@bp.route('/api/chat/stream/cancel/<conversation_id>', methods=['POST'])", "chat cancel route")
     assert_contains(route_content, "if stream_cancel_requested():", "stream cancellation checkpoints")

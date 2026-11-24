@@ -954,14 +954,24 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     // option is keyed on `selection_key` (unique per endpoint) rather than the deployment
     // name, which can repeat across endpoints.
     const modelOptions: DropdownOption[] = (bootstrap?.catalogs?.models ?? []).map(
-        (model, index) => ({
+        (model, index) => {
+            const personaEnabled = model.persona_enabled === true;
+            const visiblePersona = typeof model.persona_markdown === 'string'
+                ? model.persona_markdown.trim()
+                : '';
+            return {
             value: modelSelectionKey(model as ModelCatalogEntry) || String(index),
             label:
                 (model.display_name as string) ||
                 (model.deployment_name as string) ||
                 'Model',
+            persona: personaEnabled ? {
+                enabled: true,
+                markdown: visiblePersona || undefined,
+            } : undefined,
             searchText: modelSearchText(model),
-        }),
+            };
+        },
     );
 
     // The catalog record has no `selection_key` (that is a model concept), so the agent is
@@ -1472,7 +1482,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         );
         if (autoModelRouting && !taggedModel) {
             seeds.model_routing = 'auto';
-            for (const key of ['model_deployment', 'model_id', 'model_endpoint_id', 'model_provider', 'reasoning_effort']) {
+            for (const key of [
+                'model_deployment', 'model_id', 'model_endpoint_id', 'model_provider',
+                'model_scope_type', 'model_scope_id', 'reasoning_effort',
+            ]) {
                 delete seeds[key];
             }
         }

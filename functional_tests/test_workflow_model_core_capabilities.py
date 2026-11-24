@@ -1,10 +1,11 @@
 # test_workflow_model_core_capabilities.py
 """
 Functional test for Direct Model workflow core capabilities.
-Version: 0.261.428
+Version: 0.261.463
 Implemented in: 0.250.063
 Enhanced in: 0.250.064; updated in 0.250.172; schema-v2 scope context in 0.261.044
 Saved workflow context handoffs and allowlisting fixed in: 0.261.045
+Legacy deferred scope and persona opt-out coverage: 0.261.463
 
 This test ensures new Direct Model workflows bind their saved model selection
 to a Semantic Kernel service and pass the kernel to auto-invoked core tools.
@@ -250,6 +251,7 @@ def test_schema_v2_workflow_context_contains_only_saved_scope_ids() -> None:
         "scope_id": "group-1",
         "endpoint_id": "endpoint-1",
         "model_id": "model-1",
+        "apply_model_persona": False,
     }
     model_context = helpers["_build_workflow_model_context"](
         {"user_id": "user-1"},
@@ -258,6 +260,24 @@ def test_schema_v2_workflow_context_contains_only_saved_scope_ids() -> None:
         routing_context={**routing_context, "endpoint": "https://untrusted.example", "auth": {"api_key": "discard"}},
     )
     assert model_context == {**routing_context, "user_id": "user-1"}
+    legacy_routing_context = {
+        "scope_type": "global",
+        "scope_id": "global",
+        "endpoint_id": "legacy-endpoint",
+        "model_id": "legacy-model",
+        "apply_model_persona": False,
+    }
+    legacy_model_context = helpers["_build_workflow_model_context"](
+        {"user_id": "user-1"},
+        "legacy-model",
+        "aoai",
+        routing_context=legacy_routing_context,
+    )
+    assert legacy_model_context["scope_type"] == "global"
+    assert legacy_model_context["scope_id"] == "global"
+    assert legacy_model_context["endpoint_id"] == "legacy-endpoint"
+    assert legacy_model_context["model_id"] == "legacy-model"
+    assert legacy_model_context["apply_model_persona"] is False
 
 
 def test_deferred_workflow_context_resolves_saved_selection() -> None:

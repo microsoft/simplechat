@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Admin Settings PATCH normalization.
-Version: 0.261.122
+Version: 0.261.472
 Implemented in: 0.261.039
 
 The V2 admin surface saves settings one section at a time through a JSON PATCH,
@@ -23,6 +23,15 @@ from test_support.versioning import assert_app_version_at_least
 
 fields_module = import_app_module("admin_settings_fields")
 normalize = fields_module.normalize_admin_settings_updates
+
+
+def test_replay_index_exclusion_cannot_be_changed_through_generic_settings():
+    key = "enable_cosmos_replay_index_exclusion"
+    for value in (True, False):
+        normalized, errors, _ = normalize({key: value})
+        assert key not in normalized
+        assert "Cosmos Maintenance" in errors[key]
+    assert key in fields_module.get_suppressed_capability_keys()
 
 
 def test_dependency_conditions_compare_by_declared_type():

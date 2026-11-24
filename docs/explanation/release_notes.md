@@ -2,6 +2,51 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.472)**
+
+#### New Features
+
+*   **Optional Cosmos Replay-Only Indexing**
+    *   In **Scale → Cosmos Maintenance**, admins can reduce replay write cost for new Cosmos-backed chat streams without batching. The setting defaults off and is inactive with Redis enabled.
+    *   Simple Chat verifies the replay-only exclusion before enabling it. If the app can't apply the change, admins can copy the policy or exclusion entry and verify it after saving in Azure.
+    *   Disabling changes only new streams. Both replay formats remain readable.
+    *   (Ref: [Cosmos Maintenance](../admin/scale.md#optimize-cosmos-replay-when-redis-is-off), [Replay-only index exclusion](features/COSMOS_REPLAY_INDEX_EXCLUSION.md))
+
+### **(v0.261.471)**
+
+#### Bug Fixes
+
+*   **One Fewer Settings Read Per Chat Turn**
+    *   The background stream reuses the configuration already loaded for the turn instead of fetching it again. Output screening and live source access checks still apply.
+    *   (Ref: `route_backend_chats.py`, `test_chat_content_streaming.py`, [Streaming replay round trips](fixes/STREAM_REPLAY_ROUND_TRIPS_FIX.md))
+
+### **(v0.261.470)**
+
+#### User Interface Enhancements
+
+*   **Message Actions on Touch and No-Hover Browsers**
+    *   V2 message action bars stay visible when the browser does not support hovering, so actions such as unmasking and **More actions** can be reached without a mouse.
+    *   Hover and keyboard focus still reveal actions in other browsers. Menus open only when selected, and action permissions are unchanged.
+    *   (Ref: `MessageList.tsx`, `test_v2_evidence_status.py`, [Chat controls](../reference/chat-controls.md))
+
+### **(v0.261.465)**
+
+#### User Interface Enhancements
+
+*   **Inspectable Model Personas in Chat Pickers**
+    *   Chat model pickers show a compact person icon beside models with active personas.
+    *   Hover/focus provides a short status preview, while click/tap opens the safely rendered persona without changing the selected model. Hidden persona text remains unavailable to ordinary users.
+    *   (Ref: `Dropdown.tsx`, `chat-model-selector.js`, microsoft/simplechat#1929)
+
+### **(v0.261.464)**
+
+#### User Interface Enhancements
+
+*   **Compact Model Persona Editors**
+    *   AI Connections model rows now show only the persona enable control while a persona is disabled, removing the unused Markdown editor and visibility settings from the layout.
+    *   Enabling the persona expands the controls in place; disabling it hides them without clearing the authored draft. The behavior is consistent across V2, classic admin, personal, and group editors.
+    *   (Ref: `ModelConnectionsManager.tsx`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, microsoft/simplechat#1929)
+
 ### **(v0.261.454)**
 
 #### Bug Fixes

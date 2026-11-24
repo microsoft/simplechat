@@ -12,7 +12,8 @@ from functions_authentication import *
 from flask import current_app, jsonify, request
 from admin_settings_fields import get_field_definition
 
-from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
+from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper
+from functions_model_persona import validate_model_persona_settings_document
 from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_model_endpoint_validation import (
@@ -58,7 +59,7 @@ from functions_mcp_server_config import (
 )
 from functions_mcp_server_registry import get_inbound_mcp_tool_registry
 from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
-from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list
+from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list, peek_source_review_runtime_capabilities
 from functions_control_center_schedule import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
@@ -717,10 +718,18 @@ def register_route_frontend_admin_settings(bp):
 
         try:
             normalized_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []))
+            validate_model_persona_settings_document({
+                **settings,
+                "model_endpoints": normalized_endpoints,
+            })
         except (AIConnectionError, ModelTokenBudgetError) as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 400
         settings['model_endpoints'] = normalized_endpoints
-        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints, catalog_settings=settings)
+        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(
+            normalized_endpoints,
+            include_hidden_persona_text=True,
+            catalog_settings=settings,
+        )
 
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:
@@ -1112,12 +1121,8 @@ def register_route_frontend_admin_settings(bp):
             )
             normalize_inbound_mcp_settings(settings_for_template)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
-            audio_runtime_capabilities = get_audio_runtime_capabilities()
-            source_review_runtime_capabilities = get_source_review_runtime_capabilities()
-            settings_for_template['source_review_allow_js_rendering'] = normalize_source_review_js_rendering_enabled(
-                settings_for_template.get('source_review_allow_js_rendering'),
-                source_review_runtime_capabilities,
-            )
+            audio_runtime_capabilities = peek_audio_runtime_capabilities()
+            source_review_runtime_capabilities = peek_source_review_runtime_capabilities()
             settings_for_template = redact_admin_settings_secrets_for_form(settings_for_template)
             settings_for_template['enhanced_citations_storage_status'] = get_enhanced_citations_storage_status()
             inbound_mcp_easy_auth_script_context = get_inbound_mcp_easy_auth_script_context(settings_for_template)
@@ -1874,14 +1879,7 @@ def register_route_frontend_admin_settings(bp):
                 parsed_model_endpoints = list(parsed_model_endpoints) + migrated_endpoints
                 migrated_models = migrated_endpoints[0]['models'] if migrated_endpoints else []
                 debug_print(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.")
-                debug_print(
-                    f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}"
-                )
                 log_event(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.", level=logging.INFO)
-                log_event(
-                    f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}",
-                    level=logging.INFO,
-                )
                 log_general_admin_action(
                     admin_user_id=user_id,
                     admin_email=admin_email,
@@ -3361,6 +3359,11 @@ def register_route_frontend_admin_settings(bp):
                 preflight_embedding_settings(
                     embedding_settings, {**embedding_settings, **new_settings},
                 )
+                validate_model_persona_settings_document({
+                    **embedding_settings,
+                    **new_settings,
+                    "model_endpoints": parsed_model_endpoints,
+                })
                 parsed_model_endpoints = [
                     keyvault_model_endpoint_save_helper(
                         endpoint,
@@ -3377,6 +3380,17 @@ def register_route_frontend_admin_settings(bp):
                 flash(f"Admin settings were not saved. {exc.public_message}", "danger")
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
             except AIConnectionError as exc:
+                for endpoint in parsed_model_endpoints:
+                    if not isinstance(endpoint, dict):
+                        continue
+                    endpoint_id = endpoint.get("id")
+                    if endpoint_id:
+                        keyvault_model_endpoint_cleanup_helper(
+                            endpoint,
+                            existing_endpoints_by_id.get(endpoint_id),
+                            endpoint_id,
+                            scope="global",
+                        )
                 flash(f"Admin settings were not saved. {exc.public_message}", "danger")
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
             except (AzureError, OSError, RuntimeError, ValueError) as exc:

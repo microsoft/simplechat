@@ -688,6 +688,16 @@ def redact_model_endpoint_secret_values(endpoint_dict, redaction_value=REDACTED_
             if new_auth.get(auth_field):
                 new_auth[auth_field] = redaction_value
         redacted["auth"] = new_auth
+    models = redacted.get("models")
+    if isinstance(models, list):
+        redacted["models"] = []
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            redacted_model = dict(model)
+            if isinstance(redacted_model.get("persona_markdown"), str):
+                redacted_model["persona_markdown"] = redaction_value
+            redacted["models"].append(redacted_model)
 
     return redacted
 

@@ -110,6 +110,7 @@ from functions_settings import (
     normalize_model_endpoints,
     sanitize_model_endpoints_for_frontend,
 )
+from functions_model_persona import validate_model_persona_settings_document
 
 
 INVALID_GROUP_ENDPOINT_ID = re.compile(r"[/\\?#,\x00-\x1f\x7f]")
@@ -337,7 +338,13 @@ def _project_group_endpoint(stored, sanitized, user_id, group, role, settings, *
 
 
 def _single_endpoint(stored, user_id, group, role, settings, *, available=None):
-    sanitized = sanitize_model_endpoints_for_frontend([stored]) if stored else []
+    can_edit = bool(group_endpoint_actions(
+        stored, user_id, group, role, settings, available=available
+    ))
+    sanitized = sanitize_model_endpoints_for_frontend(
+        [stored],
+        include_hidden_persona_text=can_edit,
+    ) if stored else []
     if not sanitized:
         raise GroupEndpointError(GROUP_ENDPOINT_NOT_FOUND_MESSAGE, 404)
     return _project_group_endpoint(stored, sanitized[0], user_id, group, role, settings, available=available)
@@ -670,6 +677,10 @@ def _write_endpoint_change(user_id, group_id, settings, change):
         endpoints, endpoint_id = change(copy.deepcopy(stored))
         normalized, _changed = normalize_model_endpoints(endpoints)
         validate_custom_model_endpoints(normalized, settings)
+        validate_model_persona_settings_document({
+            **document,
+            "model_endpoints": normalized,
+        })
         previous_by_id = {str(endpoint.get("id") or ""): endpoint for endpoint in stored}
         # The application identity rule, judged before anything is staged. Only a new
         # or changed endpoint is judged here; an unchanged stored one is judged when used.
@@ -744,7 +755,13 @@ def list_group_model_endpoints(user_id, group_id):
     stored = _stored_endpoints(group)
     stored_by_id = {str(endpoint.get("id")): endpoint for endpoint in stored if endpoint.get("id")}
     endpoints = []
-    for sanitized in sanitize_model_endpoints_for_frontend(stored):
+    can_edit_any = bool(group_endpoint_management_operations(
+        user_id, group, role, settings
+    ))
+    for sanitized in sanitize_model_endpoints_for_frontend(
+        stored,
+        include_hidden_persona_text=can_edit_any,
+    ):
         record = stored_by_id.get(str(sanitized.get("id") or ""))
         if record is None:
             continue

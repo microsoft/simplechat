@@ -386,6 +386,8 @@ def initialize_application(force=False):
         print("Setting up Application Insights logging...")
         setup_appinsights_logging(settings)
         logging.basicConfig(level=logging.DEBUG)
+        for model_http_logger in ('httpx', 'httpcore', 'openai', 'anthropic'):
+            logging.getLogger(model_http_logger).setLevel(logging.INFO)
         # basicConfig above is a no-op once Azure Monitor owns the root logger,
         # and that same root handler stops Flask attaching its stderr handler,
         # so unhandled tracebacks would otherwise never reach the container log.

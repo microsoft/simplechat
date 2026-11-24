@@ -367,6 +367,7 @@ def _build_model_endpoint_client(
     endpoint_config=None,
     identity_context=None,
     resolved_route=None,
+    model_id='',
 ):
     client, _ = build_model_endpoint_sync_chat_client(
         auth_settings,
@@ -383,6 +384,7 @@ def _build_model_endpoint_client(
         endpoint_config=endpoint_config,
         identity_context=identity_context,
         resolved_route=resolved_route,
+        model_id=model_id,
     )
     return client
 
@@ -504,6 +506,7 @@ def _build_model_endpoint_client_for_model(
         endpoint_config=endpoint_cfg,
         identity_context=identity_context,
         resolved_route=resolved_route,
+        model_id=model_id,
     ), deployment
 
 
@@ -12272,6 +12275,36 @@ def get_audio_runtime_capabilities(force_refresh: bool = False):
 
     _AUDIO_RUNTIME_CAPABILITIES_CACHE = capabilities
     return dict(capabilities)
+
+
+def peek_audio_runtime_capabilities() -> Dict[str, Any]:
+    """Return non-blocking audio-runtime facts for an admin request."""
+    global _AUDIO_RUNTIME_CAPABILITIES_CACHE
+    if _AUDIO_RUNTIME_CAPABILITIES_CACHE is not None:
+        return dict(_AUDIO_RUNTIME_CAPABILITIES_CACHE)
+
+    ffmpeg_path = shutil.which("ffmpeg") or ""
+    ffprobe_path = shutil.which("ffprobe") or ""
+    return {
+        "ffmpeg_available": bool(ffmpeg_path),
+        "ffprobe_available": bool(ffprobe_path),
+        "broad_transcoding_available": False,
+        "ffmpeg_path": ffmpeg_path,
+        "ffprobe_path": ffprobe_path,
+        "ffmpeg_version": "",
+        "supported_extensions": sorted(f".{extension}" for extension in AUDIO_EXTENSIONS),
+        "direct_transcription_extensions": sorted(
+            f".{extension}"
+            for extension in AUDIO_FAST_TRANSCRIPTION_SOURCE_EXTENSIONS
+            if extension in AUDIO_EXTENSIONS
+        ),
+        "recommended_container_packages": ["ffmpeg", "ffprobe"],
+        "message": (
+            "FFmpeg was found; the runtime probe runs outside the admin settings request."
+            if ffmpeg_path
+            else "FFmpeg was not found in this app runtime; audio uploads use Azure Speech source-file fallback only."
+        ),
+    }
 
 
 def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:

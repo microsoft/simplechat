@@ -85,7 +85,8 @@ import { CatalogProfilePicker } from './ModelCatalogManager';
 import { CustomAuthenticationFields, CustomConnectionFields, ModelRequestRouteFields } from './CustomConnectionFields';
 import { CustomNetworkPolicyEditor } from './CustomNetworkPolicyEditor';
 import { GlassButton } from '../ui/primitives';
-import { EditorSwitch } from '../workspace/EditorLayout';
+import { EditorDependents, EditorSwitch } from '../workspace/EditorLayout';
+import { PlainMarkdown } from '../ui/PlainMarkdown';
 import { isNativeFoundryEndpoint, normalizeInferenceConnection, usesMaiChatCompletions, usesResponsesApi } from '../../lib/modelInference';
 import { ConnectionCapacityFields, ConnectionModelMetadata } from '../workspace/ConnectionMetadataFields';
 import { useModelConnectionsStore, modelConnectionsChanged } from '../../stores/modelConnectionsStore';
@@ -147,6 +148,94 @@ function SectionHeading({ children, hint }: { children: React.ReactNode; hint?: 
             <h3 className="text-xs font-semibold tracking-wide text-text-2 uppercase">{children}</h3>
             {hint ? <p className="mt-1 text-xs text-text-3">{hint}</p> : null}
         </div>
+    );
+}
+
+function ModelPersonaFields({
+    model,
+    disabled,
+    error,
+    onChange,
+}: {
+    model: ConnectionModel;
+    disabled: boolean;
+    error?: string;
+    onChange: (next: ConnectionModel) => void;
+}) {
+    const [preview, setPreview] = useState(false);
+    const editorId = useId();
+    const markdown = typeof model.persona_markdown === 'string' ? model.persona_markdown : '';
+    const characterCount = Array.from(markdown).length;
+    const enabled = model.persona_enabled === true;
+    return (
+        <section className="mt-2 border-t border-edge pt-1" aria-label="Model persona">
+            <EditorSwitch
+                label="Enable persona"
+                checked={enabled}
+                disabled={disabled}
+                onChange={(checked) => {
+                    if (!checked) setPreview(false);
+                    onChange({ ...model, persona_enabled: checked });
+                }}
+            />
+            {enabled ? (
+                <EditorDependents>
+                    <p className="pt-1 text-xs text-text-3">
+                        Supplemental guidance for direct model use. Agents use agent instructions instead.
+                    </p>
+                    <div>
+                        <div className="mb-1.5 flex items-center justify-between gap-2">
+                            <label htmlFor={`${editorId}-markdown`} className="text-xs font-medium text-text-2">
+                                Persona Markdown
+                            </label>
+                            <GlassButton
+                                type="button"
+                                size="sm"
+                                variant="subtle"
+                                onClick={() => setPreview((current) => !current)}
+                            >
+                                {preview ? 'Edit' : 'Preview'}
+                            </GlassButton>
+                        </div>
+                        {preview ? (
+                            <div className="min-h-20 rounded-lg border border-edge bg-surface-1 p-3">
+                                <PlainMarkdown
+                                    content={markdown}
+                                    emptyLabel="Add persona text to preview it."
+                                    size="sm"
+                                    allowMedia={false}
+                                />
+                            </div>
+                        ) : (
+                            <textarea
+                                id={`${editorId}-markdown`}
+                                rows={5}
+                                className={clsx(inputClass, 'font-mono text-xs')}
+                                value={markdown}
+                                maxLength={16000}
+                                disabled={disabled}
+                                aria-invalid={Boolean(error)}
+                                aria-describedby={`${editorId}-help`}
+                                onChange={(event) => onChange({ ...model, persona_markdown: event.target.value })}
+                            />
+                        )}
+                        <div id={`${editorId}-help`} className="mt-1.5 flex flex-wrap items-start justify-between gap-2 text-xs">
+                            <span className="text-text-3">Basic Markdown only. Raw HTML, embedded media, and diagrams remain inactive.</span>
+                            <span className={characterCount > 8000 ? 'text-danger' : 'text-text-3'}>
+                                {characterCount.toLocaleString()} / 8,000
+                            </span>
+                        </div>
+                        {error ? <p role="alert" className="mt-1.5 text-xs text-danger">{error}</p> : null}
+                    </div>
+                    <EditorSwitch
+                        label="Show persona text to users"
+                        checked={model.persona_text_visible !== false}
+                        disabled={disabled}
+                        onChange={(checked) => onChange({ ...model, persona_text_visible: checked })}
+                    />
+                </EditorDependents>
+            ) : null}
+        </section>
     );
 }
 
@@ -1413,6 +1502,14 @@ function ConnectionEditor({
                                     onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
                                     onIconBusyChange={setIconBusy}
                                 /> : null}
+                                {modelSupportsCapability(model, 'chat') ? (
+                                    <ModelPersonaFields
+                                        model={model}
+                                        disabled={busy}
+                                        error={errors[`model_${index}_persona`]}
+                                        onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
+                                    />
+                                ) : null}
                                 <div className="mt-3 flex flex-wrap gap-2">
                                     {canTest && !embeddingOnly && modelPublishesCapability(model, 'chat') ? (
                                         <GlassButton type="button" variant="subtle" size="sm" disabled={busy || Boolean(testBlockedReason) || (explicit && !savedBinding)} onClick={() => void runModelTest(model, 'chat')}>

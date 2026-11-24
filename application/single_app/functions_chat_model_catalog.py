@@ -124,7 +124,8 @@ def build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_grou
                 request_model = resolve_model_endpoint_request_model(endpoint, model)
                 deployment_name = request_model
                 display_name = model.get('displayName') or model.get('modelName') or request_model or deployment_name or model.get('name') or model_id
-                selection_key = f"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name or request_model}"
+                persisted_scope_id = '' if scope_type == 'global' else scope_id or ''
+                selection_key = f"{scope_type}:{persisted_scope_id}:{endpoint_id}:{model_id or deployment_name or request_model}"
                 catalog.append({
                     'selection_key': selection_key,
                     'model_id': model_id,
@@ -138,6 +139,15 @@ def build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_grou
                     'scope_id': scope_id,
                     'scope_name': scope_name,
                     'icon': model.get('icon') if isinstance(model.get('icon'), dict) else {},
+                    'persona_enabled': model.get('persona_enabled') is True,
+                    'persona_text_visible': model.get('persona_text_visible', True) is True,
+                    'persona_markdown': (
+                        model.get('persona_markdown')
+                        if model.get('persona_enabled') is True
+                        and model.get('persona_text_visible', True) is True
+                        and isinstance(model.get('persona_markdown'), str)
+                        else ''
+                    ),
                     **model_profile_projection(model, endpoint, settings, profiles),
                 })
 
@@ -145,7 +155,7 @@ def build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_grou
         filter_chat_model_endpoints_by_governance(
             user_id, settings.get('model_endpoints', []) or [], 'governance_global_endpoints',
         ),
-        'global', None, 'Global',
+        'global', 'global', 'Global',
     )
     if settings.get('allow_user_custom_endpoints', False):
         append_models(

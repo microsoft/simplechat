@@ -67,6 +67,13 @@ from functions_model_capabilities import (
     ModelTokenBudgetError,
     normalize_model_budget_overrides,
 )
+from functions_model_persona import (
+    MODEL_PERSONA_ENABLED_FIELD,
+    MODEL_PERSONA_MARKDOWN_FIELD,
+    MODEL_PERSONA_TEXT_VISIBLE_FIELD,
+    normalize_model_persona,
+    validate_model_persona_collection_size,
+)
 from model_endpoint_ca_bundles import (
     CABundleRegistry, ManagedCABundle, endpoint_ca_bundle_ids, normalize_ca_bundle_reference,
 )
@@ -1919,6 +1926,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Redis Cache Settings
         'enable_redis_cache': False,
+        'enable_cosmos_replay_index_exclusion': False,
         'redis_url': '',
         'redis_key': '',
         # Every reader treats an empty value as key authentication, so seeding 'key'
@@ -3563,7 +3571,9 @@ def normalize_model_endpoints(endpoints):
         for model in models:
             if not isinstance(model, dict):
                 continue
-            model_copy = normalize_model_capability_fields(json.loads(json.dumps(model)))
+            model_copy = normalize_model_persona(
+                normalize_model_capability_fields(json.loads(json.dumps(model)))
+            )
             if "embedding_operation" in model_copy:
                 model_copy["embedding_operation"] = normalize_model_embedding_operation(model_copy["embedding_operation"])
             # Effective profile metadata is resolved from current settings, never accepted
@@ -3651,6 +3661,7 @@ def normalize_model_endpoints(endpoints):
             endpoint_copy = normalize_model_endpoint_routing(endpoint_copy)
         normalized.append(endpoint_copy)
 
+    validate_model_persona_collection_size(normalized)
     return normalized, changed or normalized != endpoints
 
 
@@ -3704,6 +3715,30 @@ def merge_model_endpoint_payload(existing_endpoint, incoming_endpoint):
 
     merged = dict(existing_endpoint)
     for key, value in incoming_endpoint.items():
+        if key == "models" and isinstance(value, list):
+            existing_models = existing_endpoint.get("models") if isinstance(existing_endpoint.get("models"), list) else []
+            existing_by_id = {
+                str(model.get("id")): model
+                for model in existing_models
+                if isinstance(model, dict) and model.get("id") not in (None, "")
+            }
+            merged_models = []
+            for model in value:
+                if not isinstance(model, dict):
+                    continue
+                merged_model = dict(model)
+                existing_model = existing_by_id.get(str(model.get("id") or ""))
+                if existing_model:
+                    for persona_field in (
+                        MODEL_PERSONA_ENABLED_FIELD,
+                        MODEL_PERSONA_MARKDOWN_FIELD,
+                        MODEL_PERSONA_TEXT_VISIBLE_FIELD,
+                    ):
+                        if persona_field not in model and persona_field in existing_model:
+                            merged_model[persona_field] = existing_model[persona_field]
+                merged_models.append(merged_model)
+            merged[key] = merged_models
+            continue
         if key == "auth":
             merged["auth"] = merge_model_endpoint_auth(existing_endpoint.get("auth"), value)
             continue
@@ -3759,7 +3794,13 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
     return merged
 
 
-def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True, catalog_settings=None):
+def sanitize_model_endpoints_for_frontend(
+    endpoints,
+    *,
+    include_connection_details=True,
+    include_hidden_persona_text=False,
+    catalog_settings=None,
+):
     """Keep editable model metadata while stripping stored auth credentials."""
     from functions_model_catalog import ModelCatalogError, apply_model_profile, get_effective_model_profiles
 
@@ -3799,6 +3840,12 @@ def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_detai
         endpoint_copy["has_bearer_token"] = has_bearer_token
         for model in endpoint_copy.get("models") or []:
             if isinstance(model, dict):
+                persona_enabled = model.get(MODEL_PERSONA_ENABLED_FIELD) is True
+                persona_visible = model.get(MODEL_PERSONA_TEXT_VISIBLE_FIELD, True) is True
+                if not include_hidden_persona_text and (
+                    not persona_enabled or not persona_visible
+                ):
+                    model.pop(MODEL_PERSONA_MARKDOWN_FIELD, None)
                 effective_model = model
                 if profiles is not None:
                     try:
@@ -4714,7 +4761,16 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
         return full_settings
     
     sanitized = {}
-    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret", "bearer_token", "access_token"]
+    sensitive_key_terms = [
+        "key",
+        "base64",
+        "image",
+        "storage_account_url",
+        "_secret",
+        "bearer_token",
+        "access_token",
+        MODEL_PERSONA_MARKDOWN_FIELD,
+    ]
     
     for k, v in full_settings.items():
         if k.startswith('content_screening'):

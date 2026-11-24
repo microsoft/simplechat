@@ -14,7 +14,10 @@ from cosmos_document_utils import normalize_cosmos_document
 from functions_conversation_handoffs import ConversationHandoffError, digest
 
 
-MODEL_FIELDS = ('model_deployment', 'model_endpoint_id', 'model_id', 'model_provider')
+MODEL_FIELDS = (
+    'model_deployment', 'model_endpoint_id', 'model_id', 'model_provider',
+    'model_scope_type', 'model_scope_id',
+)
 
 
 def _dependencies():

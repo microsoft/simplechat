@@ -2,13 +2,14 @@
 """
 Azure Playwright-ready endpoint/model capacity editor workflows.
 
-Version: 0.261.435
+Version: 0.261.464
 Implemented in: 0.261.431; saved per-model Responses path order fixed in 0.261.432
 Single-save routing rejection and error recovery verified in: 0.261.435
 
 Per-model routing round trips added in: 0.261.042
 Live schema-v2 model test coverage added in: 0.261.044
 Explicit activation/deactivation coverage added in: 0.261.046
+Model persona editing and safe preview added in: 0.261.461; compact toggle layout added in: 0.261.464
 Editor usability and effective model-limit coverage added in: 0.261.052
 Endpoint API-key controls and request-path labels added in: 0.261.054
 Informative APIM header guidance updated in: 0.261.055
@@ -355,6 +356,8 @@ def capacity_ui(request, capacity_browser):
         f'{connection_templates}{modal}'
         '<script src="/static/js/bootstrap/bootstrap.bundle.min.js"></script>'
         '<script src="/static/js/toast.js"></script>'
+        '<script src="/static/js/chat/marked.min.js"></script>'
+        '<script src="/static/js/chat/purify.min.js"></script>'
         f'<script type="module" src="/static/js/{module}"></script>'
         '</body></html>'
     )
@@ -441,6 +444,49 @@ def _save(page, api):
     expect(page.locator("#modelEndpointModal")).to_be_hidden()
     assert api.saved_payloads
     return api.saved_payloads[-1]["endpoints"][0]
+
+
+@pytest.mark.parametrize("capacity_ui", ("admin", "user", "group"), indirect=True)
+def test_model_persona_edit_preview_visibility_and_save(capacity_ui):
+    page, api = capacity_ui
+    _open_editor(page, api)
+    modal = page.locator("#modelEndpointModal")
+
+    enable = modal.locator("[data-persona-enabled-for]").first
+    markdown = modal.locator("[data-persona-markdown-for]").first
+    visible = modal.locator("[data-persona-visible-for]").first
+    expect(enable).to_be_visible()
+    expect(enable).to_have_attribute("aria-expanded", "false")
+    expect(markdown).to_be_hidden()
+    expect(visible).to_be_hidden()
+
+    enable.check()
+    expect(enable).to_have_attribute("aria-expanded", "true")
+    expect(markdown).to_be_visible()
+    expect(visible).to_be_visible()
+    visible.uncheck()
+    markdown.fill("## Technical guide\n\nBe concise. <img src=x onerror=\"window.__personaXss = true\">")
+    modal.get_by_role("button", name="Preview", exact=True).first.click()
+    expect(modal.get_by_role("heading", name="Technical guide")).to_be_visible()
+    expect(modal.locator("img[src='x']")).to_have_count(0)
+    assert page.evaluate("window.__personaXss !== true")
+    modal.get_by_role("button", name="Edit", exact=True).first.click()
+
+    enable.uncheck()
+    expect(enable).to_have_attribute("aria-expanded", "false")
+    expect(markdown).to_be_hidden()
+    expect(visible).to_be_hidden()
+    enable.check()
+    expect(markdown).to_be_visible()
+    expect(markdown).to_have_value(
+        "## Technical guide\n\nBe concise. <img src=x onerror=\"window.__personaXss = true\">"
+    )
+
+    saved = _save(page, api)
+    persona_model = saved["models"][0]
+    assert persona_model["persona_enabled"] is True
+    assert persona_model["persona_text_visible"] is False
+    assert persona_model["persona_markdown"].startswith("## Technical guide")
 
 
 def test_explicit_model_routing_round_trip(capacity_ui):

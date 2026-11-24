@@ -3015,6 +3015,8 @@ def register_route_backend_conversations(bp):
         model_endpoint_id = body.get('model_endpoint_id', '')
         model_id = body.get('model_id', '')
         model_provider = body.get('model_provider', '')
+        model_scope_type = body.get('model_scope_type', '')
+        model_scope_id = body.get('model_scope_id', '')
 
         # Query messages for this conversation
         try:
@@ -3069,6 +3071,8 @@ def register_route_backend_conversations(bp):
                 model_endpoint_id=model_endpoint_id,
                 model_id=model_id,
                 model_provider=model_provider,
+                model_scope_type=model_scope_type,
+                model_scope_id=model_scope_id,
             )
             return jsonify({'success': True, 'summary': summary_data}), 200
 

@@ -16,6 +16,7 @@ import { publishUserInput } from './userInput';
 import {
     currentActionRecoveryHeaders, getActionRecoveryRevision, prepareActionRequest, publishActionRecoveryFailure,
 } from './actionRecovery';
+import { startStreamTiming, STREAM_TIMING_REQUEST_HEADER, takeStreamTimingRequest } from './streamTiming';
 
 const CREDENTIALS_MODE: RequestCredentials = API_BASE ? 'include' : 'same-origin';
 
@@ -197,15 +198,19 @@ export async function readSsePost<TEvent>(
     response: Response,
     onEvent: (event: TEvent) => boolean,
     signal?: AbortSignal,
+    timingRequested = false,
 ): Promise<SseReadOutcome> {
     const reader = response.body!.getReader();
+    const timing = timingRequested ? startStreamTiming(response) : undefined;
     const decoder = new TextDecoder();
     let buffer = '';
     let terminal = false;
     let aborted = false;
+    let bodyEnded = false;
     let transportError: Error | null = null;
 
     const handleFrame = (frame: string): boolean => {
+        timing?.sample(frame);
         const json = parseSseEventPayload(frame);
         if (!json) {
             return false;
@@ -252,11 +257,13 @@ export async function readSsePost<TEvent>(
             const { done, value } = await reader.read();
 
             if (done) {
+                bodyEnded = true;
                 buffer += normalizeLegacyEscapedSseDelimiters(decoder.decode());
                 terminal = drainBuffer(true);
                 break;
             }
 
+            timing?.read(value.byteLength);
             buffer += normalizeLegacyEscapedSseDelimiters(
                 decoder.decode(value, { stream: true }),
             );
@@ -273,6 +280,7 @@ export async function readSsePost<TEvent>(
             transportError = error instanceof Error ? error : new Error('Stream read error');
         }
     } finally {
+        timing?.finish(bodyEnded);
         reader.cancel().catch(() => {
             /* Reader already closed. */
         });
@@ -299,6 +307,7 @@ async function consumeStreamResponse(
     result: ChatStreamResult,
     signal: AbortSignal | undefined,
     reportError: (message: string, event?: ChatStreamEvent) => void,
+    timingRequested = false,
 ): Promise<void> {
     /** Returns true when the frame was terminal and reading should stop. */
     const handleEvent = (event: ChatStreamEvent): boolean => {
@@ -378,7 +387,7 @@ async function consumeStreamResponse(
     // is chat's own. An abort is a Stop press rather than a failure, a transport throw is
     // reported, and a body that closed without a terminal frame is the "ended unexpectedly"
     // case that was previously inlined in the read loop.
-    const outcome = await readSsePost<ChatStreamEvent>(response, handleEvent, signal);
+    const outcome = await readSsePost<ChatStreamEvent>(response, handleEvent, signal, timingRequested);
 
     if (outcome.aborted) {
         result.cancelled = true;
@@ -579,14 +588,18 @@ export async function streamChat(
     };
 
     let response: Response;
+    const url = options.url ?? apiUrl('/api/chat/stream');
+    let timingRequested = false;
     try {
-        response = await v2ApiFetch(options.url ?? apiUrl('/api/chat/stream'), {
+        timingRequested = takeStreamTimingRequest(url);
+        response = await v2ApiFetch(url, {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             headers: {
                 'Content-Type': 'application/json',
                 Accept: 'text/event-stream',
                 ...currentActionRecoveryHeaders(),
+                ...(timingRequested ? { [STREAM_TIMING_REQUEST_HEADER]: '1' } : {}),
             },
             body: JSON.stringify(body),
             signal,
@@ -604,7 +617,7 @@ export async function streamChat(
 
     if (!pendingError && response.body && response.headers.get('Content-Type')?.includes('text/event-stream')) {
         // A denied request can still carry an SSE error frame, including its consent handoff.
-        await consumeStreamResponse(response, trackingHandlers, result, signal, captureError);
+        await consumeStreamResponse(response, trackingHandlers, result, signal, captureError, timingRequested);
     } else if (!pendingError && (!response.ok || !response.body)) {
         // A failure before the stream opens comes back as a normal JSON error response.
         let message = `Stream failed with status ${response.status}`;
@@ -633,7 +646,7 @@ export async function streamChat(
         result.errored = true;
         captureError(message, event);
     } else if (!pendingError) {
-        await consumeStreamResponse(response, trackingHandlers, result, signal, captureError);
+        await consumeStreamResponse(response, trackingHandlers, result, signal, captureError, timingRequested);
     }
 
     const requiresAuth = (pendingError as DeferredStreamError | null)?.event?.auth_required === true;

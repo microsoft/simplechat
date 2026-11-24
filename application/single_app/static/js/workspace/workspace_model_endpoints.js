@@ -794,6 +794,136 @@ function findModelEditor(modelId) {
         .find((editor) => editor.dataset.modelEditorFor === String(modelId));
 }
 
+function modelAllowsPersona(model) {
+    if (typeof modelSupportsCapability === "function") {
+        return modelSupportsCapability(model, "chat");
+    }
+    if (model?.capability_status?.chat?.supported === false || model?.supportsChat === false) {
+        return false;
+    }
+    if (Array.isArray(model?.enabled_capabilities) && !model.enabled_capabilities.includes("chat")) {
+        return false;
+    }
+    return model?.supportsChat === true
+        || !(model?.supportsEmbeddings === true || model?.embedding_config || model?.embedding_operation)
+        && endpointProviderSelect?.value !== "openai_compatible";
+}
+
+function createModelPersonaEditor(model, modelId) {
+    const section = createElement("section", "border-top pt-2 mt-2");
+    section.setAttribute("aria-label", "Model persona");
+
+    const heading = createElement("div", "d-flex align-items-center justify-content-between gap-3");
+    const title = createElement("h6", "mb-0");
+    title.textContent = "Model persona";
+
+    const enableWrapper = createElement("div", "form-check form-switch");
+    const enableInput = document.createElement("input");
+    enableInput.className = "form-check-input";
+    enableInput.type = "checkbox";
+    enableInput.id = getModelIconDomId(modelId, "persona-enabled");
+    enableInput.dataset.personaEnabledFor = modelId;
+    enableInput.checked = model.persona_enabled === true;
+    const enableLabel = createElement("label", "form-check-label");
+    enableLabel.htmlFor = enableInput.id;
+    enableLabel.textContent = "Enable persona";
+    enableWrapper.append(enableInput, enableLabel);
+    heading.append(title, enableWrapper);
+
+    const details = createElement("div", "mt-2 ps-3 border-start d-none");
+    details.id = getModelIconDomId(modelId, "persona-details");
+    enableInput.setAttribute("aria-controls", details.id);
+
+    const help = createElement("p", "form-text mb-2");
+    help.textContent = "Supplemental guidance for direct model use. Agents use agent instructions instead.";
+
+    const editorHeader = createElement("div", "d-flex align-items-center justify-content-between gap-2");
+    const editorLabel = createSmallLabel("Persona Markdown");
+    const previewButton = document.createElement("button");
+    previewButton.type = "button";
+    previewButton.className = "btn btn-sm btn-outline-secondary";
+    previewButton.textContent = "Preview";
+    editorHeader.append(editorLabel, previewButton);
+
+    const markdownInput = document.createElement("textarea");
+    markdownInput.className = "form-control form-control-sm font-monospace";
+    markdownInput.rows = 5;
+    markdownInput.maxLength = 16000;
+    markdownInput.dataset.personaMarkdownFor = modelId;
+    markdownInput.value = typeof model.persona_markdown === "string" ? model.persona_markdown : "";
+    editorLabel.htmlFor = getModelIconDomId(modelId, "persona-markdown");
+    markdownInput.id = editorLabel.htmlFor;
+
+    const preview = createElement("div", "border rounded p-3 d-none");
+    const counter = createElement("div", "form-text text-end");
+    const updateCounter = () => {
+        const count = Array.from(markdownInput.value).length;
+        counter.textContent = `${count.toLocaleString()} / 8,000`;
+        counter.classList.toggle("text-danger", count > 8000);
+    };
+    updateCounter();
+    markdownInput.addEventListener("input", updateCounter);
+    previewButton.addEventListener("click", () => {
+        const showPreview = preview.classList.contains("d-none");
+        if (showPreview) {
+            const rendered = DOMPurify.sanitize(marked.parse(markdownInput.value || ""), {
+                ALLOWED_TAGS: ["a", "blockquote", "br", "code", "em", "h1", "h2", "h3", "li", "ol", "p", "pre", "strong", "ul"],
+                ALLOWED_ATTR: ["href", "title"],
+                ALLOW_DATA_ATTR: false,
+            });
+            preview.innerHTML = rendered;
+            if (!markdownInput.value.trim()) {
+                preview.textContent = "Add persona text to preview it.";
+            }
+        }
+        preview.classList.toggle("d-none", !showPreview);
+        markdownInput.classList.toggle("d-none", showPreview);
+        previewButton.textContent = showPreview ? "Edit" : "Preview";
+    });
+
+    const markdownHelp = createElement("div", "form-text");
+    markdownHelp.textContent = "Basic Markdown only. Raw HTML, embedded media, and diagrams remain inactive.";
+
+    const visibilityWrapper = createElement("div", "form-check form-switch mt-2");
+    const visibilityInput = document.createElement("input");
+    visibilityInput.className = "form-check-input";
+    visibilityInput.type = "checkbox";
+    visibilityInput.id = getModelIconDomId(modelId, "persona-visible");
+    visibilityInput.dataset.personaVisibleFor = modelId;
+    visibilityInput.checked = model.persona_text_visible !== false;
+    const visibilityLabel = createElement("label", "form-check-label");
+    visibilityLabel.htmlFor = visibilityInput.id;
+    visibilityLabel.textContent = "Show persona text to users";
+    const visibilityHelp = createElement("div", "form-text");
+    visibilityHelp.textContent = "Users can always see that a persona is active. This controls whether they can read the text.";
+    visibilityWrapper.append(visibilityInput, visibilityLabel);
+
+    details.append(
+        help,
+        editorHeader,
+        markdownInput,
+        preview,
+        counter,
+        markdownHelp,
+        visibilityWrapper,
+        visibilityHelp,
+    );
+    const updateDetailsVisibility = () => {
+        const expanded = enableInput.checked;
+        enableInput.setAttribute("aria-expanded", String(expanded));
+        details.classList.toggle("d-none", !expanded);
+        if (!expanded) {
+            preview.classList.add("d-none");
+            markdownInput.classList.remove("d-none");
+            previewButton.textContent = "Preview";
+        }
+    };
+    enableInput.addEventListener("change", updateDetailsVisibility);
+    updateDetailsVisibility();
+    section.append(heading, details);
+    return section;
+}
+
 function renderModalModels(models) {
     invalidateModelRoutingPreviews(modelsListEl);
     if (!modelsListEl) {
@@ -910,6 +1040,9 @@ function renderModalModels(models) {
             idPrefix: getModelIconDomId(modelId, `budget-${modelIndex}`),
             includeCatalogIdentity: modalEndpoint.routing_schema_version !== 2
         }));
+        if (modelAllowsPersona(model)) {
+            wrapper.appendChild(createModelPersonaEditor(model, modelId));
+        }
         wrapper.appendChild(actions);
 
         fragment.appendChild(wrapper);
@@ -934,6 +1067,9 @@ function collectModalModels() {
         const descriptionInput = row?.querySelector("textarea[data-description-for]");
         const responseLengthInput = row?.querySelector("input[data-response-length-for]");
         const iconEditor = findModelEditor(model.id);
+        const personaEnabledInput = row?.querySelector("[data-persona-enabled-for]");
+        const personaMarkdownInput = row?.querySelector("[data-persona-markdown-for]");
+        const personaVisibilityInput = row?.querySelector("[data-persona-visible-for]");
         const responseLength = responseLengthInput ? normalizeModelResponseLength(responseLengthInput.value) : "";
         if (responseLength === null) {
             throw new Error("Response length must be a positive whole number.");
@@ -946,6 +1082,19 @@ function collectModalModels() {
         model.displayName = displayInput ? displayInput.value.trim() : model.displayName;
         model.icon = iconEditor ? getIconPayload(iconEditor, MODEL_ICON_CONTROL_CONFIG) : model.icon || {};
         model.description = descriptionInput ? descriptionInput.value.trim() : model.description;
+        if (personaEnabledInput) {
+            model.persona_enabled = personaEnabledInput.checked;
+        }
+        if (personaMarkdownInput) {
+            const personaMarkdown = personaMarkdownInput.value;
+            if (Array.from(personaMarkdown).length > 8000) {
+                throw new Error("Keep the model persona at 8,000 characters or fewer.");
+            }
+            model.persona_markdown = personaMarkdown;
+        }
+        if (personaVisibilityInput) {
+            model.persona_text_visible = personaVisibilityInput.checked;
+        }
         if (responseLength) {
             model.responseLength = responseLength;
         } else {

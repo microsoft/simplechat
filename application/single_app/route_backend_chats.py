@@ -68,6 +68,11 @@ from model_endpoint_clients import (
     resolve_stream_disconnect_grace_seconds,
 )
 from functions_model_capabilities import ModelTokenBudgetError
+from functions_model_persona import (
+    bound_model_persona,
+    bound_model_persona_metadata,
+    prepend_model_persona_messages,
+)
 from functions_model_endpoint_validation import ModelEndpointValidationError
 from functions_agent_credential_recovery import model_configuration_error_payload
 from functions_model_catalog import apply_model_profile
@@ -166,6 +171,7 @@ import re
 import requests
 import time
 import traceback
+from contextlib import nullcontext
 from urllib.parse import urlparse
 import threading
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -513,6 +519,7 @@ from functions_chat_vision import (
 )
 from functions_image_references import references_from_metadata
 from functions_appinsights import log_chat_execution_outcome, log_event
+from functions_stream_timing import StreamTiming
 from functions_debug import debug_print
 from functions_governance import ensure_governance_access
 from functions_notifications import create_chat_response_notification
@@ -613,6 +620,7 @@ from functions_workflow_runner import (
 )
 from functions_workflow_context import (
     WorkflowContextBudgetError,
+    calculate_workflow_context_budget,
     invoke_workflow_agent,
     raise_if_workflow_context_blocked,
     workflow_context_budget_scope,
@@ -888,6 +896,8 @@ def _apply_admin_new_conversation_model_defaults(settings, data, conversation_id
     data['model_id'] = default_model_id
     data['model_provider'] = default_provider
     data['model_deployment'] = ''
+    data['model_scope_type'] = 'global'
+    data['model_scope_id'] = 'global'
     default_reasoning_effort = _normalize_default_reasoning_effort(settings.get('default_reasoning_effort'))
     if default_reasoning_effort:
         data['reasoning_effort'] = None if default_reasoning_effort == 'none' else default_reasoning_effort
@@ -932,6 +942,201 @@ def _create_chat_completion_with_reasoning(create_callable, params, model_name, 
             debug_only=True,
         )
     return response, resolution
+
+
+def _fit_direct_chat_persona_context(
+    messages,
+    *,
+    client,
+    model_name,
+    provider,
+    output_tokens=None,
+):
+    """Summarize older chat turns when the persona makes the final request overflow."""
+    persona_markdown = bound_model_persona(client)
+    if not persona_markdown or not isinstance(messages, list):
+        return messages
+
+    model_metadata = bound_model_persona_metadata(client) or {"modelName": model_name}
+
+    def budget_safe_messages(candidate_messages):
+        safe_messages = []
+        image_overhead = 0
+        for message in candidate_messages:
+            if not isinstance(message, dict):
+                safe_messages.append(message)
+                continue
+            safe_message = dict(message)
+            content = message.get("content")
+            if isinstance(content, list):
+                safe_content = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        safe_content.append(part)
+                        continue
+                    part_type = part.get("type")
+                    if part_type in {"image_url", "input_image", "image"}:
+                        safe_content.append({
+                            "type": part_type,
+                            "image_token_estimate": 1100,
+                        })
+                        image_overhead += 1100
+                    else:
+                        safe_content.append(part)
+                safe_message["content"] = safe_content
+            safe_messages.append(safe_message)
+        return safe_messages, image_overhead
+
+    def audit_request(candidate_messages, requested_output):
+        request_messages = prepend_model_persona_messages(
+            candidate_messages, persona_markdown
+        )
+        budget_messages, image_overhead = budget_safe_messages(request_messages)
+        try:
+            audit = calculate_workflow_context_budget(
+                budget_messages,
+                model_metadata,
+                provider=provider,
+                output_tokens=requested_output,
+            )
+            if image_overhead:
+                audit = dict(audit)
+                audit["input_tokens"] = audit.get("input_tokens", 0) + image_overhead
+                audit["decision"] = (
+                    "full_input"
+                    if audit["input_tokens"] <= audit.get(
+                        "input_budget_tokens", audit["input_tokens"]
+                    )
+                    else "blocked"
+                )
+            return audit
+        except ModelTokenBudgetError:
+            numeric_limits = [
+                int(value)
+                for value in (
+                    model_metadata.get("contextWindow"),
+                    model_metadata.get("context_window_tokens"),
+                    model_metadata.get("inputTokenLimit"),
+                    model_metadata.get("max_input_tokens"),
+                )
+                if isinstance(value, int) and not isinstance(value, bool)
+                and value > 0
+            ]
+            if not numeric_limits:
+                return {"decision": "full_input"}
+            payload_tokens = max(
+                1,
+                math.ceil(
+                    len(json.dumps(
+                        budget_messages,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    ).encode("utf-8")) / 4
+                ),
+            ) + image_overhead
+            reserved_output = requested_output or 256
+            return {
+                "decision": (
+                    "full_input"
+                    if payload_tokens + reserved_output + 256 <= min(numeric_limits)
+                    else "blocked"
+                )
+            }
+
+    audit = audit_request(messages, output_tokens)
+    if audit["decision"] != "blocked":
+        return messages
+
+    conversational_indexes = [
+        index
+        for index, message in enumerate(messages)
+        if isinstance(message, dict) and message.get("role") in {"user", "assistant"}
+    ]
+    if len(conversational_indexes) <= 2:
+        raise ModelTokenBudgetError(
+            "model_context_exhausted",
+            "The conversation is too long for this model even after persona-aware summarization. Shorten the request or start a new conversation.",
+        )
+
+    older_indexes = conversational_indexes[:-2]
+    summary_source = "\n\n".join(
+        f"{str(messages[index].get('role') or '').upper()}: "
+        f"{str(messages[index].get('content') or '')}"
+        for index in older_indexes
+    )[-24000:]
+    if not summary_source.strip():
+        raise ModelTokenBudgetError(
+            "model_context_exhausted",
+            "The conversation is too long for this model and no earlier text can be summarized. Shorten the request or start a new conversation.",
+        )
+    response_parameter = ModelEndpointBehavior(provider, model_name).response_length_parameter
+    while summary_source:
+        summary_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Summarize the older conversation turns for continuation. Preserve "
+                    "named entities, decisions, exact identifiers, numbers, constraints, "
+                    "and unresolved work. Return only the compact summary."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"<Older conversation>\n{summary_source}\n</Older conversation>",
+            },
+        ]
+        if audit_request(summary_messages, 300)["decision"] != "blocked":
+            break
+        if len(summary_source) <= 1000:
+            raise ModelTokenBudgetError(
+                "model_context_exhausted",
+                "The conversation is too long for this model even after persona-aware summarization. Shorten the request or start a new conversation.",
+            )
+        summary_source = summary_source[-max(1000, len(summary_source) // 2):]
+    summary_request = {
+        "model": model_name,
+        "messages": summary_messages,
+        response_parameter: 300,
+    }
+    bounded_create = bind_callable_with_timeout(
+        client,
+        client.chat.completions.create,
+        timeout_seconds=AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS,
+        max_retries=0,
+    )
+    summary_response, _ = _create_chat_completion_with_reasoning(
+        bounded_create, summary_request, model_name
+    )
+    summary_text = extract_chat_completion_response_text(summary_response)
+    if not isinstance(summary_text, str) or not summary_text.strip():
+        raise ModelTokenBudgetError(
+            "model_context_exhausted",
+            "The conversation could not be summarized to fit the selected model. Shorten the request or start a new conversation.",
+        )
+
+    older_index_set = set(older_indexes)
+    insertion_index = min(older_indexes)
+    fitted_messages = []
+    for index, message in enumerate(messages):
+        if index == insertion_index:
+            fitted_messages.append({
+                "role": "system",
+                "content": (
+                    "<Summary of older conversation context>\n"
+                    f"{summary_text.strip()}\n"
+                    "</Summary of older conversation context>"
+                ),
+            })
+        if index not in older_index_set:
+            fitted_messages.append(message)
+
+    fitted_audit = audit_request(fitted_messages, output_tokens)
+    if fitted_audit["decision"] == "blocked":
+        raise ModelTokenBudgetError(
+            "model_context_exhausted",
+            "The conversation is too long for this model even after persona-aware summarization. Shorten the request or start a new conversation.",
+        )
+    return fitted_messages
 
 
 def _build_chat_reasoning_metadata(resolution, requested_effort=None, model_name=None):
@@ -2616,6 +2821,7 @@ IMAGE_PROPOSAL_STATUS_RESULT_LIMIT = 200
 STREAM_STATUS_NOT_FOUND = 'not_found'
 STREAM_STATUS_STARTED = 'started'
 STREAM_STATUS_STREAMING = 'streaming'
+STREAM_REPLAY_UNCONFIRMED = 'stream_replay_unconfirmed'
 STREAM_STATUS_DETACHED_RUNNING = 'detached_running'
 STREAM_STATUS_CANCEL_REQUESTED = 'cancel_requested'
 STREAM_STATUS_COMPLETED = 'completed'
@@ -3695,6 +3901,8 @@ def _truncate_log_text(value, max_length=500):
 def _build_stream_status_payload(metadata):
     snapshot = dict(metadata or {})
     snapshot.pop('analysis_message_id', None)
+    snapshot.pop('replay_progress_finalized', None)
+    snapshot.pop('cosmos_replay_excluded_text', None)
     if not snapshot:
         return {
             'active': False,
@@ -8644,6 +8852,7 @@ class BackgroundStreamBridge:
         self._state_lock = threading.Lock()
         self._stream_session = stream_session
         self._last_backpressure_logged_at = 0.0
+        self.timing: StreamTiming | None = None
 
     def _record_queue_backpressure(self):
         if not self._stream_session:
@@ -8679,7 +8888,10 @@ class BackgroundStreamBridge:
                 return False
 
             try:
-                self._queue.put(event, timeout=0.25)
+                if self.timing is None:
+                    self._queue.put(event, timeout=0.25)
+                else:
+                    self.timing.producer.call("queue_put", self._queue.put, event, timeout=0.25)
                 return True
             except queue.Full:
                 self._record_queue_backpressure()
@@ -8704,7 +8916,10 @@ class BackgroundStreamBridge:
         """Yield queued SSE events until the worker finishes."""
         while True:
             try:
-                next_item = self._queue.get(timeout=15)
+                if self.timing is None:
+                    next_item = self._queue.get(timeout=15)
+                else:
+                    next_item = self.timing.consumer.call("queue_get", self._queue.get, timeout=15)
             except queue.Empty:
                 with self._state_lock:
                     consumer_attached = self._consumer_attached
@@ -8720,7 +8935,12 @@ class BackgroundStreamBridge:
             if next_item is self._sentinel:
                 break
             if self._stream_session:
-                replacement = self._stream_session.get_terminal_replacement()
+                if self.timing is None:
+                    replacement = self._stream_session.get_terminal_replacement()
+                else:
+                    replacement = self.timing.consumer.call(
+                        "terminal_lookup", self._stream_session.get_terminal_replacement
+                    )
                 if replacement is not None:
                     yield f"data: {json.dumps(replacement)}\n\n"
                     break
@@ -9059,6 +9279,7 @@ class ActiveConversationStreamSession:
         disconnect_grace_seconds=60,
         submission_id=None,
         attempt_store=None,
+        exclude_cosmos_replay_text=False,
     ):
         self.user_id = user_id
         self.conversation_id = conversation_id
@@ -9067,13 +9288,23 @@ class ActiveConversationStreamSession:
         self.disconnect_grace_seconds = max(0, int(disconnect_grace_seconds if disconnect_grace_seconds is not None else 60))
         self.submission_id = submission_id
         self.attempt_store = attempt_store
-        self.cache_key = f'{user_id}:{conversation_id}' + (f':{submission_id}' if submission_id else '')
+        self._exclude_cosmos_replay_text = exclude_cosmos_replay_text
+        self._discovery_key = f'{user_id}:{conversation_id}'
+        self.cache_key = f'{self._discovery_key}:{submission_id}' if submission_id else self._discovery_key
+        self._discovery_renewal_seconds = min(60, self.session_ttl_seconds / 3)
+        self._next_discovery_renewal = time.monotonic() + self._discovery_renewal_seconds
+        self._next_metadata_renewal = self._next_discovery_renewal
         self._last_control_check = 0.0
         self._durable_cancel_reason = None
+        self._cached_cancel_reason = None
+        self._stream_publication_closed = False
+        self._first_content_recorded = False
+        self._cosmos_progress_ready = False
         self._condition = threading.Condition()
         self._accepting_events = True
         self._analysis_message_id = analysis_message_id
         self._terminal_replacement = None
+        self._producer_timing = None
 
     def _build_metadata(self, active, existing=None):
         metadata = dict(existing or {})
@@ -9108,24 +9339,80 @@ class ActiveConversationStreamSession:
             return {}
         return dict(metadata)
 
+    def _renew_cosmos_discovery(self, *, force=False, required=False):
+        if not force and time.monotonic() < self._next_discovery_renewal:
+            return
+        with self._condition:
+            now = time.monotonic()
+            if not force and now < self._next_discovery_renewal:
+                return
+            retry_delay = min(5, self._discovery_renewal_seconds)
+            try:
+                result = app_settings_cache.renew_cosmos_stream_discovery(
+                    self._discovery_key, self.submission_id, self.session_ttl_seconds,
+                )
+            except app_settings_cache.StreamDiscoveryUnavailable:
+                self._next_discovery_renewal = time.monotonic() + retry_delay
+                if required:
+                    raise
+                return
+            delay = retry_delay if result == 'missing' else self._discovery_renewal_seconds
+            self._next_discovery_renewal = time.monotonic() + delay
+            if required and result != 'renewed':
+                raise app_settings_cache.StreamDiscoveryUnavailable("The stream discovery pointer changed.")
+
     def _persist_metadata(self, metadata):
-        app_settings_cache.set_stream_session_meta(
+        if not metadata['active']:
+            self._merge_cosmos_progress(metadata, finalize=True)
+        persisted = app_settings_cache.set_stream_session_meta(
             self.cache_key,
             metadata,
             ttl_seconds=self.session_ttl_seconds,
         )
-        if self.submission_id:
-            current = app_settings_cache.get_stream_session_meta(f'{self.user_id}:{self.conversation_id}') or {}
+        if self.submission_id and app_settings_cache.app_cache_is_using_redis:
+            current = app_settings_cache.get_stream_session_meta(self._discovery_key) or {}
             if current.get('submission_id') == self.submission_id:
                 # Discovery only. A stale worker never owns the next attempt's replay key.
                 app_settings_cache.set_stream_session_meta(
-                    f'{self.user_id}:{self.conversation_id}', metadata,
+                    self._discovery_key, metadata,
                     ttl_seconds=self.session_ttl_seconds,
                 )
+        elif self.submission_id:
+            self._cosmos_progress_ready = bool(persisted and metadata['active'] and metadata.get('first_content_at'))
+            self._renew_cosmos_discovery(force=not metadata['active'])
         return metadata
 
-    def get_status_snapshot(self):
-        return _build_stream_status_payload(self._get_metadata())
+    def _uses_cosmos_progress(self):
+        return bool(self.submission_id and not app_settings_cache.app_cache_is_using_redis)
+
+    def _merge_cosmos_progress(self, metadata, *, shared=False, finalize=False):
+        if (
+            not self._uses_cosmos_progress() or not metadata.get('first_content_at')
+            or metadata.get('replay_progress_finalized')
+        ):
+            return
+        progress = app_settings_cache.get_cosmos_stream_progress(self.cache_key, shared=shared)
+        if progress is None:
+            if finalize or shared:
+                log_event('[STREAMING] Cosmos stream progress could not be confirmed.', level=logging.WARNING)
+            if shared:
+                raise AzureError("Stream progress could not be confirmed.")
+            return
+        if progress.event_count:
+            # Attempt metadata counts only events published on the legacy/control path.
+            metadata['event_count'] = _safe_int(metadata.get('event_count')) + progress.event_count
+            metadata['content_event_count'] = _safe_int(metadata.get('content_event_count')) + progress.event_count
+            metadata['content_chars'] = _safe_int(metadata.get('content_chars')) + progress.content_chars
+            if progress.updated_at:
+                for field in ('updated_at', 'last_event_at'):
+                    metadata[field] = max(metadata.get(field) or '', progress.updated_at)
+        if finalize:
+            metadata['replay_progress_finalized'] = True
+
+    def get_status_snapshot(self, *, shared_progress=False):
+        metadata = self._get_metadata()
+        self._merge_cosmos_progress(metadata, shared=shared_progress)
+        return _build_stream_status_payload(metadata)
 
     def get_analysis_message_id(self):
         return self._get_metadata().get('analysis_message_id')
@@ -9133,6 +9420,8 @@ class ActiveConversationStreamSession:
     def initialize(self):
         """Initialize the stream session cache state for a new live response."""
         initial_metadata = self._build_metadata(active=True)
+        if self._exclude_cosmos_replay_text and self._uses_cosmos_progress():
+            initial_metadata[app_settings_cache.COSMOS_REPLAY_PREFERENCE] = True
         if self._analysis_message_id:
             initial_metadata['analysis_message_id'] = self._analysis_message_id
         app_settings_cache.initialize_stream_session_cache(
@@ -9140,11 +9429,24 @@ class ActiveConversationStreamSession:
             initial_metadata,
             ttl_seconds=self.session_ttl_seconds,
         )
-        if self.submission_id:
+        if self.submission_id and app_settings_cache.app_cache_is_using_redis:
             app_settings_cache.set_stream_session_meta(
-                f'{self.user_id}:{self.conversation_id}', initial_metadata,
+                self._discovery_key, initial_metadata,
                 ttl_seconds=self.session_ttl_seconds,
             )
+        elif self.submission_id:
+            try:
+                app_settings_cache.initialize_cosmos_stream_discovery(
+                    self._discovery_key, self.submission_id, self.session_ttl_seconds,
+                )
+            except app_settings_cache.StreamDiscoveryUnavailable:
+                initial_metadata.update(active=False, status=STREAM_STATUS_ERROR)
+                app_settings_cache.set_stream_session_meta(
+                    self.cache_key, initial_metadata, ttl_seconds=self.session_ttl_seconds,
+                )
+                raise
+            self._next_discovery_renewal = time.monotonic() + self._discovery_renewal_seconds
+            self._next_metadata_renewal = self._next_discovery_renewal
         log_event(
             '[STREAMING] Stream session started',
             extra={
@@ -9211,7 +9513,9 @@ class ActiveConversationStreamSession:
             return self.request_cancel(reason='client_disconnect')
         return self.get_status_snapshot()
 
-    def mark_reattached(self):
+    def mark_reattached(self, *, require_discovery=False):
+        if require_discovery and self.submission_id and not app_settings_cache.app_cache_is_using_redis:
+            self._renew_cosmos_discovery(force=True, required=True)
         metadata = self._build_metadata(active=self.is_active(), existing=self._get_metadata())
         metadata['consumer_detached'] = False
         metadata['reattach_count'] = _safe_int(metadata.get('reattach_count')) + 1
@@ -9242,6 +9546,7 @@ class ActiveConversationStreamSession:
         with self._condition:
             self._condition.notify_all()
 
+        snapshot = self.get_status_snapshot()
         log_event(
             '[STREAMING] Stream cancellation requested',
             extra={
@@ -9249,23 +9554,31 @@ class ActiveConversationStreamSession:
                 'user_id': self.user_id,
                 'status': metadata.get('status'),
                 'cancel_reason': normalized_reason,
-                'event_count': metadata.get('event_count'),
-                'content_event_count': metadata.get('content_event_count'),
+                'event_count': snapshot.get('event_count'),
+                'content_event_count': snapshot.get('content_event_count'),
             },
             level=logging.INFO,
         )
-        return self.get_status_snapshot()
+        return snapshot
 
-    def is_cancel_requested(self):
+    def is_cancel_requested(self, *, check_cache=True):
+        if self._cached_cancel_reason:
+            return True
+        timing = self._producer_timing
         if self.attempt_store and time.monotonic() - self._last_control_check >= 1.0:
-            record = self.attempt_store.read()
+            record = (
+                timing.call("cancel_attempt_read", self.attempt_store.read)
+                if timing else self.attempt_store.read()
+            )
             self._last_control_check = time.monotonic()
             self._durable_cancel_reason = (record or {}).get('cancel_reason')
             if (record or {}).get('state') == 'completed':
                 return False
         if self._durable_cancel_reason:
             return True
-        metadata = self._get_metadata()
+        if not check_cache:
+            return False
+        metadata = timing.call("cancel_read", self._get_metadata) if timing else self._get_metadata()
         if not metadata or metadata.get('status') in TERMINAL_STREAM_STATUSES:
             return False
         if metadata.get('cancel_requested'):
@@ -9278,7 +9591,7 @@ class ActiveConversationStreamSession:
     def get_cancel_reason(self):
         if self.attempt_store:
             record = self.attempt_store.read()
-            return (record or {}).get('cancel_reason') or 'provider_interrupted'
+            return (record or {}).get('cancel_reason') or self._cached_cancel_reason or 'provider_interrupted'
         metadata = self._get_metadata()
         return str(metadata.get('cancel_reason') or 'user_requested')
 
@@ -9312,6 +9625,7 @@ class ActiveConversationStreamSession:
                 "message_id": payload.get("message_id"), "completed_at": _utcnow_iso(),
                 "terminal_replacement": self._terminal_replacement,
             })
+            self._merge_cosmos_progress(metadata, finalize=True)
             app_settings_cache.initialize_stream_session_cache(
                 self.cache_key, metadata, ttl_seconds=self.session_ttl_seconds,
             )
@@ -9324,7 +9638,65 @@ class ActiveConversationStreamSession:
             self._log_outcome(metadata)
         return True
 
-    def publish(self, event_text):
+    def _finish_unconfirmed_replay(self, payload):
+        with self._condition:
+            existing = self._get_metadata()
+            self._terminal_replacement = existing.get("terminal_replacement")
+            self._accepting_events = False
+            self._stream_publication_closed = True
+            if not self._terminal_replacement:
+                self._terminal_replacement = strip_private_chat_checks(payload)
+                metadata = self._build_metadata(active=False, existing=existing)
+                metadata.update({
+                    "status": STREAM_STATUS_ERROR,
+                    "completed_at": _utcnow_iso(),
+                    "last_error": payload["error"],
+                    "terminal_replacement": self._terminal_replacement,
+                })
+                self._persist_metadata(metadata)
+                self._log_outcome(metadata)
+            self._condition.notify_all()
+        return True
+
+    def _publish_cosmos_content(self, event_text, content_chars, existing):
+        timing = self._producer_timing
+        with self._condition:
+            if not self._accepting_events or existing.get('cancel_requested'):
+                return False
+            closed = existing.get('terminal_replacement') or existing.get('active') is False
+            if not closed and time.monotonic() >= self._next_metadata_renewal:
+                renew = app_settings_cache.renew_cosmos_stream_metadata
+                args = (self.cache_key, self.submission_id, self.session_ttl_seconds)
+                retry_delay = min(5, self._discovery_renewal_seconds)
+                try:
+                    result = timing.call("cosmos_metadata_renew", renew, *args) if timing else renew(*args)
+                except app_settings_cache.StreamDiscoveryUnavailable:
+                    self._next_metadata_renewal = time.monotonic() + retry_delay
+                else:
+                    if result == 'missing':
+                        raise app_settings_cache.StreamReplayUnconfirmed("Cosmos stream metadata is unavailable.")
+                    closed = result == 'superseded'
+                    self._next_metadata_renewal = time.monotonic() + self._discovery_renewal_seconds
+            if closed:
+                self._stream_publication_closed = True
+                self._accepting_events = False
+                self._condition.notify_all()
+                return False
+            if not existing.get('active'):
+                raise app_settings_cache.StreamReplayUnconfirmed("Cosmos stream metadata is unavailable.")
+
+            append = app_settings_cache.append_stream_session_event
+            args = (self.cache_key, event_text)
+            opts = dict(ttl_seconds=self.session_ttl_seconds, require_shared=True, progress_chars=content_chars)
+            if timing:
+                timing.call("replay_append", append, *args, **opts)
+            else:
+                append(*args, **opts)
+            self._renew_cosmos_discovery()
+            self._condition.notify_all()
+            return True
+
+    def publish(self, event_text, *, allow_redis_fast_path=False, require_shared=False):
         """Append an SSE event to the replay history and notify listeners."""
         if event_text is None:
             return False
@@ -9336,6 +9708,37 @@ class ActiveConversationStreamSession:
         payload = _extract_sse_event_payload(event_text)
         if isinstance(payload, dict) and payload.get("blocked") and payload.get("role") == "safety":
             return self.retract(payload)
+        if isinstance(payload, dict) and payload.get("error_code") == STREAM_REPLAY_UNCONFIRMED:
+            return self._finish_unconfirmed_replay(payload)
+        timing = self._producer_timing
+        plain_content = (
+            payload.get("content") if isinstance(payload, dict)
+            and payload.keys() in ({"content"}, {"content", "submission_id"}) else None
+        )
+        if allow_redis_fast_path and isinstance(plain_content, str) and plain_content:
+            publish_content = app_settings_cache.publish_stream_content
+            if publish_content and self.can_publish_content_atomically():
+                args = (
+                    self.cache_key, self._discovery_key, self.submission_id,
+                    event_text, _utcnow_iso(), len(plain_content), self.session_ttl_seconds,
+                )
+                with self._condition:
+                    if not self._accepting_events:
+                        return False
+                    status = timing.call("redis_publish", publish_content, *args) if timing else publish_content(*args)
+                    if isinstance(status, str):
+                        self._cached_cancel_reason = status
+                        return False
+                    if status == -2:
+                        self._stream_publication_closed = True
+                        self._accepting_events = False
+                        self._condition.notify_all()
+                        return False
+                    if status == 1:
+                        self._condition.notify_all()
+                        return True
+            if self.is_cancel_requested():
+                return False
         is_cancel_event = isinstance(payload, dict) and (
             payload.get('cancelled')
             or payload.get('canceled')
@@ -9343,7 +9746,12 @@ class ActiveConversationStreamSession:
         )
         is_terminal_event = isinstance(payload, dict) and (payload.get('done') or payload.get('error') or is_cancel_event)
 
-        existing = self._get_metadata()
+        existing = timing.call("metadata_read", self._get_metadata) if timing else self._get_metadata()
+        if (
+            require_shared and isinstance(plain_content, str) and plain_content
+            and self._cosmos_progress_ready and self._uses_cosmos_progress()
+        ):
+            return self._publish_cosmos_content(event_text, len(plain_content), existing)
         was_terminal = existing.get("status") in TERMINAL_STREAM_STATUSES
         metadata = self._build_metadata(active=not is_terminal_event, existing=existing)
         if isinstance(payload, dict) and payload.get('user_message_id'):
@@ -9381,12 +9789,25 @@ class ActiveConversationStreamSession:
         else:
             metadata['status'] = STREAM_STATUS_STARTED
 
-        app_settings_cache.append_stream_session_event(
-            self.cache_key,
-            event_text,
-            ttl_seconds=self.session_ttl_seconds,
-        )
-        self._persist_metadata(metadata)
+        append_options = {"ttl_seconds": self.session_ttl_seconds}
+        if require_shared:
+            append_options["require_shared"] = True
+        if timing is None:
+            app_settings_cache.append_stream_session_event(
+                self.cache_key,
+                event_text,
+                **append_options,
+            )
+            self._persist_metadata(metadata)
+        else:
+            timing.call(
+                "replay_append",
+                app_settings_cache.append_stream_session_event,
+                self.cache_key,
+                event_text,
+                **append_options,
+            )
+            timing.call("metadata_write", self._persist_metadata, metadata)
 
         if first_content_emitted:
             log_event(
@@ -9400,6 +9821,8 @@ class ActiveConversationStreamSession:
                 },
                 level=logging.INFO,
             )
+        if content_value:
+            self._first_content_recorded = True
 
         if is_terminal_event:
             if not was_terminal:
@@ -9430,12 +9853,21 @@ class ActiveConversationStreamSession:
             self._condition.notify_all()
             return True
 
+    def can_publish_content_atomically(self):
+        supported = app_settings_cache.can_publish_stream_content
+        return bool(
+            self._first_content_recorded and self.submission_id and self.session_ttl_seconds > 0
+            and supported and supported()
+        )
+
     def close(self):
         """Mark the session as closed once the worker has no more events."""
         with self._condition:
             self._accepting_events = False
             self._condition.notify_all()
 
+        if self._stream_publication_closed:
+            return
         metadata = self._build_metadata(active=False, existing=self._get_metadata())
         if metadata.get('status') not in TERMINAL_STREAM_STATUSES:
             metadata['status'] = STREAM_STATUS_CANCELED if metadata.get('cancel_requested') else STREAM_STATUS_COMPLETED
@@ -9534,7 +9966,7 @@ class ActiveConversationStreamRegistry:
             self._sessions.pop(key, None)
 
     def start_session(self, user_id, conversation_id, *, analysis_message_id=None, disconnect_grace_seconds=None,
-                      submission_id=None, attempt_store=None):
+                      submission_id=None, attempt_store=None, exclude_cosmos_replay_text=False):
         if not user_id or not conversation_id:
             return None
 
@@ -9568,24 +10000,36 @@ class ActiveConversationStreamRegistry:
                 disconnect_grace_seconds=disconnect_grace_seconds,
                 submission_id=submission_id,
                 attempt_store=attempt_store,
+                exclude_cosmos_replay_text=exclude_cosmos_replay_text,
             )
+            session.initialize()
             self._sessions[key] = session
             if submission_id:
                 self._sessions[(user_id, conversation_id, submission_id)] = session
-            session.initialize()
             return session
 
     def get_session(self, user_id, conversation_id, active_only=False, submission_id=None):
         if not user_id or not conversation_id:
             return None
 
+        discovery = None
+        if not submission_id and not app_settings_cache.app_cache_is_using_redis:
+            discovery = app_settings_cache.get_cosmos_stream_discovery(f'{user_id}:{conversation_id}')
+            if not discovery:
+                return None
+            submission_id = discovery.get('submission_id')
+
         with self._lock:
             self._cleanup_locked()
             key = (user_id, conversation_id, submission_id) if submission_id else (user_id, conversation_id)
             session = self._sessions.get(key)
+            if discovery is not None and session and session.submission_id != submission_id:
+                session = None
             if not session:
                 cache_key = f'{user_id}:{conversation_id}' + (f':{submission_id}' if submission_id else '')
-                metadata = app_settings_cache.get_stream_session_meta(cache_key)
+                metadata = discovery if discovery is not None and not submission_id else (
+                    app_settings_cache.get_stream_session_meta(cache_key)
+                )
                 if not metadata:
                     return None
                 selected_submission = submission_id or metadata.get('submission_id')
@@ -15309,6 +15753,8 @@ def build_streaming_multi_endpoint_client(
     endpoint_config=None,
     identity_context=None,
     resolved_route=None,
+    model_id='',
+    apply_model_persona=True,
 ):
     """Create an inference client for a resolved streaming model endpoint."""
     client, _ = build_model_endpoint_sync_chat_client(
@@ -15326,6 +15772,8 @@ def build_streaming_multi_endpoint_client(
         endpoint_config=endpoint_config,
         identity_context=identity_context,
         resolved_route=resolved_route,
+        model_id=model_id,
+        apply_model_persona=apply_model_persona,
     )
     return client
 
@@ -15446,6 +15894,10 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     requested_model_id = str(data.get('model_id') or '').strip()
     requested_provider = str(data.get('model_provider') or '').strip().lower()
     requested_deployment = str(data.get('model_deployment') or '').strip()
+    requested_scope_type = str(data.get('model_scope_type') or '').strip().lower()
+    requested_scope_id = str(data.get('model_scope_id') or '').strip()
+    if requested_scope_type == 'personal':
+        requested_scope_type = 'user'
 
     selection_source = None
     if requested_model_id and not requested_endpoint_id:
@@ -15464,6 +15916,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
             requested_endpoint_id = default_endpoint_id
             requested_model_id = default_model_id
             requested_provider = requested_provider or default_provider
+            requested_scope_type = requested_scope_type or 'global'
             selection_source = 'default'
         else:
             return None
@@ -15475,7 +15928,27 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         user_id,
         active_group_ids=active_group_ids,
     )
-    endpoint_cfg = next((endpoint for endpoint in endpoint_candidates if endpoint.get('id') == requested_endpoint_id), None)
+    matching_endpoint_configs = [
+        endpoint
+        for endpoint in endpoint_candidates
+        if endpoint.get('id') == requested_endpoint_id
+    ]
+    if requested_scope_type:
+        scoped_endpoint_configs = [
+            endpoint
+            for endpoint in matching_endpoint_configs
+            if endpoint.get('_endpoint_scope') == requested_scope_type
+            and (
+                not requested_scope_id
+                or str(endpoint.get('_endpoint_scope_id') or '').strip() == requested_scope_id
+            )
+        ]
+        matching_endpoint_configs = scoped_endpoint_configs
+    elif len(matching_endpoint_configs) > 1:
+        raise LookupError('The selected model endpoint scope is required.')
+    if len(matching_endpoint_configs) > 1:
+        raise LookupError('The selected model endpoint is ambiguous.')
+    endpoint_cfg = matching_endpoint_configs[0] if matching_endpoint_configs else None
 
     if not endpoint_cfg:
         if selection_source == 'request' or requested_provider == 'custom':
@@ -15527,7 +16000,12 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     model_cfg = None
     if requested_model_id:
         model_cfg = next((model for model in models if model.get('id') == requested_model_id), None)
-    if model_cfg is None and requested_deployment and not explicit_routing:
+    if (
+        model_cfg is None
+        and requested_deployment
+        and not explicit_routing
+        and not requested_model_id
+    ):
         model_cfg = next(
             (
                 model for model in models
@@ -15653,6 +16131,12 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         endpoint_config=resolved_endpoint_cfg,
         identity_context={'user_id': user_id},
         resolved_route=resolved_route,
+        model_id=str(model_cfg.get('id') or requested_model_id),
+        apply_model_persona=(
+            not bool(data.get('agent_info'))
+            and bool(requested_model_id)
+            and str(model_cfg.get('id') or '').strip() == requested_model_id
+        ),
     )
     debug_print(
         f"[STREAMING][Model Resolution] Resolved {selection_source} multi-endpoint model | "
@@ -15834,12 +16318,20 @@ def register_route_backend_chats(bp):
             or 'throttl' in normalized_message
         )
 
-    def build_background_stream_response(event_generator_factory, stream_session=None):
+    def build_background_stream_response(event_generator_factory, stream_session=None, *, content_check_settings=None):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge(stream_session=stream_session)
+        timing = None
+        if os.environ.get("SIMPLECHAT_STREAM_TIMING") == "1" and request.headers.get("X-SimpleChat-Stream-Timing") == "1":
+            timing = StreamTiming(log_event)
+            stream_bridge.timing = timing
+            if stream_session:
+                stream_session._producer_timing = timing.producer
+            timing.start(app_settings_cache.app_cache_is_using_redis)
         viewer_user_id = get_current_user_id()
         stream_user_message_id = None
-        content_check_settings = get_settings()
+        if content_check_settings is None:
+            content_check_settings = get_settings()
         retry_question = getattr(g, 'chat_retry_question', None)
         retry_terminal_seen = False
         durable_attempt = getattr(stream_session, 'attempt_store', None)
@@ -15851,7 +16343,7 @@ def register_route_backend_chats(bp):
             or (getattr(g, 'conversation_id', None) if has_request_context() else None)
         )
 
-        def publish_background_event(event_text):
+        def publish_background_event(event_text, *, direct_content=False, atomic_content=False):
             nonlocal stream_user_message_id, retry_terminal_seen
             if event_text is None:
                 return False
@@ -15887,7 +16379,10 @@ def register_route_backend_chats(bp):
                                     },
                                 })
                             elif record and state != 'completed' and record['state'] == 'completed' and record.get('message_id'):
-                                saved = durable_attempt.materialize()
+                                saved = (
+                                    timing.producer.call("attempt_materialize", durable_attempt.materialize)
+                                    if timing else durable_attempt.materialize()
+                                )
                                 for field in ('error', 'error_code', 'cancel_reason', 'interrupted', 'type'):
                                     payload.pop(field, None)
                                 payload.update({
@@ -15934,10 +16429,16 @@ def register_route_backend_chats(bp):
                 event_text = f"data: {json.dumps(payload)}\n\n"
 
             if stream_session:
-                if not stream_session.publish(event_text):
+                accepted = (
+                    stream_session.publish(event_text, allow_redis_fast_path=atomic_content, require_shared=True)
+                    if direct_content else stream_session.publish(event_text)
+                )
+                if not accepted:
                     return False
 
-            return stream_bridge.push(event_text)
+            pushed = stream_bridge.push(event_text)
+            # A detached HTTP consumer may still reattach to the persisted event.
+            return True if direct_content else pushed
 
         def publish_pending_action(reference):
             cards = functions_msgraph_pending_actions.get_chat_pending_action_cards(
@@ -15961,7 +16462,8 @@ def register_route_backend_chats(bp):
         def stream_worker():
             g.chat_retry_question = retry_question
             g.chat_destination_lease = destination_lease
-            with m365_action_card_events(publish_pending_action):
+            report = timing.report_on_exit("producer", timing.producer) if timing else nullcontext()
+            with report, m365_action_card_events(publish_pending_action):
                 event_iterator = None
                 try:
                     generator_signature = inspect.signature(event_generator_factory)
@@ -16018,7 +16520,10 @@ def register_route_backend_chats(bp):
                             except (AzureError, ChatRetryError, TypeError):
                                 log_event('[STREAMING] Response terminal state remains unconfirmed.', level=logging.WARNING)
                         if stream_session:
-                            stream_session.close()
+                            if timing:
+                                timing.producer.call("session_close", stream_session.close)
+                            else:
+                                stream_session.close()
                         _release_chat_destination_lease(destination_lease, destination_conversation_id)
                         stream_bridge.finish()
 
@@ -16039,19 +16544,26 @@ def register_route_backend_chats(bp):
             worker_thread.start()
 
         def consume_stream():
-            stream_consumed = False
-            try:
-                for event in stream_bridge.iter_events():
-                    yield event
-                stream_consumed = True
-            except GeneratorExit:
-                stream_bridge.detach_consumer(reason='client_disconnect', update_session=True)
-                raise
-            finally:
-                stream_bridge.detach_consumer(
-                    reason='stream_consumed' if stream_consumed else 'consumer_cleanup',
-                    update_session=False,
-                )
+            report = timing.report_on_exit("consumer", timing.consumer) if timing else nullcontext()
+            with report:
+                stream_consumed = False
+                try:
+                    for event in stream_bridge.iter_events():
+                        if timing is None:
+                            yield event
+                        else:
+                            frame = timing.mark_yield(event)
+                            with timing.consumer.measure("wsgi_yield"):
+                                yield frame
+                    stream_consumed = True
+                except GeneratorExit:
+                    stream_bridge.detach_consumer(reason='client_disconnect', update_session=True)
+                    raise
+                finally:
+                    stream_bridge.detach_consumer(
+                        reason='stream_consumed' if stream_consumed else 'consumer_cleanup',
+                        update_session=False,
+                    )
 
         return Response(
             stream_with_context(consume_stream()),
@@ -16059,7 +16571,8 @@ def register_route_backend_chats(bp):
             headers={
                 'Cache-Control': 'no-cache',
                 'X-Accel-Buffering': 'no',
-                'Connection': 'keep-alive'
+                'Connection': 'keep-alive',
+                **({'X-SimpleChat-Stream-Timing-Id': timing.run_id} if timing else {}),
             }
         )
 
@@ -16582,6 +17095,8 @@ def register_route_backend_chats(bp):
                 'model_id': data.get('model_id'),
                 'model_endpoint_id': data.get('model_endpoint_id'),
                 'model_provider': data.get('model_provider'),
+                'model_scope_type': data.get('model_scope_type'),
+                'model_scope_id': data.get('model_scope_id'),
                 'reasoning_effort': data.get('reasoning_effort') if data.get('reasoning_effort') not in (None, '') else None,
                 'streaming': bool(streaming_enabled),
             },
@@ -19240,6 +19755,7 @@ def register_route_backend_chats(bp):
                         routing_schema_version=2 if gpt_model_route else None,
                         scope_type=gpt_endpoint_scope,
                         scope_id=gpt_endpoint_scope_id,
+                        apply_model_persona=not bool(request_agent_info),
                     )
 
             except Exception as e:
@@ -19824,6 +20340,12 @@ def register_route_backend_chats(bp):
                     'model_endpoint_id': gpt_endpoint_id or data.get('model_endpoint_id'),
                     'model_id': gpt_model_id or data.get('model_id'),
                     'model_provider': gpt_provider or data.get('model_provider'),
+                    'model_scope_type': (
+                        'personal'
+                        if gpt_endpoint_scope == 'user'
+                        else gpt_endpoint_scope or data.get('model_scope_type')
+                    ),
+                    'model_scope_id': gpt_endpoint_scope_id or data.get('model_scope_id'),
                     'model_icon': gpt_model_icon,
                     'response_length': gpt_response_length,
                     'reasoning_effort': reasoning_effort or None,
@@ -22391,7 +22913,14 @@ def register_route_backend_chats(bp):
                     raise Exception('Internal error: Conversation history improperly formed.')
                 debug_print(f"--- Sending to GPT ({gpt_model}) ---")
                 debug_print(f"Total messages in API call: {len(conversation_history_for_api)}")
-                model_call_messages = conversation_history_for_api
+                fitted_text_messages = _fit_direct_chat_persona_context(
+                    conversation_history_for_api,
+                    client=gpt_client,
+                    model_name=gpt_model,
+                    provider=gpt_provider,
+                    output_tokens=gpt_response_length,
+                )
+                model_call_messages = fitted_text_messages
                 current_turn_images_attached = False
                 include_current_turn_images = should_include_current_turn_images(
                     image_generation_enabled=image_gen_enabled,
@@ -22418,7 +22947,7 @@ def register_route_backend_chats(bp):
                     )
                     if current_turn_image_parts:
                         model_call_messages = attach_images_to_last_user_message(
-                            conversation_history_for_api,
+                            fitted_text_messages,
                             current_turn_image_parts,
                         )
                         current_turn_images_attached = True
@@ -22442,6 +22971,16 @@ def register_route_backend_chats(bp):
 
                 api_params['reasoning_effort'] = reasoning_effort
                 try:
+                    api_params['messages'] = _fit_direct_chat_persona_context(
+                        api_params['messages'],
+                        client=gpt_client,
+                        model_name=gpt_model,
+                        provider=gpt_provider,
+                        output_tokens=(
+                            api_params.get('max_completion_tokens')
+                            or api_params.get('max_tokens')
+                        ),
+                    )
                     response, reasoning_resolution = _create_chat_completion_with_reasoning(
                         gpt_client.chat.completions.create, api_params, gpt_reasoning_model_name,
                     )
@@ -22459,7 +22998,7 @@ def register_route_backend_chats(bp):
                         level=logging.WARNING,
                         debug_only=True,
                     )
-                    api_params['messages'] = conversation_history_for_api
+                    api_params['messages'] = fitted_text_messages
                     response, reasoning_resolution = _create_chat_completion_with_reasoning(
                         gpt_client.chat.completions.create, api_params, gpt_reasoning_model_name,
                     )
@@ -22500,6 +23039,8 @@ def register_route_backend_chats(bp):
                 debug_print(f"Error during final GPT completion: {str(e)}")
                 if isinstance(e, GenAIMilRequestError):
                     return (e.public_message, gpt_model, None, None, None)
+                if isinstance(e, ModelTokenBudgetError):
+                    raise e
                 if "context length" in str(e).lower():
                     return ("Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message.", gpt_model, None, None, None)
                 else:
@@ -23171,11 +23712,28 @@ def register_route_backend_chats(bp):
                     'error': 'Response state could not be confirmed. Reload before retrying.',
                     'code': 'chat_attempt_storage_unavailable',
                 }), 503
-        stream_session = CHAT_STREAM_REGISTRY.start_session(
-            user_id, finalized_conversation_id,
-            submission_id=data.get('submission_id') if attempt_store else None,
-            attempt_store=attempt_store,
-        )
+        try:
+            stream_session = CHAT_STREAM_REGISTRY.start_session(
+                user_id, finalized_conversation_id,
+                submission_id=data.get('submission_id') if attempt_store else None,
+                attempt_store=attempt_store,
+                exclude_cosmos_replay_text=(
+                    settings.get('enable_cosmos_replay_index_exclusion') is True
+                    and not settings.get('enable_redis_cache')
+                ),
+            )
+        except app_settings_cache.StreamDiscoveryUnavailable:
+            try:
+                if attempt_store:
+                    attempt_store.finish_without_reply('interrupted')
+            except (AzureError, ChatRetryError, TypeError):
+                log_event('[STREAMING] Attempt state could not be confirmed after discovery failed.', level=logging.WARNING)
+            finally:
+                _release_chat_destination_lease(destination_lease, finalized_conversation_id)
+            return jsonify({
+                'error': 'Live response discovery could not be confirmed. Reload before retrying.',
+                'outcome': 'unconfirmed',
+            }), 503
         try:
             stream_conversation_reference_resolution = _resolve_chat_conversation_references(
                 user_id,
@@ -23342,7 +23900,7 @@ def register_route_backend_chats(bp):
                     yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
 
             return build_background_stream_response(
-                generate_workflow_result_response, stream_session=stream_session,
+                generate_workflow_result_response, stream_session=stream_session, content_check_settings=settings,
             )
 
         if data.get('analysis_result_context') is not None:
@@ -23366,12 +23924,14 @@ def register_route_backend_chats(bp):
                     yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
 
             return build_background_stream_response(
-                generate_saved_analysis_response, stream_session=stream_session,
+                generate_saved_analysis_response, stream_session=stream_session, content_check_settings=settings,
             )
 
         if compatibility_mode:
             debug_print("[STREAMING] Routing request through compatibility bridge")
-            return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)
+            return build_background_stream_response(
+                generate_compatibility_response, stream_session=stream_session, content_check_settings=settings,
+            )
 
         def generate(publish_background_event=None):
             nonlocal stream_conversation_reference_resolution
@@ -23380,8 +23940,11 @@ def register_route_backend_chats(bp):
                 # Import debug_print for use in generator
                 from functions_debug import debug_print
 
-                def stream_cancel_requested():
-                    return bool(stream_session and stream_session.is_cancel_requested())
+                def stream_cancel_requested(*, check_cache=True):
+                    return bool(stream_session and (
+                        stream_session.is_cancel_requested() if check_cache
+                        else stream_session.is_cancel_requested(check_cache=False)
+                    ))
 
                 if attempt_store:
                     yield build_user_message_persisted_stream_event(
@@ -24026,6 +24589,7 @@ def register_route_backend_chats(bp):
                         routing_schema_version=2 if gpt_model_route else None,
                         scope_type=gpt_endpoint_scope,
                         scope_id=gpt_endpoint_scope_id,
+                        apply_model_persona=not bool(request_agent_info),
                     )
 
                     debug_print(
@@ -24550,6 +25114,12 @@ def register_route_backend_chats(bp):
                         'model_endpoint_id': gpt_endpoint_id or data.get('model_endpoint_id'),
                         'model_id': gpt_model_id or data.get('model_id'),
                         'model_provider': gpt_provider or data.get('model_provider'),
+                        'model_scope_type': (
+                            'personal'
+                            if gpt_endpoint_scope == 'user'
+                            else gpt_endpoint_scope or data.get('model_scope_type')
+                        ),
+                        'model_scope_id': gpt_endpoint_scope_id or data.get('model_scope_id'),
                         'model_icon': gpt_model_icon,
                         'response_length': gpt_response_length,
                         'reasoning_effort': reasoning_effort or None,
@@ -26655,7 +27225,8 @@ def register_route_backend_chats(bp):
                                                 yield finalize_cancelled_agent_stream_response()
                                                 return
                                             try:
-                                                response = next(stream_reader)
+                                                phases = getattr(stream_session, "_producer_timing", None)
+                                                response = phases.call("sdk_next", next, stream_reader) if phases else next(stream_reader)
                                             except StopIteration:
                                                 break
 
@@ -26906,7 +27477,14 @@ def register_route_backend_chats(bp):
                         if stream_cancel_requested():
                             yield finalize_cancelled_stream_response()
                             return
-                        stream_model_messages = conversation_history_for_api
+                        fitted_text_messages = _fit_direct_chat_persona_context(
+                            conversation_history_for_api,
+                            client=gpt_client,
+                            model_name=gpt_model,
+                            provider=gpt_provider,
+                            output_tokens=gpt_response_length,
+                        )
+                        stream_model_messages = fitted_text_messages
                         current_turn_images_attached = False
                         include_current_turn_images = should_include_current_turn_images(
                             image_generation_enabled=image_gen_enabled,
@@ -26933,7 +27511,7 @@ def register_route_backend_chats(bp):
                             )
                             if current_turn_image_parts:
                                 stream_model_messages = attach_images_to_last_user_message(
-                                    conversation_history_for_api,
+                                    fitted_text_messages,
                                     current_turn_image_parts,
                                 )
                                 current_turn_images_attached = True
@@ -26962,6 +27540,16 @@ def register_route_backend_chats(bp):
                         final_model_used = gpt_model
 
                         try:
+                            stream_params['messages'] = _fit_direct_chat_persona_context(
+                                stream_params['messages'],
+                                client=gpt_client,
+                                model_name=gpt_model,
+                                provider=gpt_provider,
+                                output_tokens=(
+                                    stream_params.get('max_completion_tokens')
+                                    or stream_params.get('max_tokens')
+                                ),
+                            )
                             stream, reasoning_resolution = _create_chat_completion_with_reasoning(
                                 gpt_client.chat.completions.create, stream_params, gpt_reasoning_model_name,
                             )
@@ -26979,7 +27567,7 @@ def register_route_backend_chats(bp):
                                 level=logging.WARNING,
                                 debug_only=True,
                             )
-                            stream_params['messages'] = conversation_history_for_api
+                            stream_params['messages'] = fitted_text_messages
                             stream, reasoning_resolution = _create_chat_completion_with_reasoning(
                                 gpt_client.chat.completions.create, stream_params, gpt_reasoning_model_name,
                             )
@@ -26993,21 +27581,36 @@ def register_route_backend_chats(bp):
                             )
 
                         try:
-                            for chunk in stream:
+                            phases = getattr(stream_session, "_producer_timing", None)
+                            chunks = phases.iterate(stream, "sdk_next") if phases else stream
+                            for chunk in chunks:
                                 assert_current_request_sources_available(user_id)
-                                if stream_cancel_requested():
+                                delta = chunk.choices[0].delta if chunk.choices else None
+                                chunk_content = normalize_chat_completion_text(getattr(delta, 'content', None))
+                                direct_publish = bool(
+                                    chunk_content and not suppress_streamed_file_payload
+                                    and publish_background_event and stream_session
+                                )
+                                atomic_publish = direct_publish and stream_session.can_publish_content_atomically()
+                                if stream_cancel_requested(check_cache=not atomic_publish):
                                     yield finalize_cancelled_stream_response()
                                     return
 
-                                if chunk.choices and len(chunk.choices) > 0:
-                                    delta = chunk.choices[0].delta
-                                    chunk_content = normalize_chat_completion_text(getattr(delta, 'content', None))
-                                    if chunk_content:
+                                if chunk_content:
+                                    event_text = f"data: {json.dumps({'content': chunk_content})}\n\n"
+                                    if direct_publish:
+                                        if publish_background_event(
+                                            event_text, direct_content=True, atomic_content=atomic_publish,
+                                        ):
+                                            accumulated_content += chunk_content
+                                        elif not stream_session._accepting_events:
+                                            return
+                                    else:
                                         accumulated_content += chunk_content
                                         if not suppress_streamed_file_payload:
-                                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                                            yield event_text
 
-                                if stream_cancel_requested():
+                                if stream_cancel_requested(check_cache=not atomic_publish):
                                     yield finalize_cancelled_stream_response()
                                     return
 
@@ -27526,6 +28129,15 @@ def register_route_backend_chats(bp):
                     # Resumable waits reach the request-level handlers, which
                     # record them instead of saving an interrupted reply.
                     raise
+                except app_settings_cache.StreamReplayUnconfirmed:
+                    # A delta may be in replay but absent from accumulated_content.
+                    yield build_stream_error_event(
+                        'Response replay could not be confirmed. Reload before retrying.',
+                        error_code=STREAM_REPLAY_UNCONFIRMED, outcome='unconfirmed',
+                        done=True, replace_content=True, content='', full_content='', message_persisted=False,
+                        conversation_id=conversation_id, user_message_id=user_message_id,
+                    )
+                    return
                 except Exception as e:
                     error_msg = str(e)
                     debug_print(f"Error during streaming: {error_msg}")
@@ -27733,7 +28345,9 @@ def register_route_backend_chats(bp):
                 else:
                     yield build_stream_error_event()
 
-        return build_background_stream_response(generate, stream_session=stream_session)
+        return build_background_stream_response(
+            generate, stream_session=stream_session, content_check_settings=settings,
+        )
 
     @bp.route('/api/chat/stream/cancel/<conversation_id>', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -27790,7 +28404,10 @@ def register_route_backend_chats(bp):
                 log_event('[STREAMING] Durable cancellation could not be confirmed.', level=logging.WARNING)
                 return jsonify({'error': 'Stopping could not be confirmed. Please retry.', 'outcome': 'unconfirmed'}), 503
         cancel_reason = str(data.get('reason') or 'user_requested').strip() or 'user_requested'
-        stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=True)
+        try:
+            stream_session = CHAT_STREAM_REGISTRY.get_session(user_id, conversation_id, active_only=True)
+        except app_settings_cache.StreamDiscoveryUnavailable:
+            return jsonify({'error': 'Stopping could not be confirmed. Please retry.', 'outcome': 'unconfirmed'}), 503
         if not stream_session:
             return jsonify({'error': 'No active stream is available for this conversation'}), 404
         if getattr(stream_session, 'submission_id', None):
@@ -27846,11 +28463,14 @@ def register_route_backend_chats(bp):
             requested_submission = normalize_submission_id(request.args.get('submission_id'))
         except SubmissionIdError:
             return jsonify({'error': 'Invalid response submission.'}), 400
-        stream_session = CHAT_STREAM_REGISTRY.get_session(
-            user_id, conversation_id, active_only=False, submission_id=requested_submission,
-        )
-        stream_status = stream_session.get_status_snapshot() if stream_session else _build_stream_status_payload(None)
         try:
+            stream_session = CHAT_STREAM_REGISTRY.get_session(
+                user_id, conversation_id, active_only=False, submission_id=requested_submission,
+            )
+            stream_status = (
+                stream_session.get_status_snapshot(shared_progress=True)
+                if stream_session else _build_stream_status_payload(None)
+            )
             submission_id = requested_submission or getattr(stream_session, 'submission_id', None)
             if submission_id:
                 attempt_store = getattr(stream_session, 'attempt_store', None) or ChatAttemptStore(
@@ -27949,9 +28569,12 @@ def register_route_backend_chats(bp):
             requested_submission = normalize_submission_id(request.args.get('submission_id'))
         except SubmissionIdError:
             return jsonify({'error': 'Invalid response submission.'}), 400
-        stream_session = CHAT_STREAM_REGISTRY.get_session(
-            user_id, conversation_id, active_only=True, submission_id=requested_submission,
-        )
+        try:
+            stream_session = CHAT_STREAM_REGISTRY.get_session(
+                user_id, conversation_id, active_only=True, submission_id=requested_submission,
+            )
+        except app_settings_cache.StreamDiscoveryUnavailable:
+            return jsonify({'error': 'Response state could not be confirmed.', 'outcome': 'unconfirmed'}), 503
         if stream_session and stream_session.attempt_store:
             try:
                 record = stream_session.attempt_store.read()
@@ -27965,7 +28588,10 @@ def register_route_backend_chats(bp):
         if not stream_session:
             return jsonify({'error': 'No active stream is available for this conversation'}), 404
 
-        stream_status = stream_session.mark_reattached() or {}
+        try:
+            stream_status = stream_session.mark_reattached(require_discovery=not requested_submission) or {}
+        except app_settings_cache.StreamDiscoveryUnavailable:
+            return jsonify({'error': 'Reconnecting could not be confirmed. Please retry.', 'outcome': 'unconfirmed'}), 503
         log_event(
             '[STREAMING] Stream consumer reattached',
             extra={

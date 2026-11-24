@@ -143,6 +143,9 @@ import type { ChatMessage, CollaborationMessage, ThoughtEntry } from '../../lib/
 import type { ReactNode } from 'react';
 import type { ChatWidth } from '../../stores/uiStore';
 
+const MESSAGE_ACTION_VISIBILITY =
+    'transition-opacity group-hover/message:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100';
+
 function ThoughtsPanel({ thoughts, live = false }: { thoughts: ThoughtEntry[]; live?: boolean }) {
     const [open, setOpen] = useState(false);
 
@@ -281,7 +284,7 @@ function ImageMessage({ message }: { message: ChatMessage }) {
                     />
                 </button>
             </div>
-            <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
+            <div className={clsx('flex items-center gap-1 opacity-0', MESSAGE_ACTION_VISIBILITY)}>
                 <MessageActions message={message} />
                 {editable && (
                     <button
@@ -510,8 +513,8 @@ export function UploadedImageFileCard({
             {actions ? (
                 <div
                     className={clsx(
-                        'mt-1 flex flex-wrap items-center gap-1 transition-opacity',
-                        'group-hover/message:opacity-100 focus-within:opacity-100',
+                        'mt-1 flex flex-wrap items-center gap-1',
+                        MESSAGE_ACTION_VISIBILITY,
                         actionsPinned ? 'opacity-100' : 'opacity-0',
                         own ? 'justify-end' : 'justify-start',
                     )}
@@ -1315,12 +1318,12 @@ function MessageBubbleInner({
                 />
             )}
 
-            {/* Revealed on hover or keyboard focus so a long thread stays uncluttered,
-                while remaining reachable without a pointer. The inspector, once opened,
+            {/* Revealed on hover or keyboard focus when hover is available, and shown
+                by default otherwise. The inspector, once opened,
                 stays visible so it does not vanish when the pointer moves into it. */}
             <div
                 className={clsx(
-                    'transition-opacity group-hover/message:opacity-100 focus-within:opacity-100',
+                    MESSAGE_ACTION_VISIBILITY,
                     inspector || replayExpanded ? 'opacity-100' : 'opacity-0',
                 )}
             >

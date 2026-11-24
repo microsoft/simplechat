@@ -3180,15 +3180,19 @@ def _configure_analysis_checkpoints(workflow, analysis_config, manifest):
     checkpoints = workflow.get('_analysis_checkpoints')
     if checkpoints is None or checkpoints.operation_request is not None:
         return checkpoints
+    runner_request = {
+        key: workflow.get(key) for key in (
+            'runner_type', 'model_endpoint_id', 'model_id', 'model_provider',
+            'legacy_model_deployment', 'selected_agent',
+        )
+    }
+    for scope_field in ('model_scope_type', 'model_scope_id'):
+        if workflow.get(scope_field):
+            runner_request[scope_field] = workflow[scope_field]
     checkpoints.operation_request = json.loads(json.dumps({
         'prompt': workflow.get('task_prompt', ''),
         'document_action': analysis_config,
-        'runner': {
-            key: workflow.get(key) for key in (
-                'runner_type', 'model_endpoint_id', 'model_id', 'model_provider',
-                'legacy_model_deployment', 'selected_agent',
-            )
-        },
+        'runner': runner_request,
     }, allow_nan=False))
     checkpoints.operation_sources = analysis_source_snapshot(manifest)
     return checkpoints
@@ -7187,7 +7191,11 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     return assistant_doc
 
 
-def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group_id=None, *, include_context=False):
+def _build_multi_endpoint_client(
+    user_id, endpoint_id, model_id, settings, group_id=None,
+    *, include_context=False, apply_model_persona=True,
+    requested_scope_type='', requested_scope_id='',
+):
     if not user_id:
         raise PermissionError('Direct model workflows require an owning user.')
 
@@ -7233,7 +7241,33 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
         item['scope'] = 'global'
         candidates.append(item)
 
-    endpoint_cfg = next((candidate for candidate in candidates if candidate.get('id') == endpoint_id), None)
+    if requested_scope_type:
+        candidates = [
+            candidate for candidate in candidates
+            if candidate.get('scope') == requested_scope_type
+            and (
+                not requested_scope_id
+                or (
+                    requested_scope_type == 'group'
+                    and group_id == requested_scope_id
+                )
+                or (
+                    requested_scope_type == 'user'
+                    and user_id == requested_scope_id
+                )
+                or (
+                    requested_scope_type == 'global'
+                    and requested_scope_id == 'global'
+                )
+            )
+        ]
+    matching_endpoints = [
+        candidate for candidate in candidates
+        if candidate.get('id') == endpoint_id
+    ]
+    if len(matching_endpoints) > 1:
+        raise ValueError('Selected model endpoint scope is required.')
+    endpoint_cfg = matching_endpoints[0] if matching_endpoints else None
     if not endpoint_cfg:
         raise ValueError('Selected model endpoint was not found.')
     if not endpoint_cfg.get('enabled', True):
@@ -7250,14 +7284,18 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
     scope_type = 'user' if scope == 'user' else scope
     scope_id = group_id if scope_type == 'group' else user_id if scope_type == 'user' else 'global'
     resolved_route = None
-    routing_context = None
+    routing_context = {
+        'scope_type': scope_type,
+        'scope_id': str(scope_id or '').strip(),
+        'endpoint_id': str(endpoint_cfg.get('id') or '').strip(),
+        'model_id': str(model_cfg.get('id') or '').strip(),
+    }
+    if apply_model_persona is False:
+        routing_context['apply_model_persona'] = False
     if routing_schema_version(endpoint_cfg) == 2:
         routing_context = {
+            **routing_context,
             'routing_schema_version': 2,
-            'scope_type': scope_type,
-            'scope_id': str(scope_id or '').strip(),
-            'endpoint_id': str(endpoint_cfg.get('id') or '').strip(),
-            'model_id': str(model_cfg.get('id') or '').strip(),
         }
         resolved_endpoint = resolve_model_endpoint_from_context(
             settings,
@@ -7330,6 +7368,8 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
         endpoint_config=resolved_endpoint,
         identity_context={'user_id': user_id},
         resolved_route=resolved_route,
+        model_id=str(model_cfg.get('id') or '').strip(),
+        apply_model_persona=apply_model_persona,
     )
 
     return wrap_workflow_model_client(
@@ -7355,9 +7395,39 @@ def _resolve_model_workflow_client(workflow, settings, *, include_context=False)
     user_id = str(workflow.get('user_id') or '').strip()
     group_id = _get_workflow_group_id(workflow)
     binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
-    endpoint_id = str(workflow.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
-    model_id = str(workflow.get('model_id') or binding_summary.get('model_id') or '').strip()
+    uses_app_default = (
+        binding_summary.get('mode') == 'default_selection'
+        and not workflow.get('model_endpoint_id')
+        and not workflow.get('model_id')
+    )
+    endpoint_id = str(
+        workflow.get('model_endpoint_id')
+        or ('' if uses_app_default else binding_summary.get('endpoint_id'))
+        or ''
+    ).strip()
+    model_id = str(
+        workflow.get('model_id')
+        or ('' if uses_app_default else binding_summary.get('model_id'))
+        or ''
+    ).strip()
     legacy_model_deployment = str(workflow.get('legacy_model_deployment') or '').strip()
+    apply_model_persona = workflow.get('runner_type') != 'agent'
+    requested_scope_type = str(
+        workflow.get('model_scope_type')
+        or binding_summary.get('scope_type')
+        or binding_summary.get('scope')
+        or ('global' if binding_summary.get('mode') == 'default_selection' else ('group' if group_id else ''))
+    ).strip()
+    requested_scope_id = str(
+        workflow.get('model_scope_id')
+        or binding_summary.get('scope_id')
+        or (
+            'global' if requested_scope_type == 'global'
+            else group_id if requested_scope_type == 'group'
+            else user_id if requested_scope_type in {'user', 'personal'}
+            else ''
+        )
+    ).strip()
 
     if endpoint_id and model_id:
         return _build_multi_endpoint_client(
@@ -7367,6 +7437,9 @@ def _resolve_model_workflow_client(workflow, settings, *, include_context=False)
             settings,
             group_id=group_id,
             include_context=include_context,
+            apply_model_persona=apply_model_persona,
+            requested_scope_type=requested_scope_type,
+            requested_scope_id=requested_scope_id,
         )
 
     if legacy_model_deployment:
@@ -7389,6 +7462,9 @@ def _resolve_model_workflow_client(workflow, settings, *, include_context=False)
             settings,
             group_id=group_id,
             include_context=include_context,
+            apply_model_persona=apply_model_persona,
+            requested_scope_type='global',
+            requested_scope_id='global',
         )
 
     client, deployment_name, provider = _build_legacy_default_client(
@@ -8029,7 +8105,13 @@ def _resolve_workflow_runtime_choice(workflow, action, settings, run_id, *, allo
         else:
             parameters.update({'max_tokens': 1500, 'temperature': 0})
         try:
-            response = client.with_options(timeout=45, max_retries=0).chat.completions.create(**parameters)
+            bounded_create = bind_callable_with_timeout(
+                client,
+                client.chat.completions.create,
+                timeout_seconds=45,
+                max_retries=0,
+            )
+            response = bounded_create(**parameters)
         except OpenAIError as exc:
             log_event('[WORKFLOW_DOCUMENT_ACTION] Runtime selection model failed', extra={
                 'failure_code': type(exc).__name__, 'input_count': len(entries), 'selection_model_call_count': 1,
@@ -9689,17 +9771,26 @@ def _build_workflow_model_context(workflow, deployment_name, provider, routing_c
             workflow, settings, include_context=True,
         )
     if isinstance(routing_context, dict) and routing_context.get('routing_schema_version') == 2:
-        return {
+        model_context = {
             **{field: routing_context[field] for field in (
                 'routing_schema_version', 'scope_type', 'scope_id', 'endpoint_id', 'model_id',
             )},
             'user_id': str(workflow.get('user_id') or '').strip(),
         }
+        if routing_context.get('apply_model_persona') is False:
+            model_context['apply_model_persona'] = False
+        return model_context
     model_context = {
         'user_id': str(workflow.get('user_id') or '').strip(),
         'model_deployment': str(deployment_name or '').strip(),
         'provider': str(provider or workflow.get('model_provider') or binding_summary.get('provider') or '').strip().lower(),
     }
+    if isinstance(routing_context, dict):
+        for field in ('scope_type', 'scope_id', 'endpoint_id', 'model_id'):
+            if routing_context.get(field):
+                model_context[field] = routing_context[field]
+        if routing_context.get('apply_model_persona') is False:
+            model_context['apply_model_persona'] = False
     if endpoint_id:
         model_context['endpoint_id'] = endpoint_id
     if model_id:
@@ -11676,6 +11767,8 @@ def _resolve_workflow_task_runner(workflow, task, settings, actor_user_id=None):
             'selected_agent': {},
             'model_endpoint_id': normalized_runner.get('model_endpoint_id') or '',
             'model_id': normalized_runner.get('model_id') or '',
+            'model_scope_type': normalized_runner.get('model_scope_type') or '',
+            'model_scope_id': normalized_runner.get('model_scope_id') or '',
             'model_provider': normalized_runner.get('model_provider') or '',
             'model_binding_summary': normalized_runner.get('model_binding_summary') or {},
         })
@@ -11686,6 +11779,8 @@ def _resolve_workflow_task_runner(workflow, task, settings, actor_user_id=None):
             'selected_agent': normalized_runner.get('selected_agent') or {},
             'model_endpoint_id': '',
             'model_id': '',
+            'model_scope_type': '',
+            'model_scope_id': '',
             'model_provider': '',
             'model_binding_summary': None,
         })

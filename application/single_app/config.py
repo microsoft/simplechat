@@ -103,7 +103,7 @@ EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 CHAT_STREAM_EXECUTOR_MAX_WORKERS = max(8, int(os.getenv('SIMPLECHAT_CHAT_STREAM_WORKERS', '32') or '32'))
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.460"
+VERSION = "0.261.472"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -658,7 +658,7 @@ _cosmos_create_container_if_not_exists = cosmos_database.create_container_if_not
 
 
 def _create_container_if_not_exists_with_conflict_recovery(*args, **kwargs):
-    """Return the existing container when concurrent startup creates it first."""
+    """Return an existing container after concurrent startup finishes creating it."""
     try:
         return _cosmos_create_container_if_not_exists(*args, **kwargs)
     except exceptions.CosmosResourceExistsError:
@@ -670,8 +670,14 @@ def _create_container_if_not_exists_with_conflict_recovery(*args, **kwargs):
             raise
 
         container = cosmos_database.get_container_client(container_id)
-        container.read()
-        return container
+        for attempt in range(8):
+            try:
+                container.read()
+                return container
+            except exceptions.CosmosResourceNotFoundError:
+                if attempt == 7:
+                    raise
+                time.sleep(min(0.1 * (2 ** attempt), 2.0))
 
 
 cosmos_database.create_container_if_not_exists = _create_container_if_not_exists_with_conflict_recovery

@@ -23,6 +23,10 @@ from functions_model_endpoint_diagnostics import (
     MODEL_INVOCATION_ERRORS, SanitizedModelEndpointError, build_sanitized_model_endpoint_error,
 )
 from functions_model_endpoint_validation import ModelEndpointValidationError
+from functions_model_persona import (
+    bound_model_persona,
+    prepend_model_persona_messages,
+)
 from functions_workflow_execution import assert_workflow_execution_owned
 from functions_workflow_loop_runners import assert_workflow_loop_agent_type
 from functions_workflow_policy_errors import WorkflowContextBudgetError
@@ -244,8 +248,12 @@ class _BudgetedCompletions:
         requested_output = kwargs.get("max_completion_tokens")
         if requested_output is None:
             requested_output = kwargs.get("max_tokens")
-        audit = _check_request(
+        request_messages = prepend_model_persona_messages(
             kwargs.get("messages") or [],
+            bound_model_persona(self._delegate),
+        )
+        audit = _check_request(
+            request_messages,
             self._model,
             provider=self._provider,
             tools=kwargs.get("tools"),
@@ -331,7 +339,10 @@ class WorkflowBudgetChatCompletion(ChatCompletionClientBase):
         return self.delegate._reset_function_choice_settings(settings)
 
     def _check(self, chat_history, settings):
-        messages = self.delegate._prepare_chat_history_for_request(chat_history)
+        messages = prepend_model_persona_messages(
+            self.delegate._prepare_chat_history_for_request(chat_history),
+            bound_model_persona(self.delegate),
+        )
         requested_output = getattr(settings, "max_completion_tokens", None)
         if requested_output is None:
             requested_output = getattr(settings, "max_tokens", None)

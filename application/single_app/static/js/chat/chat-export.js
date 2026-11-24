@@ -21,6 +21,8 @@ let summaryModelDeployment = '';
 let summaryModelEndpointId = '';
 let summaryModelId = '';
 let summaryModelProvider = '';
+let summaryModelScopeType = '';
+let summaryModelScopeId = '';
 let currentStep = 1;
 let totalSteps = 3;
 let skipSelectionStep = false;
@@ -557,6 +559,8 @@ async function _executeExport() {
                 summary_model_endpoint_id: includeSummaryIntro ? summaryModelEndpointId : null,
                 summary_model_id: includeSummaryIntro ? summaryModelId : null,
                 summary_model_provider: includeSummaryIntro ? summaryModelProvider : null,
+                summary_model_scope_type: includeSummaryIntro ? summaryModelScopeType : null,
+                summary_model_scope_id: includeSummaryIntro ? summaryModelScopeId : null,
                 visual_assets: visualAssets
             })
         });
@@ -675,7 +679,13 @@ function _selectSummaryModelOption(selectElement, deployment) {
         if (summaryModelProvider && option.dataset.provider !== summaryModelProvider) {
             return false;
         }
-        return Boolean(deploymentValue || summaryModelEndpointId || summaryModelId || summaryModelProvider);
+        if (summaryModelScopeType && option.dataset.scopeType !== summaryModelScopeType) {
+            return false;
+        }
+        if (summaryModelScopeId && option.dataset.scopeId !== summaryModelScopeId) {
+            return false;
+        }
+        return Boolean(deploymentValue || summaryModelEndpointId || summaryModelId || summaryModelProvider || summaryModelScopeType);
     });
     const deploymentOption = exactOption || options.find(option => (
         option.dataset.deploymentName || option.value || ''
@@ -694,6 +704,8 @@ function _setSummaryModelSelectionFromSelect(selectElement) {
     summaryModelEndpointId = selectedOption?.dataset?.endpointId || '';
     summaryModelId = selectedOption?.dataset?.modelId || '';
     summaryModelProvider = selectedOption?.dataset?.provider || '';
+    summaryModelScopeType = selectedOption?.dataset?.scopeType || '';
+    summaryModelScopeId = selectedOption?.dataset?.scopeId || '';
 }
 
 // --- Expose Globally ---

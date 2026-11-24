@@ -190,6 +190,8 @@ def register_route_backend_conversation_export(bp):
             summary_model_endpoint_id (str): Optional configured endpoint id for summary generation.
             summary_model_id (str): Optional configured endpoint model id for summary generation.
             summary_model_provider (str): Optional configured endpoint provider for summary generation.
+            summary_model_scope_type (str): Optional connection scope for summary generation.
+            summary_model_scope_id (str): Optional connection scope id for summary generation.
             visual_assets (list): Optional browser-rasterized diagram PNGs to embed.
         """
         user_id = get_current_user_id()
@@ -208,6 +210,8 @@ def register_route_backend_conversation_export(bp):
         summary_model_endpoint_id = str(data.get('summary_model_endpoint_id', '') or '').strip()
         summary_model_id = str(data.get('summary_model_id', '') or '').strip()
         summary_model_provider = str(data.get('summary_model_provider', '') or '').strip()
+        summary_model_scope_type = str(data.get('summary_model_scope_type', '') or '').strip()
+        summary_model_scope_id = str(data.get('summary_model_scope_id', '') or '').strip()
         visual_assets = normalize_visual_assets(data.get('visual_assets'))
 
         if not conversation_ids or not isinstance(conversation_ids, list):
@@ -239,6 +243,8 @@ def register_route_backend_conversation_export(bp):
                         summary_model_endpoint_id=summary_model_endpoint_id,
                         summary_model_id=summary_model_id,
                         summary_model_provider=summary_model_provider,
+                        summary_model_scope_type=summary_model_scope_type,
+                        summary_model_scope_id=summary_model_scope_id,
                     )
                 )
 
@@ -671,7 +677,9 @@ def _build_export_entry(
     summary_model_deployment: str = '',
     summary_model_endpoint_id: str = '',
     summary_model_id: str = '',
-    summary_model_provider: str = ''
+    summary_model_provider: str = '',
+    summary_model_scope_type: str = '',
+    summary_model_scope_id: str = '',
 ) -> Dict[str, Any]:
     artifact_payload_map = build_message_artifact_payload_map(raw_messages)
     filtered_messages = _filter_messages_for_export(raw_messages)
@@ -748,6 +756,8 @@ def _build_export_entry(
         summary_model_endpoint_id=summary_model_endpoint_id,
         summary_model_id=summary_model_id,
         summary_model_provider=summary_model_provider,
+        summary_model_scope_type=summary_model_scope_type,
+        summary_model_scope_id=summary_model_scope_id,
         user_id=user_id,
         message_time_start=message_time_start,
         message_time_end=message_time_end
@@ -1144,7 +1154,9 @@ def generate_conversation_summary(
     user_id: str = None,
     model_endpoint_id: str = '',
     model_id: str = '',
-    model_provider: str = ''
+    model_provider: str = '',
+    model_scope_type: str = '',
+    model_scope_id: str = '',
 ) -> Dict[str, Any]:
     """Generate a conversation summary using the LLM and optionally persist it.
 
@@ -1177,6 +1189,8 @@ def generate_conversation_summary(
         requested_endpoint_id=model_endpoint_id,
         requested_model_id=model_id,
         requested_provider=model_provider,
+        requested_scope_type=model_scope_type,
+        requested_scope_id=model_scope_id,
     )
     summary_prompt = (
         "You are summarizing a conversation for an export document. "
@@ -1262,6 +1276,8 @@ def _build_summary_intro(
     summary_model_endpoint_id: str = '',
     summary_model_id: str = '',
     summary_model_provider: str = '',
+    summary_model_scope_type: str = '',
+    summary_model_scope_id: str = '',
     user_id: str = None,
     message_time_start: str = None,
     message_time_end: str = None
@@ -1316,6 +1332,8 @@ def _build_summary_intro(
             model_endpoint_id=summary_model_endpoint_id,
             model_id=summary_model_id,
             model_provider=summary_model_provider,
+            model_scope_type=summary_model_scope_type,
+            model_scope_id=summary_model_scope_id,
         )
 
         summary_intro.update({
@@ -1473,8 +1491,11 @@ def _summary_model_matches(
     }
     model_values.discard('')
 
-    if requested_model_id and requested_model_id in model_values:
-        return True
+    if requested_model_id:
+        return (
+            _normalize_summary_model_value(model_cfg.get('id'))
+            == requested_model_id
+        )
     return bool(requested_model and requested_model in model_values)
 
 
@@ -1543,9 +1564,23 @@ def _build_summary_model_endpoint_client(
     endpoint_config: Dict[str, Any] = None,
     identity_context: Dict[str, Any] = None,
     resolved_route: Dict[str, Any] = None,
+    model_id: str = '',
+    apply_model_persona: bool = True,
 ):
     auth_settings = auth_settings or {}
-    if resolved_route is not None:
+    has_active_persona = any(
+        isinstance(model, dict)
+        and str(model.get("id") or "").strip() == str(model_id or "").strip()
+        and model.get("persona_enabled") is True
+        and isinstance(model.get("persona_markdown"), str)
+        and model.get("persona_markdown", "").strip()
+        for model in (
+            endpoint_config.get("models") or []
+            if isinstance(endpoint_config, dict)
+            else []
+        )
+    )
+    if resolved_route is not None or has_active_persona:
         client, _ = build_model_endpoint_sync_chat_client(
             auth_settings,
             provider,
@@ -1561,6 +1596,8 @@ def _build_summary_model_endpoint_client(
             endpoint_config=endpoint_config,
             identity_context=identity_context,
             resolved_route=resolved_route,
+            model_id=model_id,
+            apply_model_persona=apply_model_persona,
         )
         return client
     extra_headers = build_model_endpoint_identity_headers(
@@ -1676,6 +1713,8 @@ def _resolve_summary_multi_endpoint_client(
     requested_endpoint_id: str = '',
     requested_model_id: str = '',
     requested_provider: str = '',
+    requested_scope_type: str = '',
+    requested_scope_id: str = '',
 ):
     settings = settings or {}
     if not settings.get('enable_multi_model_endpoints', False):
@@ -1685,6 +1724,14 @@ def _resolve_summary_multi_endpoint_client(
     requested_endpoint_id = _normalize_summary_model_value(requested_endpoint_id)
     requested_model_id = _normalize_summary_model_value(requested_model_id)
     requested_provider = _normalize_summary_model_value(requested_provider).lower()
+    requested_scope_type = _normalize_summary_model_value(requested_scope_type).lower()
+    if requested_scope_type == 'personal':
+        requested_scope_type = 'user'
+    requested_scope_id = _normalize_summary_model_value(requested_scope_id)
+    if requested_scope_type == 'group' and not requested_scope_id:
+        raise ValueError(
+            'A group model selection requires the group ID.'
+        )
     selection_source = 'request' if (requested_model or requested_endpoint_id or requested_model_id) else ''
 
     if not selection_source:
@@ -1692,11 +1739,18 @@ def _resolve_summary_multi_endpoint_client(
         requested_endpoint_id = _normalize_summary_model_value(default_selection.get('endpoint_id'))
         requested_model_id = _normalize_summary_model_value(default_selection.get('model_id'))
         requested_provider = requested_provider or _normalize_summary_model_value(default_selection.get('provider')).lower()
+        requested_scope_type = requested_scope_type or 'global'
+        requested_scope_id = requested_scope_id or 'global'
         selection_source = 'default' if (requested_endpoint_id or requested_model_id) else ''
 
     if not selection_source:
         return None
 
+    has_exact_model_binding = bool(
+        requested_endpoint_id
+        and requested_model_id
+        and requested_scope_type
+    )
     endpoint_candidates = _get_summary_model_endpoint_candidates(settings, user_id=user_id)
     if requested_endpoint_id:
         endpoint_candidates = [
@@ -1705,6 +1759,19 @@ def _resolve_summary_multi_endpoint_client(
         ]
         if not endpoint_candidates:
             raise ValueError('Selected summary model endpoint could not be found.')
+    if requested_scope_type:
+        endpoint_candidates = [
+            endpoint for endpoint in endpoint_candidates
+            if endpoint.get('_endpoint_scope') == requested_scope_type
+            and (
+                not requested_scope_id
+                or endpoint.get('_endpoint_scope_id') == requested_scope_id
+            )
+        ]
+        if not endpoint_candidates:
+            raise ValueError('Selected summary model endpoint scope could not be found.')
+    elif requested_endpoint_id and len(endpoint_candidates) > 1:
+        raise ValueError('The selected summary model endpoint scope is required.')
 
     for endpoint_cfg in endpoint_candidates:
         if not isinstance(endpoint_cfg, dict):
@@ -1732,7 +1799,9 @@ def _resolve_summary_multi_endpoint_client(
                 'model_id': _normalize_summary_model_value(model_cfg.get('id')),
                 'user_id': _normalize_summary_model_value(user_id),
             }
-            resolved_endpoint_cfg = resolve_model_endpoint_from_context(settings, model_context)
+            resolved_endpoint_cfg = resolve_model_endpoint_from_context(
+                settings, model_context, authorize=True
+            )
             if not isinstance(resolved_endpoint_cfg, dict):
                 if selection_source == 'request':
                     raise ValueError('Selected summary model endpoint could not be resolved from saved settings.')
@@ -1760,6 +1829,8 @@ def _resolve_summary_multi_endpoint_client(
                 endpoint_config=resolved_endpoint_cfg,
                 identity_context={'user_id': user_id},
                 resolved_route=route,
+                model_id=_normalize_summary_model_value(model_cfg.get('id')),
+                apply_model_persona=has_exact_model_binding,
             )
             debug_print(
                 f"[SUMMARY][Model Resolution] Resolved schema-v2 summary route | "
@@ -1833,6 +1904,8 @@ def _resolve_summary_multi_endpoint_client(
             settings=settings,
             endpoint_config=resolved_endpoint_cfg,
             identity_context={'user_id': user_id},
+            model_id=_normalize_summary_model_value(model_cfg.get('id')),
+            apply_model_persona=has_exact_model_binding,
         )
         debug_print(
             f"[SUMMARY][Model Resolution] Resolved {selection_source} multi-endpoint model | "
@@ -1856,6 +1929,8 @@ def _initialize_gpt_client(
     requested_endpoint_id: str = '',
     requested_model_id: str = '',
     requested_provider: str = '',
+    requested_scope_type: str = '',
+    requested_scope_id: str = '',
 ):
     settings = settings or {}
     multi_endpoint_client = _resolve_summary_multi_endpoint_client(
@@ -1865,6 +1940,8 @@ def _initialize_gpt_client(
         requested_endpoint_id=requested_endpoint_id,
         requested_model_id=requested_model_id,
         requested_provider=requested_provider,
+        requested_scope_type=requested_scope_type,
+        requested_scope_id=requested_scope_id,
     )
     if multi_endpoint_client:
         return multi_endpoint_client

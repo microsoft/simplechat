@@ -3,6 +3,7 @@
 import copy
 
 from azure.core import MatchConditions
+from functions_model_persona import validate_model_persona_settings_document
 
 from config import *
 import functions_authentication
@@ -532,6 +533,12 @@ def update_group_model_endpoints(
                 raise PermissionError("User is not a member of this group")
             if role not in ("Owner", "Admin"):
                 raise PermissionError("Insufficient permissions for this group")
+            if group_doc.get("status", "active") != "active":
+                raise PermissionError("Model endpoint editing requires an active group")
+        validate_model_persona_settings_document({
+            **group_doc,
+            "model_endpoints": endpoints,
+        })
         previous = group_doc.get("model_endpoints")
         if outcome is not None:
             outcome.update(

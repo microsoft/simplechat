@@ -46,6 +46,7 @@ from functions_model_endpoint_validation import (
     validate_model_endpoint_routing,
     model_endpoint_inference_api,
 )
+from functions_model_persona import active_model_persona_markdown
 from functions_model_endpoint_urls import (
     build_model_endpoint_routing_context,
     model_endpoint_route_cache_key,
@@ -157,6 +158,7 @@ def build_model_endpoint_context(
     routing_schema_version=None,
     scope_type=None,
     scope_id=None,
+    apply_model_persona=True,
 ):
     """Build non-secret model endpoint metadata for downstream helper calls."""
     normalized_user_id = str(user_id or '').strip()
@@ -169,6 +171,8 @@ def build_model_endpoint_context(
         )
         if normalized_user_id:
             context['user_id'] = normalized_user_id
+        if apply_model_persona is False:
+            context['apply_model_persona'] = False
         return context
 
     context = {
@@ -182,6 +186,10 @@ def build_model_endpoint_context(
         'model_deployment': str(model_deployment or '').strip(),
         'request_model': str(request_model or model_deployment or '').strip(),
     }
+    if str(scope_type or '').strip():
+        context['scope_type'] = str(scope_type).strip()
+    if str(scope_id or '').strip():
+        context['scope_id'] = str(scope_id).strip()
 
     if normalized_user_id:
         context['user_id'] = normalized_user_id
@@ -197,6 +205,8 @@ def build_model_endpoint_context(
     sanitized_auth = sanitize_model_endpoint_auth_for_context(auth)
     if sanitized_auth:
         context['auth'] = sanitized_auth
+    if apply_model_persona is False:
+        context['apply_model_persona'] = False
 
     return {key: value for key, value in context.items() if value not in (None, '', [], {})}
 
@@ -415,6 +425,7 @@ def build_model_endpoint_sync_chat_client(
     identity_context=None,
     use_responses_api=None,
     resolved_route=None,
+    apply_model_persona=True,
 ):
     """Create a synchronous client using canonical metadata for its wire protocol.
 
@@ -427,7 +438,23 @@ def build_model_endpoint_sync_chat_client(
         or resolved_route.get("routing_schema_version") != 2
     ):
         raise ValueError("A resolved schema-v2 model route is required.")
-    model = _require_chat_model_for_endpoint(endpoint_config, deployment_name, model_id) or {}
+    resolved_model_id = str(
+        model_id
+        or (resolved_route or {}).get("model_id")
+        or ""
+    ).strip()
+    model = _require_chat_model_for_endpoint(
+        endpoint_config, deployment_name, resolved_model_id
+    ) or {}
+    has_exact_model_identity = bool(
+        resolved_model_id
+        and str(model.get("id") or "").strip() == resolved_model_id
+    )
+    persona_markdown = (
+        active_model_persona_markdown(model)
+        if apply_model_persona and has_exact_model_identity
+        else ""
+    )
     if resolved_route is not None:
         api_type = resolved_route.get("api_type") or ""
         deployment_name = resolved_route.get("request_model") or ""
@@ -482,7 +509,18 @@ def build_model_endpoint_sync_chat_client(
     )
 
     def finalize(client):
-        return bind_model_endpoint_request_policy(client, resolved_route), runtime_protocol
+        bound_client = bind_model_endpoint_request_policy(
+            client,
+            resolved_route,
+            persona_markdown=persona_markdown,
+        )
+        if persona_markdown:
+            bound_client._simplechat_model_persona_metadata = {
+                key: copy.deepcopy(value)
+                for key, value in model.items()
+                if key not in ("persona_markdown", "persona_enabled", "persona_text_visible")
+            }
+        return bound_client, runtime_protocol
     if normalized_provider == 'custom':
         connection = dict((endpoint_config or {}).get('connection') or {})
         connection.update(endpoint=connection.get('endpoint') or endpoint, api_version=connection.get('api_version') or api_version)
@@ -709,9 +747,13 @@ def build_chat_connection_client(binding, settings, *, strict_credentials=False)
 register_capability_client_factory('chat', build_chat_connection_client)
 
 
-def _append_model_endpoint_candidate(endpoints, scope, endpoint):
+def _append_model_endpoint_candidate(endpoints, scope, endpoint, scope_id=''):
     if isinstance(endpoint, dict):
-        endpoints.append({**endpoint, '_endpoint_scope': scope})
+        endpoints.append({
+            **endpoint,
+            '_endpoint_scope': scope,
+            '_endpoint_scope_id': str(scope_id or '').strip(),
+        })
 
 
 def resolve_authorized_model_endpoint_route(
@@ -931,6 +973,10 @@ def resolve_model_endpoint_from_context(settings, model_context, *, authorize=Fa
     requested_model_id = str(model_context.get('model_id') or '').strip()
     requested_deployment = str(model_context.get('request_model') or model_context.get('model_deployment') or '').strip()
     requested_provider = str(model_context.get('provider') or '').strip().lower()
+    requested_scope_type = str(model_context.get('scope_type') or '').strip().lower()
+    if requested_scope_type == 'personal':
+        requested_scope_type = 'user'
+    requested_scope_id = str(model_context.get('scope_id') or '').strip()
     if not settings.get('enable_multi_model_endpoints', False):
         return None
     if not (requested_endpoint_id or requested_model_id or requested_deployment):
@@ -949,7 +995,7 @@ def resolve_model_endpoint_from_context(settings, model_context, *, authorize=Fa
                 user_id, personal_endpoints, 'governance_user_endpoints',
             )
         for endpoint in personal_endpoints:
-            _append_model_endpoint_candidate(endpoints, 'user', endpoint)
+            _append_model_endpoint_candidate(endpoints, 'user', endpoint, user_id)
 
     if settings.get('allow_group_custom_endpoints', False):
         seen_group_ids = set()
@@ -968,7 +1014,7 @@ def resolve_model_endpoint_from_context(settings, model_context, *, authorize=Fa
                     user_id, group_endpoints, 'governance_group_endpoints',
                 )
             for endpoint in group_endpoints:
-                _append_model_endpoint_candidate(endpoints, 'group', endpoint)
+                _append_model_endpoint_candidate(endpoints, 'group', endpoint, group_key)
 
     global_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []) or [])
     if authorize:
@@ -976,10 +1022,32 @@ def resolve_model_endpoint_from_context(settings, model_context, *, authorize=Fa
             user_id, global_endpoints, 'governance_global_endpoints',
         )
     for endpoint in global_endpoints:
-        _append_model_endpoint_candidate(endpoints, 'global', endpoint)
+        _append_model_endpoint_candidate(endpoints, 'global', endpoint, 'global')
+
+    if not requested_scope_type and requested_endpoint_id:
+        endpoint_id_matches = [
+            endpoint_cfg
+            for endpoint_cfg in endpoints
+            if str(endpoint_cfg.get('id') or '').strip() == requested_endpoint_id
+        ]
+        if len(endpoint_id_matches) > 1:
+            raise AIConnectionError(
+                'The selected model endpoint scope is required.',
+                'model_scope_required',
+            )
 
     for endpoint_cfg in endpoints:
         if not endpoint_cfg.get('enabled', True):
+            continue
+        if (
+            requested_scope_type
+            and endpoint_cfg.get('_endpoint_scope') != requested_scope_type
+        ):
+            continue
+        if (
+            requested_scope_id
+            and endpoint_cfg.get('_endpoint_scope_id') != requested_scope_id
+        ):
             continue
         if requested_endpoint_id and str(endpoint_cfg.get('id') or '').strip() != requested_endpoint_id:
             continue
@@ -1031,10 +1099,13 @@ def build_semantic_kernel_chat_service_for_model(
     service_id='chat-model',
     model_context=None,
     resolved_model_endpoint=None,
+    apply_model_persona=None,
 ):
     """Create a Semantic Kernel chat service for the selected model endpoint."""
     settings = settings or {}
     model_context = model_context if isinstance(model_context, dict) else {}
+    if apply_model_persona is None:
+        apply_model_persona = model_context.get("apply_model_persona") is not False
     resolved_model_endpoint = resolved_model_endpoint if isinstance(resolved_model_endpoint, dict) else None
     resolved_route = None
 
@@ -1058,12 +1129,29 @@ def build_semantic_kernel_chat_service_for_model(
                 "Explicit model routing must be re-resolved before dispatch."
             )
 
+    persona_markdown = ""
+
     def finalize_service(service, protocol):
         if resolved_route is not None:
             if isinstance(service, AnthropicSemanticKernelChatCompletion):
                 service.resolved_route = copy.deepcopy(resolved_route)
             else:
-                bind_model_endpoint_request_policy(service.client, resolved_route)
+                bind_model_endpoint_request_policy(
+                    service.client,
+                    resolved_route,
+                    persona_markdown=persona_markdown,
+                )
+        elif (
+            persona_markdown
+            and not isinstance(service, AnthropicSemanticKernelChatCompletion)
+        ):
+            bind_model_endpoint_request_policy(
+                service.client,
+                None,
+                persona_markdown=persona_markdown,
+            )
+        if isinstance(service, AnthropicSemanticKernelChatCompletion):
+            service.model_persona_markdown = persona_markdown
         return service, protocol
 
     provider = str(model_context.get('provider') or '').strip().lower()
@@ -1087,7 +1175,11 @@ def build_semantic_kernel_chat_service_for_model(
             )
         ).strip()
         auth_settings = resolved_model_endpoint.get('auth', {}) or auth_settings
-        requested_model_id = str(model_context.get('model_id') or '').strip()
+        requested_model_id = str(
+            model_context.get('model_id')
+            or (resolved_route or {}).get("model_id")
+            or ""
+        ).strip()
         matched_model = _require_chat_model_for_endpoint(
             resolved_model_endpoint, deployment_name, requested_model_id,
         )
@@ -1107,6 +1199,13 @@ def build_semantic_kernel_chat_service_for_model(
             ):
                 matched_model = candidate
                 break
+
+    requested_model_id = str(model_context.get('model_id') or '').strip()
+    if apply_model_persona and (
+        requested_model_id
+        and str((matched_model or {}).get('id') or '').strip() == requested_model_id
+    ):
+        persona_markdown = active_model_persona_markdown(matched_model)
 
     if not resolved_model_endpoint and provider in ('', 'aoai', 'aifoundry', 'new_foundry') and not (
         provider and endpoint and deployment_name

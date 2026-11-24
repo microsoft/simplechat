@@ -6975,6 +6975,8 @@ function getCurrentModelSelection() {
   let modelId = null;
   let modelEndpointId = null;
   let modelProvider = null;
+  let modelScopeType = null;
+  let modelScopeId = null;
   let modelIcon = {};
 
   if (window.appSettings?.enable_multi_model_endpoints && modelSelect) {
@@ -6982,6 +6984,8 @@ function getCurrentModelSelection() {
     modelId = selectedOption?.dataset?.modelId || selectedOption?.value || null;
     modelEndpointId = selectedOption?.dataset?.endpointId || null;
     modelProvider = selectedOption?.dataset?.provider || null;
+    modelScopeType = selectedOption?.dataset?.scopeType || null;
+    modelScopeId = selectedOption?.dataset?.scopeId || null;
     modelDeployment = selectedOption?.dataset?.requestModel
       || selectedOption?.value
       || selectedOption?.dataset?.deploymentName
@@ -6994,6 +6998,8 @@ function getCurrentModelSelection() {
     modelId,
     modelEndpointId,
     modelProvider,
+    modelScopeType,
+    modelScopeId,
     modelIcon,
     modelDisplayName: String(
       modelSelect?.options?.[modelSelect.selectedIndex]?.dataset?.displayName
@@ -7157,6 +7163,8 @@ function buildCollaborativeModelTarget(option = {}) {
   const modelId = String(dataset.modelId || option.model_id || option.value || '').trim() || null;
   const modelEndpointId = String(dataset.endpointId || option.endpoint_id || '').trim() || null;
   const modelProvider = String(dataset.provider || option.provider || '').trim() || null;
+  const modelScopeType = String(dataset.scopeType || option.scope_type || '').trim() || null;
+  const modelScopeId = String(dataset.scopeId || option.scope_id || '').trim() || null;
   const parsedIcon = parseSafeJsonObject(dataset.modelIcon);
   const selectionKey = String(
     dataset.selectionKey
@@ -7177,6 +7185,8 @@ function buildCollaborativeModelTarget(option = {}) {
     model_id: modelId,
     model_endpoint_id: modelEndpointId,
     model_provider: modelProvider,
+    model_scope_type: modelScopeType,
+    model_scope_id: modelScopeId,
     model_icon: Object.keys(parsedIcon).length ? parsedIcon : (option.icon || {}),
     subtitle: modelDeployment && modelDeployment !== displayName
       ? modelDeployment
@@ -7336,6 +7346,8 @@ function buildCollaborativeSendContext(finalMessageToSend, conversationId = curr
     messageData.model_id = explicitInvocationTarget.model_id || messageData.model_id;
     messageData.model_endpoint_id = explicitInvocationTarget.model_endpoint_id || messageData.model_endpoint_id;
     messageData.model_provider = explicitInvocationTarget.model_provider || messageData.model_provider;
+    messageData.model_scope_type = explicitInvocationTarget.model_scope_type || messageData.model_scope_type;
+    messageData.model_scope_id = explicitInvocationTarget.model_scope_id || messageData.model_scope_id;
     messageData.model_icon = explicitInvocationTarget.model_icon || messageData.model_icon;
   }
 
@@ -7370,6 +7382,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     modelId,
     modelEndpointId,
     modelProvider,
+    modelScopeType,
+    modelScopeId,
     modelIcon,
   } = getCurrentModelSelection();
 
@@ -7523,6 +7537,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     model_id: modelId,
     model_endpoint_id: modelEndpointId,
     model_provider: modelProvider,
+    model_scope_type: modelScopeType,
+    model_scope_id: modelScopeId,
     model_icon: modelIcon,
     prompt_info: promptInfo,
     agent_info: agentInfo,

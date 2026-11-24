@@ -41,6 +41,7 @@ export function PlainMarkdown({
     align = 'left',
     size = 'sm',
     emptyLabel = 'Nothing to preview yet.',
+    allowMedia = true,
 }: {
     content: string;
     className?: string;
@@ -49,6 +50,8 @@ export function PlainMarkdown({
     size?: MarkdownSize;
     /** What to show for empty content, so each surface can say something apt. */
     emptyLabel?: string;
+    /** Disable person-authored images/media for prompt-like preview surfaces. */
+    allowMedia?: boolean;
 }) {
     const trimmed = content.trim();
 
@@ -78,7 +81,12 @@ export function PlainMarkdown({
                 className,
             )}
         >
-            <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>{trimmed}</Markdown>
+            <Markdown
+                remarkPlugins={[remarkGfm, remarkBreaks]}
+                components={allowMedia ? undefined : { img: () => null }}
+            >
+                {trimmed}
+            </Markdown>
         </div>
     );
 }

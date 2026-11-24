@@ -48,6 +48,8 @@ export interface SelectionFields {
     model_id?: string;
     model_endpoint_id?: string;
     model_provider?: string;
+    model_scope_type?: string;
+    model_scope_id?: string;
     reasoning_effort?: string;
 }
 

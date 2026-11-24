@@ -12,6 +12,7 @@ from functions_group import (
     assert_group_role,
     find_group_by_id,
     get_group_model_endpoints,
+    get_user_role_in_group,
     require_active_group,
     update_group_model_endpoints,
 )
@@ -26,12 +27,14 @@ from functions_group_endpoint_access import (
     require_group_endpoint_discovery_context,
     staged_group_endpoint_credentials,
 )
+from functions_group_endpoint_policy import group_endpoint_management_operations
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_model_capabilities import (
     ModelTokenBudgetError, preview_model_token_limits, project_model_budget_metadata,
 )
 from functions_model_endpoint_app_identity import check_application_identity_request, check_application_identity_save
 from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_persona import validate_model_persona_settings_document
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route, routing_schema_version
 from functions_model_endpoint_types import (
@@ -479,6 +482,7 @@ def register_route_backend_models(bp):
         anthropic_version=DEFAULT_ANTHROPIC_VERSION,
         url_mode="",
         endpoint_config=None,
+        model_id="",
     ):
         client, runtime_protocol = build_model_endpoint_sync_chat_client(
             auth_settings,
@@ -491,6 +495,7 @@ def register_route_backend_models(bp):
             anthropic_version=anthropic_version,
             settings=get_settings(),
             endpoint_config=endpoint_config,
+            model_id=model_id,
         )
         log_models_debug(
             f"Inference client provider={provider} protocol={runtime_protocol}"
@@ -995,6 +1000,7 @@ def register_route_backend_models(bp):
                 anthropic_version=anthropic_version,
                 url_mode=connection.get("url_mode") or "",
                 endpoint_config={**data, "models": [model]},
+                model_id=str(model.get("id") or "").strip(),
             )
             try:
                 response = gpt_client.chat.completions.create(
@@ -1406,7 +1412,9 @@ def register_route_backend_models(bp):
         user_settings = get_user_settings(user_id)
         endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
         return jsonify({
-            "endpoints": sanitize_model_endpoints_for_frontend(endpoints),
+            "endpoints": sanitize_model_endpoints_for_frontend(
+                endpoints, include_hidden_persona_text=True
+            ),
             "custom_api_types": get_model_endpoint_provider_ui_options(routing_schema_version=2),
             "revision": user_settings.get("_etag") or "",
         })
@@ -1535,6 +1543,17 @@ def register_route_backend_models(bp):
         Returns ``(saved_endpoints, None)``, or ``(None, response)`` when a credential
         is refused, in which case nothing is written.
         """
+        personal_state = get_user_settings(user_id)
+        try:
+            validate_model_persona_settings_document({
+                **personal_state,
+                "settings": {
+                    **(personal_state.get("settings") or {}),
+                    "personal_model_endpoints": normalized,
+                },
+            })
+        except AIConnectionError as exc:
+            return None, (jsonify({"error": exc.public_message, "code": exc.code}), 400)
         existing_by_id = {
             endpoint.get("id"): endpoint
             for endpoint in existing
@@ -1615,7 +1634,9 @@ def register_route_backend_models(bp):
 
     def _single_endpoint_response(saved_endpoints, endpoint_id, status):
         saved = _find_personal_endpoint(saved_endpoints, endpoint_id)
-        sanitized = sanitize_model_endpoints_for_frontend([saved]) if saved else []
+        sanitized = sanitize_model_endpoints_for_frontend(
+            [saved], include_hidden_persona_text=True
+        ) if saved else []
         return jsonify({"endpoint": sanitized[0] if sanitized else {}}), status
 
     def _create_personal_model_endpoint(user_id, payload):
@@ -1687,7 +1708,9 @@ def register_route_backend_models(bp):
             return error
         return jsonify({
             "success": True,
-            "endpoints": sanitize_model_endpoints_for_frontend(saved_endpoints),
+            "endpoints": sanitize_model_endpoints_for_frontend(
+                saved_endpoints, include_hidden_persona_text=True
+            ),
         })
 
 
@@ -1708,7 +1731,9 @@ def register_route_backend_models(bp):
         if not endpoint:
             return jsonify({"error": "Model endpoint not found."}), 404
 
-        sanitized = sanitize_model_endpoints_for_frontend([endpoint])
+        sanitized = sanitize_model_endpoints_for_frontend(
+            [endpoint], include_hidden_persona_text=True
+        )
         return jsonify({"endpoint": sanitized[0] if sanitized else {}})
 
 
@@ -1863,6 +1888,18 @@ def register_route_backend_models(bp):
         except PermissionError as exc:
             return build_group_access_error_response(user_id, exc, "group model endpoint settings")
 
+        group = find_group_by_id(group_id)
+        if not group:
+            return build_group_access_error_response(
+                user_id, LookupError("group_not_found"), "group model endpoint settings"
+            )
+        if group.get("status", "active") != "active":
+            return jsonify({"error": "Model endpoint editing requires an active group."}), 403
+        if not group_endpoint_management_operations(
+            user_id, group, get_user_role_in_group(group, user_id), get_settings()
+        ):
+            return jsonify({"error": "Model endpoint editing is not available."}), 403
+
         existing = get_group_model_endpoints(group_id)
 
         try:
@@ -1895,6 +1932,13 @@ def register_route_backend_models(bp):
             for endpoint in existing
             if isinstance(endpoint, dict) and endpoint.get("id")
         }
+        try:
+            validate_model_persona_settings_document({
+                **(group or {}),
+                "model_endpoints": normalized,
+            })
+        except AIConnectionError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
         saved_endpoints, error = save_scoped_endpoint_secrets(normalized, existing_by_id, "group")
         if error:
             return error
@@ -1920,13 +1964,18 @@ def register_route_backend_models(bp):
         except (LookupError, PermissionError) as exc:
             discard_staged_group_endpoint_credentials(group_id, staged)
             return build_group_access_error_response(user_id, exc, "group model endpoint settings")
+        except (AIConnectionError, ModelTokenBudgetError) as exc:
+            discard_staged_group_endpoint_credentials(group_id, staged)
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
         except Exception:
             keep_staged_group_endpoint_credentials(group_id, staged)
             raise
         clean_up_committed_group_endpoint_credentials(group_id, committed, outcome, staged)
         return jsonify({
             "success": True,
-            "endpoints": sanitize_model_endpoints_for_frontend(saved_endpoints),
+            "endpoints": sanitize_model_endpoints_for_frontend(
+                saved_endpoints, include_hidden_persona_text=True
+            ),
         })
 
 
