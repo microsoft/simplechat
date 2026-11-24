@@ -16,6 +16,10 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Advanced-search results now open conversations even when they are not in the currently rendered conversation list. The app loads the conversation into the list before activating it, preventing the false “Conversation not found” result.
     *   (Ref: `chat-conversations.js`, `test_chat_search_opens_unloaded_conversation.py`, `ADVANCED_CONVERSATION_SEARCH_FIX.md`)
 
+*   **PyJWT Padded-Token Compatibility**
+    *   Updated PyJWT from `2.15.0` to `2.15.1` to accept valid trailing Base64URL padding in JWS segments while continuing to reject non-Base64URL characters.
+    *   (Ref: `application/single_app/requirements.txt`, `application/single_app/requirements.lock.txt`, [PyJWT changelog](https://pyjwt.readthedocs.io/en/2.15.1/changelog.html))
+
 ### **(v0.261.475)**
 
 #### Bug Fixes
