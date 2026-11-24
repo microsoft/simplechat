@@ -201,7 +201,7 @@ CLIENTS_LOCK = threading.Lock()
 ENHANCED_CITATIONS_STORAGE_STATUS = {}
 
 # Base allowed extensions (always available)
-BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
+BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'htm', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
 DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'dotx', 'pptx', 'potx', 'ppt'}
 TABULAR_EXTENSIONS = {'csv', 'xlsx', 'xls', 'xlsm'}
 SCHEMA_EXTENSIONS = {'xsd'}

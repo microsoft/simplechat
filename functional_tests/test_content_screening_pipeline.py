@@ -30,7 +30,9 @@ import pytest
 from azure.core import MatchConditions
 from azure.core.exceptions import AzureError, ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
 from azure.storage.blob import ContentSettings
+from bs4 import BeautifulSoup
 from flask import Flask, session
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -255,6 +257,12 @@ def pipeline(monkeypatch):
         "json": json, "ContentUnit": ContentUnit, "ContentSettings": ContentSettings,
         "OFFICE_REFERENCE_MIME_TYPES": OFFICE_REFERENCE_MIME_TYPES, "TEMPLATE_EXTENSIONS": TEMPLATE_EXTENSIONS,
         "native_template_pages": native_template_pages,
+        "extract_office_accessibility_metadata": lambda *args: (None, None),
+        "_build_word_comment_chunks": lambda *args: ([], 0, 0),
+        "BeautifulSoup": BeautifulSoup,
+        "RecursiveCharacterTextSplitter": RecursiveCharacterTextSplitter,
+        "estimate_word_count": lambda text: len(text.split()),
+        "split_oversized_chunks": lambda chunks, limit: chunks,
         "_build_office_embedded_image_chunks": lambda *args: ([], 0, "native", 0),
         "chunk_word_file_into_pages": lambda **kwargs: kwargs["di_pages"],
         "WORD_CHUNK_SIZE": 1000,
@@ -311,7 +319,7 @@ def pipeline(monkeypatch):
         ),
     }
     functions = {
-        "save_chunks", "upload_to_blob", "process_txt", "process_office_template", "_process_document_upload_background_impl",
+        "save_chunks", "upload_to_blob", "process_txt", "process_html", "process_office_template", "_process_document_upload_background_impl",
         "process_document_upload_background",
         "_require_screening_chunk_write", "_run_final_metadata_extraction", "_resolve_processing_complete_status",
         "_is_usable_vision_analysis", "_format_vision_analysis_block", "_append_vision_block_to_chunk_text",
@@ -428,6 +436,28 @@ def test_no_effective_checks_use_normal_uploads_without_markers_or_screening_art
     for kind in ("scan", "job", "work_item", "finding"):
         assert pipeline.repository.query(kind)["items"] == []
     assert not pipeline.reviews
+
+
+@pytest.mark.parametrize("extension", [".html", ".htm"])
+@pytest.mark.parametrize("scope_type", ["personal", "group", "public"])
+def test_html_extensions_are_processed_in_each_workspace(pipeline, tmp_path, extension, scope_type):
+    save_empty_baseline(pipeline)
+    field = {"personal": "user_id", "group": "group_id", "public": "public_workspace_id"}[scope_type]
+    document = {
+        "id": "document", field: "owner", "version": 1, "file_name": f"page{extension}",
+        "is_current_version": True, "num_chunks": 0, "number_of_pages": 0,
+    }
+    pipeline.repository.document_container(scope_type).create_item(document)
+    source = tmp_path / document["file_name"]
+    source.write_text("<html><body><h1>Heading</h1><p>Useful content</p></body></html>", encoding="utf-8")
+    pipeline.helpers.process_document_upload_background(
+        document_id="document", user_id="owner", temp_file_path=str(source), original_filename=source.name,
+        group_id="owner" if scope_type == "group" else None,
+        public_workspace_id="owner" if scope_type == "public" else None,
+    )
+    persisted = pipeline.repository.read_document(Subject(scope_type, "owner", "document", "1"))
+    assert persisted["percentage_complete"] == 100
+    assert " ".join(item["chunk_text"] for item in pipeline.search.documents.values()) == "Heading Useful content"
 
 
 @pytest.mark.parametrize("scope_type", ["personal", "group", "public"])

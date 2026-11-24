@@ -199,18 +199,22 @@ def test_msg_processor_and_chat_paths_are_wired():
     assert_contains(
         chat_route_source,
         [
-            "| EMAIL_EXTENSIONS",
+            "get_workspace_upload_extensions(settings)",
             "elif file_ext_nodot == 'msg':",
             "extracted_content = extract_outlook_msg_text(temp_file_path)",
         ],
         "chat .msg handling",
     )
-    assert_contains(chat_template_source, [".docx,.msg", "docx, msg"], "chat picker .msg support")
+    assert_contains(
+        chat_template_source,
+        ["for extension in chat_upload_extensions", "chat_upload_extensions | join"],
+        "chat picker shared extension list",
+    )
     assert_contains(
         group_route_source,
         [
-            "allowed_extensions = sorted(get_allowed_extensions(",
-            "allowed_extensions_str = \"Allowed: \" + \", \".join(allowed_extensions)",
+            "allowed_extension_categories = get_allowed_extension_categories(",
+            "allowed_extension_categories=allowed_extension_categories",
         ],
         "central group workspace extension label",
     )

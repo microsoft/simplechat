@@ -499,6 +499,22 @@ function getGroupUploadScopeIds() {
   return groupIds;
 }
 
+function updateChatUploadFileTypes() {
+  if (!fileInputEl || !chooseFileBtn) {
+    return;
+  }
+
+  const isGroupUpload = getGroupUploadScopeIds().length > 0;
+  const accept = isGroupUpload ? fileInputEl.dataset.groupAccept : fileInputEl.dataset.personalAccept;
+  fileInputEl.accept = accept || "";
+  const description = accept
+    ? `Select and automatically upload a file to this conversation (${accept.replaceAll(".", "").replaceAll(",", ", ")})`
+    : "Group workspace uploads are disabled.";
+  chooseFileBtn.setAttribute("title", description);
+  chooseFileBtn.setAttribute("data-bs-original-title", description);
+  window.bootstrap?.Tooltip?.getInstance(chooseFileBtn)?.setContent({ ".tooltip-inner": description });
+}
+
 function buildGroupUploadTargets(groupIds) {
   return groupIds.map((groupId) => {
     const group = getKnownGroup(groupId);
@@ -1157,7 +1173,15 @@ if (sourceReviewBtn) {
 }
 
 if (chooseFileBtn) {
+  window.addEventListener("chat:scope-changed", updateChatUploadFileTypes);
+  window.addEventListener("chat:conversation-context-changed", updateChatUploadFileTypes);
+  updateChatUploadFileTypes();
   chooseFileBtn.addEventListener("click", function () {
+    updateChatUploadFileTypes();
+    if (!fileInputEl?.accept) {
+      showToast("Group workspace uploads are disabled.", "warning");
+      return;
+    }
     const fileInput = document.getElementById("file-input");
     if (fileInput) fileInput.click();
   });

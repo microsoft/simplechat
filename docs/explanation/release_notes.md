@@ -6,6 +6,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Consistent Chat Upload Formats and Destinations**
+    *   Chat and workspace uploads now use a shared, feature-aware format policy. Chat accepts `.vsdx` diagrams, `.htm` is supported alongside `.html`, and existing `.dotx` and `.potx` template support is retained.
+    *   V2 uses the server's format list for file selection, paste, drop and retry, and reloads missing conversation details before choosing upload options.
+    *   An active group alone no longer sends new V2 chat uploads to that group. Group-scoped conversations and explicitly selected group context continue to use group upload routing.
+    *   (Ref: `functions_documents.py`, `route_frontend_chats.py`, `route_backend_v2.py`, `ComposerEditor.tsx`, `CHAT_UPLOAD_FORMAT_AND_DESTINATION_FIX.md`)
+
 *   **Advanced Search Opens Older Conversations**
     *   Advanced-search results now open conversations even when they are not in the currently rendered conversation list. The app loads the conversation into the list before activating it, preventing the false “Conversation not found” result.
     *   (Ref: `chat-conversations.js`, `test_chat_search_opens_unloaded_conversation.py`, `ADVANCED_CONVERSATION_SEARCH_FIX.md`)

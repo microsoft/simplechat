@@ -47,10 +47,29 @@ class ClipboardApi(ImageReferenceApi):
         self.fail_next = False
         self.defer_uploads = False
         self.pending = []
+        self.metadata_failures = 0
 
     def handle(self, route):
         request = route.request
         parsed = urlsplit(request.url)
+        if (
+            f"{parsed.scheme}://{parsed.netloc}" == ORIGIN
+            and request.method == "GET"
+            and parsed.path.startswith("/api/conversations/")
+            and parsed.path.endswith("/metadata")
+        ):
+            conversation = parsed.path.split("/")[3]
+            self.requests.append({"method": request.method, "path": parsed.path})
+            if self.metadata_failures:
+                self.metadata_failures -= 1
+                route.fulfill(status=503, json={"error": "Conversation unavailable"})
+            else:
+                route.fulfill(json={
+                    "conversation_id": conversation,
+                    "title": "Clipboard chat",
+                    "chat_type": "personal_single_user",
+                })
+            return
         if (
             f"{parsed.scheme}://{parsed.netloc}" != ORIGIN
             or request.method != "POST"
@@ -77,6 +96,11 @@ class ClipboardApi(ImageReferenceApi):
             "mime": file.get_content_type(),
             "body": file.get_payload(decode=True),
             "conversation": conversation,
+            "group_ids": [
+                part.get_content().strip()
+                for part in message.iter_parts()
+                if part.get_param("name", header="content-disposition") == "upload_scope_group_ids"
+            ],
         })
         if self.defer_uploads:
             self.pending.append(route)
@@ -122,7 +146,7 @@ def clipboard_ui(editor_browser, editor_assets):
 
 def mount_composer(
     page, api, *, conversation=CONVERSATION, uploads_enabled=True,
-    max_size_mb=25, editor=None,
+    max_size_mb=25, editor=None, active_group_id=None, metadata=None,
 ):
     page.goto(ORIGIN + HARNESS)
     page.wait_for_function("() => Boolean(window.OrchHarness)")
@@ -147,14 +171,21 @@ def mount_composer(
                     model_name: 'gpt-image', max_reference_images: 4, reason: '',
                 } },
                 user: { id: 'clipboard-user', display_name: 'Clipboard Tester' },
-                scope: { groups: [], public_workspaces: [] },
+                scope: { active_group_id: spec.activeGroupId, groups: [], public_workspaces: [] },
                 catalogs: { models: [], agents: [], prompts: [] },
+                chat_uploads: { personal: ['txt', 'pdf', 'htm', 'png', 'jpg', 'jpeg', 'bmp', 'tif', 'tiff'],
+                    group: ['txt', 'pdf', 'htm', 'png', 'jpg', 'jpeg', 'bmp', 'tif', 'tiff', 'xsd'] },
             } });
             H.stores.chat.useChatStore.setState({
                 activeConversationId: spec.conversation,
                 activeConversationKind: 'personal',
                 messagesLoading: false, messagesError: null, messages: [],
                 streaming: false, streamingContent: '', streamError: null, thoughts: [],
+                metadata: spec.conversation ? (spec.metadata ?? {
+                    conversation_id: spec.conversation, title: 'Clipboard chat',
+                    chat_type: 'personal_single_user',
+                }) : null,
+                metadataLoading: false, metadataError: null,
                 conversations: spec.conversation
                     ? [{ id: spec.conversation, title: 'Clipboard chat' }] : [],
             });
@@ -182,9 +213,64 @@ def mount_composer(
             "uploadsEnabled": uploads_enabled,
             "maxSizeMb": max_size_mb,
             "editor": editor,
+            "activeGroupId": active_group_id,
+            "metadata": metadata,
         },
     )
     return page.get_by_role("textbox", name="Message", exact=True)
+
+
+def test_new_conversation_and_metadata_invalidation_restore_uploads(clipboard_ui):
+    page, api = clipboard_ui
+    editor = mount_composer(page, api, conversation=None)
+    page.evaluate(
+        """(conversation) => window.OrchHarness.stores.chat.useChatStore.setState({
+            activeConversationId: conversation, activeConversationKind: 'personal',
+            metadata: null, metadataLoading: false, metadataError: null,
+        })""",
+        NEW_CONVERSATION,
+    )
+    expect(page.locator('input[type="file"]')).to_be_enabled()
+    transfer_files(editor, [file_spec("report.pdf", "application/pdf", b"pdf")], source="drop")
+    expect(page.get_by_role("list", name="Attached files")).to_contain_text("Ready")
+    assert api.uploads[0]["conversation"] == NEW_CONVERSATION
+
+    page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.setState({ metadata: null })")
+    page.wait_for_function(
+        "(id) => window.OrchHarness.stores.chat.useChatStore.getState().metadata?.conversation_id === id",
+        NEW_CONVERSATION,
+    )
+    expect(page.locator('input[type="file"]')).to_be_enabled()
+    assert len([request for request in api.requests if request["path"].endswith("/metadata")]) == 2
+
+
+def test_sending_files_from_a_new_chat_keeps_the_next_composer_available(clipboard_ui):
+    page, api = clipboard_ui
+    editor = mount_composer(page, api, conversation=None)
+    transfer_files(editor, [
+        file_spec("page.htm", "text/html", b"<p>Example</p>"),
+        file_spec("report.pdf", "application/pdf", b"pdf"),
+    ], source="drop")
+    expect(page.get_by_role("list", name="Attached files").get_by_text("Ready", exact=True)).to_have_count(2)
+    editor.fill("Summarize these files")
+    editor.press("Enter")
+
+    expect(editor).to_have_value("")
+    expect(page.locator('input[type="file"]')).to_be_enabled()
+    expect(page.get_by_text("Chat upload formats are unavailable.", exact=False)).to_have_count(0)
+    assert [upload["conversation"] for upload in api.uploads] == ["", NEW_CONVERSATION]
+    assert any(request["path"].endswith("/metadata") for request in api.requests)
+
+
+def test_failed_conversation_metadata_can_be_retried(clipboard_ui):
+    page, api = clipboard_ui
+    api.metadata_failures = 1
+    mount_composer(page, api)
+    page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.setState({ metadata: null })")
+    expect(page.get_by_text("Could not load conversation upload options.")).to_be_visible()
+    expect(page.locator('input[type="file"]')).to_be_disabled()
+    page.get_by_role("button", name="Try again").click()
+    expect(page.locator('input[type="file"]')).to_be_enabled()
 
 
 def file_spec(name="screenshot.png", mime="image/png", body=SIZED_PNG):
@@ -293,6 +379,51 @@ def test_multiple_new_chat_files_reuse_first_upload_conversation(clipboard_ui):
     expect(attached.get_by_text("Ready", exact=True)).to_have_count(2)
     assert [upload["name"] for upload in api.uploads] == ["first.txt", "second.txt"]
     assert [upload["conversation"] for upload in api.uploads] == ["", NEW_CONVERSATION]
+
+
+@pytest.mark.parametrize("source", ["picker", "drop"])
+def test_new_chat_upload_ignores_active_group(clipboard_ui, source):
+    page, api = clipboard_ui
+    editor = mount_composer(page, api, conversation=None, active_group_id="active-group")
+    file_input = page.locator('input[type="file"]')
+    expect(file_input).not_to_have_attribute("accept", re.compile(r"\.xsd"))
+    if source == "picker":
+        file_input.set_input_files({"name": "notes.txt", "mimeType": "text/plain", "buffer": b"notes"})
+    else:
+        transfer_files(editor, [file_spec("notes.txt", "text/plain", b"notes")], source="drop")
+    expect(page.get_by_role("list", name="Attached files")).to_contain_text("Ready")
+    assert api.uploads[0]["conversation"] == ""
+    assert api.uploads[0]["group_ids"] == []
+
+
+def test_group_locked_chat_uses_group_formats_without_active_group(clipboard_ui):
+    page, api = clipboard_ui
+    editor = mount_composer(
+        page, api, active_group_id="different-group",
+        metadata={
+            "conversation_id": CONVERSATION,
+            "title": "Group chat",
+            "chat_type": "group-single-user",
+            "scope_locked": True,
+            "locked_contexts": [{"scope": "group", "id": "locked-group"}],
+        },
+    )
+    expect(page.locator('input[type="file"]')).to_have_attribute("accept", re.compile(r"\.xsd"))
+    transfer_files(editor, [file_spec("notes.txt", "text/plain", b"notes")], source="drop")
+    expect(page.get_by_role("list", name="Attached files")).to_contain_text("Ready")
+    assert api.uploads[0]["conversation"] == CONVERSATION
+    assert api.uploads[0]["group_ids"] == []
+
+
+def test_retry_new_chat_upload_ignores_active_group(clipboard_ui):
+    page, api = clipboard_ui
+    editor = mount_composer(page, api, conversation=None, active_group_id="active-group")
+    api.fail_next = True
+    transfer_files(editor, [file_spec("notes.txt", "text/plain", b"notes")])
+    expect(page.get_by_role("alert")).to_contain_text("Upload failed. Please retry.")
+    page.get_by_role("button", name="Retry notes.txt", exact=True).click()
+    expect(page.get_by_role("list", name="Attached files")).to_contain_text("Ready")
+    assert [upload["group_ids"] for upload in api.uploads] == [[], []]
 
 
 def test_real_text_paste_preserves_selection_before_and_after_an_image(clipboard_ui):

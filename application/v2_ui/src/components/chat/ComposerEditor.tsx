@@ -35,10 +35,10 @@ import {
     type ComposerUpload,
 } from '../../lib/composerDraft';
 import {
-    CHAT_UPLOAD_ACCEPT,
     addChatUploadLocalPreview,
     cancelRetainedComposerUpload,
     chatTransferFiles,
+    chatUploadExtensions,
     chatUploadTargets,
     chatUploadValidationError,
     conversationAttachmentReferences,
@@ -241,6 +241,13 @@ export function ComposerEditor({
     const holderRef = useRef<HTMLDivElement>(null);
     const bootstrap = useBootstrapStore((state) => state.data);
     const messages = useChatStore((state) => state.messages);
+    const metadata = useChatStore((state) => state.metadata);
+    const metadataLoading = useChatStore((state) => state.metadataLoading);
+    const metadataError = useChatStore((state) => state.metadataError);
+    const messagesLoading = useChatStore((state) => state.messagesLoading);
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const activeConversationKind = useChatStore((state) => state.activeConversationKind);
+    const loadMetadata = useChatStore((state) => state.loadMetadata);
     const sharedConversation = useChatStore((state) =>
         state.activeConversationId === conversationId && state.activeConversationKind === 'collaborative',
     );
@@ -262,7 +269,23 @@ export function ComposerEditor({
     const slashEnabled = !restricted;
     const mentionsActive = mentionsEnabled && !restricted;
     const uploadsEnabled = features.enable_chat_file_uploads === true && !uploadsDisabled && !restricted;
-    const uploadAccept = referenceUploadsOnly ? '.png,.jpg,.jpeg,.bmp,.tif,.tiff' : CHAT_UPLOAD_ACCEPT;
+    useEffect(() => {
+        if (!uploadsEnabled || !bootstrap?.chat_uploads || !conversationId
+            || activeConversationId !== conversationId || !activeConversationKind || messagesLoading
+            || metadata?.conversation_id === conversationId || metadataLoading || metadataError) {
+            return;
+        }
+        void loadMetadata(conversationId);
+    }, [uploadsEnabled, bootstrap?.chat_uploads, conversationId, activeConversationId, activeConversationKind,
+        messagesLoading, metadata, metadataLoading, metadataError, loadMetadata]);
+    const scopedGroupIds = contextScopes(draft.contextItems).groupIds;
+    const formatsForGroups = (groupIds: readonly string[]) => chatUploadExtensions(
+        bootstrap?.chat_uploads, conversationId, metadata, shared, groupIds,
+    );
+    const allowedUploadExtensions = formatsForGroups(scopedGroupIds);
+    const uploadAccept = referenceUploadsOnly
+        ? '.png,.jpg,.jpeg,.bmp,.tif,.tiff'
+        : (allowedUploadExtensions ?? []).map((extension) => `.${extension}`).join(',');
     const promptCatalog = (bootstrap?.catalogs?.prompts ?? []) as PromptOption[];
     const [contextQuery, setContextQuery] = useState<ContextQuery | null>(null);
     const [contextIndex, setContextIndex] = useState(0);
@@ -927,10 +950,12 @@ export function ComposerEditor({
             return;
         }
         const selectedFiles = multipleFiles ? chosen : chosen.slice(0, 1);
+        const retrySelection = draft.uploads.find((upload) => upload.id === retryFileId.current);
+        const uploadExtensions = formatsForGroups(retrySelection?.uploadScopeGroupIds ?? scopedGroupIds);
         // Only files that will really be sent need the user agreement; a file refused below never
         // leaves the browser. Cancel leaves the composer as it was, and ends a retry-by-picker.
         const sendable = selectedFiles.filter((file) => !(referenceUploadValidationError(file)
-            ?? chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb)));
+            ?? chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb, uploadExtensions)));
         const gatedOwner = owner;
         if (sendable.length > 0 && !(await agreementGate.confirm(CHAT_AGREEMENT_SCOPE, sendable))) {
             retryFileId.current = null;
@@ -947,14 +972,9 @@ export function ComposerEditor({
         const replacing = retryFileId.current;
         const replacedUpload = draft.uploads.find((upload) => upload.id === replacing);
         retryFileId.current = null;
-        const groupIds = contextScopes(draft.contextItems).groupIds;
-        const scopedGroupIds = [...new Set([
-            ...(bootstrap?.scope?.active_group_id ? [String(bootstrap.scope.active_group_id)] : []),
-            ...groupIds,
-        ])];
         const queued = selectedFiles.map((file, index) => {
             const error = referenceUploadValidationError(file)
-                ?? chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb);
+                ?? chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb, uploadExtensions);
             const upload: ComposerUpload = {
                 id: replacedUpload && index === 0
                     ? replacedUpload.id
@@ -1003,12 +1023,25 @@ export function ComposerEditor({
         }
         const file = files.current.get(upload.id);
         if (!file) {
+            const retryExtensions = formatsForGroups(upload.uploadScopeGroupIds ?? scopedGroupIds);
+            if (!retryExtensions?.length || fileInputRef.current?.disabled) {
+                updateUpload(upload.id, {
+                    state: 'failed',
+                    error: retryExtensions ? 'Group workspace uploads are disabled.'
+                        : 'Chat upload formats are unavailable. Reload the page or try again.',
+                });
+                return;
+            }
             retryFileId.current = upload.id;
+            if (fileInputRef.current && !referenceUploadsOnly) {
+                fileInputRef.current.accept = retryExtensions.map((extension) => `.${extension}`).join(',');
+            }
             fileInputRef.current?.click();
             return;
         }
         const error = referenceUploadValidationError(file)
-            ?? chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb);
+            ?? chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb,
+                formatsForGroups(upload.uploadScopeGroupIds ?? scopedGroupIds));
         if (error) {
             updateUpload(upload.id, { state: 'failed', error });
             return;
@@ -1267,7 +1300,37 @@ export function ComposerEditor({
             )}
             {!restricted && (
                 <input ref={fileInputRef} type="file" accept={uploadAccept} multiple={multipleFiles}
-                    disabled={disabled || !uploadsEnabled} className="hidden" onChange={(event) => void onSelectFiles(event)} />
+                    disabled={disabled || !uploadsEnabled || !allowedUploadExtensions?.length}
+                    onClick={(event) => {
+                        const retry = draft.uploads.find((upload) => upload.id === retryFileId.current);
+                        const formats = formatsForGroups(retry?.uploadScopeGroupIds ?? scopedGroupIds);
+                        if (!formats?.length) {
+                            event.preventDefault();
+                            toast.error(formats ? 'Group workspace uploads are disabled.'
+                                : 'Chat upload formats are unavailable. Reload the page or try again.');
+                        } else {
+                            event.currentTarget.accept = referenceUploadsOnly ? uploadAccept
+                                : formats.map((extension) => `.${extension}`).join(',');
+                        }
+                    }}
+                    className="hidden" onChange={(event) => {
+                        event.currentTarget.accept = uploadAccept;
+                        void onSelectFiles(event);
+                    }} />
+            )}
+            {uploadsEnabled && !allowedUploadExtensions?.length && (
+                <p role="status" className="px-1 text-xs text-text-3">
+                    {allowedUploadExtensions ? 'Group workspace uploads are disabled.'
+                        : !bootstrap?.chat_uploads ? 'Chat upload formats are unavailable. Reload the page or try again.'
+                        : metadataError && conversationId && conversationId === activeConversationId ? (
+                            <>
+                                Could not load conversation upload options.{' '}
+                                <button type="button" className="underline" onClick={() => void loadMetadata(conversationId)}>
+                                    Try again
+                                </button>
+                            </>
+                        ) : 'Loading conversation upload options…'}
+                </p>
             )}
             {showTools && contextEnabled && (
                 <div className="flex flex-wrap items-center gap-2 px-1 pb-1">
@@ -1276,7 +1339,7 @@ export function ComposerEditor({
                         <Search size={13} /> Add context
                     </button>
                     {!restricted && (
-                        <button type="button" disabled={disabled || !uploadsEnabled}
+                        <button type="button" disabled={disabled || !uploadsEnabled || !allowedUploadExtensions?.length}
                             onClick={() => fileInputRef.current?.click()} aria-label="Attach a file"
                             className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-text-2 hover:bg-surface-2 disabled:opacity-40">
                             <Paperclip size={13} /> Attach file

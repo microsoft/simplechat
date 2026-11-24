@@ -26,6 +26,9 @@
 // chatContext, chatContextTokens and documentExplorer.
 
 import assert from 'node:assert/strict';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { ComposerEditor } from '../application/v2_ui/src/components/chat/ComposerEditor';
 import {
     PERSONAL_SCOPE,
     addContextItem,
@@ -57,6 +60,7 @@ import {
 import {
     chatTransferFiles,
     chatUploadDocumentStatus,
+    chatUploadExtensions,
     chatUploadTargets,
     chatUploadValidationError,
     conversationAttachmentReferences,
@@ -65,6 +69,8 @@ import {
 } from '../application/v2_ui/src/lib/chatUploads';
 import { ApiError } from '../application/v2_ui/src/lib/apiClient';
 import { uploadDocument } from '../application/v2_ui/src/lib/endpoints';
+import { useChatStore } from '../application/v2_ui/src/stores/chatStore';
+import { useBootstrapStore } from '../application/v2_ui/src/stores/bootstrapStore';
 
 const MARKETING = groupScope({ id: 'grp-1', name: 'Marketing' });
 const LEGAL = groupScope({ id: 'grp-2', name: 'Legal' });
@@ -451,12 +457,109 @@ check('upload states ignore filenames and stage details without relaxing real fa
 });
 
 check('upload validation preserves chat format, account and size gates', () => {
+    const formats = ['txt', 'pdf', 'xlsx', 'vsdx', 'dotx', 'potx', 'htm'];
     const text = new File(['source'], 'notes.txt');
-    assert.equal(chatUploadValidationError(text, true, 10), null);
-    assert.match(chatUploadValidationError(text, false, 10)!, /account/);
-    assert.match(chatUploadValidationError(new File(['x'], 'code.exe'), true, 10)!, /file type/);
-    assert.match(chatUploadValidationError(new File(['x'.repeat(1025)], 'brief.pdf'), true, 0.0009)!, /limit/);
-    assert.equal(chatUploadValidationError(new File(['data'], 'REPORT.XLSX'), true, 10), null);
+    assert.equal(chatUploadValidationError(text, true, 10, formats), null);
+    assert.match(chatUploadValidationError(text, false, 10, formats)!, /account/);
+    assert.match(chatUploadValidationError(text, true, 10, null)!, /unavailable/);
+    assert.match(chatUploadValidationError(new File(['x'], 'code.exe'), true, 10, formats)!, /file type/);
+    assert.match(chatUploadValidationError(new File(['x'.repeat(1025)], 'brief.pdf'), true, 0.0009, formats)!, /limit/);
+    for (const filename of ['REPORT.XLSX', 'plan.vsdx', 'template.dotx', 'template.potx', 'page.htm']) {
+        assert.equal(chatUploadValidationError(new File(['data'], filename), true, 10, formats), null);
+    }
+});
+
+check('chat formats follow the backend catalog and the upload target', () => {
+    const formats = {personal: ['txt'], group: ['txt', 'mp4', 'xsd']};
+    const personal = {conversation_id: 'p', title: 'Personal', chat_type: 'personal_single_user'};
+    const group = {conversation_id: 'g', title: 'Group', chat_type: 'group-single-user'};
+    const shared = {conversation_id: 's', title: 'Shared', chat_type: 'personal_multi_user'};
+    assert.equal(chatUploadExtensions(undefined, null, null, false, []), null);
+    assert.equal(chatUploadExtensions(formats, 'p', null, false, []), null);
+    assert.equal(chatUploadExtensions(formats, 'p', group, false, []), null);
+    assert.deepEqual(chatUploadExtensions(formats, null, null, false, []), formats.personal);
+    assert.deepEqual(chatUploadExtensions(formats, 'p', personal, false, ['g']), formats.group);
+    assert.deepEqual(chatUploadExtensions(formats, 'g', group, false, []), formats.group);
+    assert.deepEqual(chatUploadExtensions(formats, 's', shared, true, ['g']), formats.personal);
+    assert.deepEqual(chatUploadExtensions(formats, 's', {...shared, chat_type: 'group_multi_user'}, true, []), formats.group);
+    assert.deepEqual(chatUploadExtensions(formats, 'p', {
+        ...personal, locked_contexts: [{scope: 'group', id: 'g'}],
+    }, false, []), formats.group);
+    assert.deepEqual(chatUploadExtensions({...formats, group: []}, 'g', group, false, []), []);
+});
+
+check('composer uses conversation scope rather than the active group for upload formats', () => {
+    const bootstrap = useBootstrapStore.getInitialState();
+    const chat = useChatStore.getInitialState();
+    const previousBootstrap = bootstrap.data;
+    const previousMetadata = chat.metadata;
+    const previousId = chat.activeConversationId;
+    const previousKind = chat.activeConversationKind;
+    bootstrap.data = {
+        ...previousBootstrap,
+        scope: { active_group_id: 'active-group', groups: [], public_workspaces: [] },
+        features: { enable_chat_file_uploads: true },
+        chat_uploads: { personal: ['txt'], group: ['xsd'] },
+    } as typeof bootstrap.data;
+    try {
+        const render = (conversationId: string | null) => renderToStaticMarkup(createElement(ComposerEditor, {
+            id: 'test-composer', label: 'Message', conversationId,
+            draft: createComposerDraft(), onChange: () => {},
+        }));
+        chat.metadata = null;
+        chat.activeConversationId = null;
+        chat.activeConversationKind = null;
+        assert.match(render(null), /type="file" accept="\.txt"/);
+        chat.activeConversationId = 'group-chat';
+        chat.activeConversationKind = 'personal';
+        chat.metadata = {
+            conversation_id: 'group-chat', title: 'Group',
+            chat_type: 'group-single-user', scope_locked: true,
+            locked_contexts: [{ scope: 'group', id: 'locked-group' }],
+        };
+        assert.match(render('group-chat'), /type="file" accept="\.xsd"/);
+    } finally {
+        bootstrap.data = previousBootstrap;
+        chat.metadata = previousMetadata;
+        chat.activeConversationId = previousId;
+        chat.activeConversationKind = previousKind;
+    }
+});
+
+check('conversation details restore upload formats after a failed read and retry', async () => {
+    const previousState = useChatStore.getState();
+    const originalFetch = globalThis.fetch;
+    const formats = { personal: ['txt'], group: ['txt', 'vsdx'] };
+    const conversationId = 'created-chat';
+    let attempts = 0;
+    globalThis.fetch = async (url) => {
+        assert.equal(String(url), `/api/conversations/${conversationId}/metadata`);
+        attempts += 1;
+        if (attempts === 1) {
+            return new Response(JSON.stringify({ error: 'Unavailable' }), {
+                status: 503, headers: { 'Content-Type': 'application/json' },
+            });
+        }
+        return new Response(JSON.stringify({
+            conversation_id: conversationId, title: 'Group chat', chat_type: 'group_single_user',
+        }), { headers: { 'Content-Type': 'application/json' } });
+    };
+    try {
+        useChatStore.setState({
+            activeConversationId: conversationId, activeConversationKind: 'personal',
+            metadata: null, metadataLoading: false, metadataError: null, conversations: [],
+        });
+        await useChatStore.getState().loadMetadata(conversationId);
+        assert.ok(useChatStore.getState().metadataError);
+        assert.equal(chatUploadExtensions(formats, conversationId, useChatStore.getState().metadata, false, []), null);
+        await useChatStore.getState().loadMetadata(conversationId);
+        const state = useChatStore.getState();
+        assert.equal(state.metadataError, null);
+        assert.deepEqual(chatUploadExtensions(formats, conversationId, state.metadata, false, []), formats.group);
+    } finally {
+        globalThis.fetch = originalFetch;
+        useChatStore.setState(previousState, true);
+    }
 });
 
 check('clipboard items preserve file order without duplicating the files fallback', () => {
@@ -505,7 +608,7 @@ check('nameless clipboard images receive distinct MIME-based names without chang
     assert.deepEqual(result.map((file) => file.lastModified), [1234, 1234, 5678]);
     assert.deepEqual(contents, ['PNG bytes', 'PNG bytes', 'JPEG bytes']);
     for (const file of result) {
-        const error = chatUploadValidationError(file, true, 25);
+        const error = chatUploadValidationError(file, true, 25, ['png', 'jpg']);
         assert.equal(error, null);
     }
 });
@@ -535,7 +638,7 @@ check('normalizing transfer names never broadens allowed formats or renames real
     const unknown = new File(['unknown'], '', { type: 'application/octet-stream' });
     const webp = new File(['unsupported image'], '', { type: 'image/webp' });
     const result = chatTransferFiles({ files: [unsupported, unknown, webp] }, 'paste');
-    const errors = result.map((file) => chatUploadValidationError(file, true, 25));
+    const errors = result.map((file) => chatUploadValidationError(file, true, 25, ['png']));
     assert.equal(result[0], unsupported);
     assert.match(result[1].name, /\.bin$/);
     assert.match(result[2].name, /\.bin$/);

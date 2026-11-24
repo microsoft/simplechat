@@ -299,6 +299,13 @@ def allowed_file(filename, allowed_extensions=None):
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
 
 
+def get_workspace_upload_extensions(settings):
+    return get_allowed_extensions(
+        enable_video=settings.get('enable_video_file_support', False) in (True, 'True', 'true'),
+        enable_audio=settings.get('enable_audio_file_support', False) in (True, 'True', 'true'),
+    )
+
+
 def _normalize_model_endpoint_selection(selection):
     if not isinstance(selection, dict):
         selection = {}
@@ -13486,7 +13493,7 @@ def _process_document_upload_background_impl(
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:
                 total_chunks_saved = result
-        elif file_ext == '.html':
+        elif file_ext in ('.html', '.htm'):
             result = process_html(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
