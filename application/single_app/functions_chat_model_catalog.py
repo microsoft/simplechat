@@ -2,6 +2,7 @@
 """The authorized model catalog shared by chat selection and request replay."""
 
 from functions_ai_connections import filter_model_endpoints_by_capability
+from functions_context_usage import resolve_context_limits
 from functions_governance import ensure_governance_access
 from functions_group import get_group_model_endpoints
 from functions_model_capabilities import REASONING_IDENTIFIER_FIELDS, resolve_model_reasoning_policy
@@ -73,6 +74,8 @@ def build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_grou
                     'deployment_name': deployment,
                     'display_name': reasoning_metadata['model_name'],
                     **reasoning_metadata,
+                    # Lets the context ring measure against a model as soon as it is selected.
+                    'context_limits': resolve_context_limits(model, provider='aoai'),
                     **model_profile_projection(model, {}, settings, profiles),
                 })
         return catalog
@@ -112,6 +115,9 @@ def build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_grou
                     'scope_id': scope_id,
                     'scope_name': scope_name,
                     'icon': model.get('icon') if isinstance(model.get('icon'), dict) else {},
+                    'context_limits': resolve_context_limits(
+                        model, endpoint, provider=provider, response_length=model.get('responseLength'),
+                    ),
                     **model_profile_projection(model, endpoint, settings, profiles),
                 })
 

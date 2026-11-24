@@ -4,13 +4,15 @@
 //
 // Contents lists the user's turns so a long thread can be navigated; Documents lists generated
 // files and media, document-level citation aggregates, and the owner's Microsoft 365 items with
-// links that open them online; Plan hosts the orchestration plan surface when the feature is on.
+// links that open them online; Plan hosts the orchestration plan surface when the feature is on;
+// Context shows how much of the model's context window the latest request used.
 
 import { useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
 import {
     CalendarDays,
     Files,
+    Gauge,
     ListOrdered,
     ListTree,
     Mail,
@@ -41,6 +43,7 @@ import {
 } from './DrawerAssets';
 import { M365KindIcon, M365OpenLink } from './M365CitationChip';
 import { OrchestrationPlanPanel } from './OrchestrationPlanPanel';
+import { ContextUsageMode } from './ContextUsage';
 import { EvidenceStatusDetails } from './EvidenceStatus';
 import { readEvidenceStatus } from '../../lib/evidenceStatus';
 import { readMaskState } from '../../lib/masking';
@@ -377,7 +380,11 @@ export function ConversationDrawer() {
         ...(orchestrationEnabled
             ? [{ id: 'plan' as const, label: 'Plan', icon: ListTree }]
             : []),
+        { id: 'context' as const, label: 'Context', icon: Gauge },
     ];
+    // Four labelled tabs are wider than the drawer, so past three only the open one keeps its
+    // label; the others stay named for assistive technology and on hover.
+    const compactTabs = tabs.length > 3;
 
     return (
         <aside
@@ -396,6 +403,8 @@ export function ConversationDrawer() {
                             type="button"
                             role="tab"
                             aria-selected={drawerMode === tab.id}
+                            aria-label={tab.label}
+                            title={tab.label}
                             onClick={() => setDrawerMode(tab.id)}
                             className={clsx(
                                 'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors',
@@ -405,7 +414,7 @@ export function ConversationDrawer() {
                             )}
                         >
                             <tab.icon size={14} />
-                            {tab.label}
+                            {(!compactTabs || drawerMode === tab.id) && tab.label}
                         </button>
                     ))}
                 </div>
@@ -425,6 +434,8 @@ export function ConversationDrawer() {
                     <ContentsMode />
                 ) : drawerMode === 'plan' ? (
                     <OrchestrationPlanPanel />
+                ) : drawerMode === 'context' ? (
+                    <ContextUsageMode />
                 ) : (
                     <DocumentsMode />
                 )}

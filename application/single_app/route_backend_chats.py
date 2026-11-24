@@ -506,6 +506,7 @@ from functions_chat_vision import (
 from functions_image_references import references_from_metadata
 from functions_appinsights import log_chat_execution_outcome, log_event
 from functions_debug import debug_print
+from functions_context_usage import measure_context_usage, resolve_context_limits
 from functions_governance import ensure_governance_access
 from functions_notifications import create_chat_response_notification
 from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
@@ -807,6 +808,59 @@ def _get_conversation_context_agent_fields(agent):
     }
 
 
+# Where model resolution leaves the selected model's limits for the context usage display.
+# The caller takes the entry out of the request payload straight after resolving the model.
+CONTEXT_LIMITS_REQUEST_FIELD = '_context_limits'
+
+
+def _resolve_chat_context_limits(settings, model_name, provider, response_length, resolved_limits=None):
+    """Return the selected model's window for the context usage display. Never raises.
+
+    A request that chose a model from Model Endpoints resolved that model once already, and the
+    limits were worked out then from the record in hand; they arrive as ``resolved_limits`` and
+    nothing is looked up again. Otherwise the model is one of the application's own configured
+    deployments, found in settings that are already loaded.
+    """
+    if isinstance(resolved_limits, dict):
+        return resolved_limits
+    model_record = None
+    try:
+        model_record = next(
+            (
+                model for model in (settings.get('gpt_model') or {}).get('selected') or ()
+                if model.get('deploymentName') == model_name
+            ),
+            None,
+        )
+    except Exception as exc:
+        debug_print(f"[CONTEXT_USAGE] Model record lookup failed: {exc}")
+    return resolve_context_limits(
+        model_record or model_name,
+        provider=provider or 'aoai',
+        response_length=response_length,
+    )
+
+
+def _record_context_usage(history_debug_info, prepared_history, model_name, context_limits):
+    """Size the request about to be sent and keep it with the reply's history details.
+
+    The display is optional; a failure here must never stop a chat request.
+    """
+    if not isinstance(history_debug_info, dict):
+        return
+    try:
+        limits = context_limits() if callable(context_limits) else context_limits
+        history_debug_info['context_usage'] = measure_context_usage(
+            prepared_history, model_name=model_name, limits=limits,
+        )
+    except Exception as exc:
+        log_event(
+            f'[CONTEXT_USAGE] Could not measure the request: {exc}',
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+
 def _prepare_conversation_context_for_invocation(
     conversation_history,
     agent_citations,
@@ -816,6 +870,8 @@ def _prepare_conversation_context_for_invocation(
     model_provider=None,
     model_endpoint_id=None,
     selected_agent=None,
+    history_debug_info=None,
+    context_limits=None,
 ):
     # Current-turn tool citations were read in this request; earlier history is
     # conversation content and is not rechecked against its sources.
@@ -842,6 +898,12 @@ def _prepare_conversation_context_for_invocation(
         context_json,
     )
     append_conversation_context_citation(agent_citations, context_json)
+    _record_context_usage(
+        history_debug_info,
+        prepared_history,
+        agent_fields.get('agent_model') or model_name,
+        context_limits,
+    )
     return prepared_history, context_json
 
 
@@ -15379,6 +15441,12 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         f"response_length={model_response_length or ''} | "
         f"response_length_parameter={model_response_length_parameter or ''}"
     )
+    if isinstance(data, dict):
+        # Worked out here, from the records already in hand, so the context usage display does
+        # not have to find this model again later in the request.
+        data[CONTEXT_LIMITS_REQUEST_FIELD] = resolve_context_limits(
+            model_cfg, resolved_endpoint_cfg, provider=provider, response_length=model_response_length,
+        )
     return (
         gpt_client,
         deployment,
@@ -18770,6 +18838,7 @@ def register_route_backend_chats(bp):
             gpt_model_id = None
             gpt_model_icon = None
             gpt_response_length = None
+            chat_context_limits = None
             gpt_response_length_parameter = None
             gpt_reasoning_model_name = None
             tabular_model_context = None
@@ -18790,6 +18859,7 @@ def register_route_backend_chats(bp):
                         active_group_ids=active_group_ids,
                         allow_default_selection=should_use_default_model,
                     )
+                    chat_context_limits = data.pop(CONTEXT_LIMITS_REQUEST_FIELD, None)
                     if multi_endpoint_config and should_use_default_model and not data.get('model_endpoint_id'):
                         debug_print("[GPT_CLIENT] Using default multi-endpoint model for agent request.")
                 if image_gen_enabled:
@@ -19644,6 +19714,11 @@ def register_route_backend_chats(bp):
                             gpt_model=gpt_model,
                             user_message_id=user_message_id,
                             fallback_user_message=user_message,
+                        )
+                        log_history_summary_usage(
+                            preflight_history_segments, user_id=user_id, conversation_id=conversation_id,
+                            message_id=user_message_id, group_id=active_group_id,
+                            public_workspace_id=active_public_workspace_id,
                         )
                         history_only_answerability = assess_history_only_answerability(
                             gpt_client,
@@ -21036,6 +21111,11 @@ def register_route_backend_chats(bp):
                         and not mixed_source_explicit_selection
                     ),
                 )
+                log_history_summary_usage(
+                    history_segments, user_id=user_id, conversation_id=conversation_id,
+                    message_id=user_message_id, group_id=active_group_id,
+                    public_workspace_id=active_public_workspace_id,
+                )
                 summary_of_older = history_segments['summary_of_older']
                 chat_tabular_files = history_segments['chat_tabular_files']
                 history_debug_info = history_segments.get('debug_info', {})
@@ -21620,6 +21700,10 @@ def register_route_backend_chats(bp):
                         model_provider=gpt_provider,
                         model_endpoint_id=gpt_endpoint_id,
                         selected_agent=context_agent,
+                        history_debug_info=history_debug_info,
+                        context_limits=lambda: _resolve_chat_context_limits(
+                            settings, gpt_model, gpt_provider, gpt_response_length, chat_context_limits,
+                        ),
                     )
                     return [
                         ChatMessageContent(
@@ -21921,6 +22005,10 @@ def register_route_backend_chats(bp):
                             model_name=gpt_model,
                             model_provider='semantic_kernel',
                             model_endpoint_id=gpt_endpoint_id,
+                            history_debug_info=history_debug_info,
+                            context_limits=lambda: _resolve_chat_context_limits(
+                                settings, gpt_model, gpt_provider, gpt_response_length, chat_context_limits,
+                            ),
                         )
                         plugin_logger = get_plugin_logger()
                         baseline_invocation_count = len(
@@ -22041,6 +22129,10 @@ def register_route_backend_chats(bp):
                     model_name=gpt_model,
                     model_provider=gpt_provider,
                     model_endpoint_id=gpt_endpoint_id,
+                    history_debug_info=history_debug_info,
+                    context_limits=lambda: _resolve_chat_context_limits(
+                        settings, gpt_model, gpt_provider, gpt_response_length, chat_context_limits,
+                    ),
                 )
                 if not conversation_history_for_api:
                     raise Exception('Cannot generate response: No conversation history available.')
@@ -23486,6 +23578,7 @@ def register_route_backend_chats(bp):
                 gpt_model_id = None
                 gpt_model_icon = None
                 gpt_response_length = None
+                chat_context_limits = None
                 gpt_response_length_parameter = None
                 gpt_reasoning_model_name = None
                 tabular_model_context = None
@@ -23507,6 +23600,7 @@ def register_route_backend_chats(bp):
                             active_group_ids=active_group_ids,
                             allow_default_selection=should_use_default_model,
                         )
+                        chat_context_limits = data.pop(CONTEXT_LIMITS_REQUEST_FIELD, None)
                         if streaming_multi_endpoint_config and should_use_default_model and not frontend_model_endpoint_id:
                             debug_print("[GPT_CLIENT] Using default multi-endpoint model for agent streaming request.")
 
@@ -24328,6 +24422,11 @@ def register_route_backend_chats(bp):
                                 gpt_model=gpt_model,
                                 user_message_id=user_message_id,
                                 fallback_user_message=user_message,
+                            )
+                            log_history_summary_usage(
+                                preflight_history_segments, user_id=user_id, conversation_id=conversation_id,
+                                message_id=user_message_id, group_id=active_group_id,
+                                public_workspace_id=active_public_workspace_id,
                             )
                             history_only_answerability = assess_history_only_answerability(
                                 gpt_client,
@@ -25457,6 +25556,11 @@ def register_route_backend_chats(bp):
                             and not mixed_source_explicit_selection
                         ),
                     )
+                    log_history_summary_usage(
+                        history_segments, user_id=user_id, conversation_id=conversation_id,
+                        message_id=user_message_id, group_id=active_group_id,
+                        public_workspace_id=active_public_workspace_id,
+                    )
                     summary_of_older = history_segments['summary_of_older']
                     chat_tabular_files = history_segments['chat_tabular_files']
                     history_debug_info = history_segments.get('debug_info', {})
@@ -25842,6 +25946,10 @@ def register_route_backend_chats(bp):
                     model_provider=gpt_provider,
                     model_endpoint_id=gpt_endpoint_id,
                     selected_agent=selected_agent,
+                    history_debug_info=history_debug_info,
+                    context_limits=lambda: _resolve_chat_context_limits(
+                        settings, gpt_model, gpt_provider, gpt_response_length, chat_context_limits,
+                    ),
                 )
 
                 # Stream the response
@@ -29362,6 +29470,52 @@ def _refresh_workspace_linked_history_message(message):
     return refreshed
 
 
+def _history_summary_usage(response, model):
+    """Read what the older-message summary request spent, or None when it is not reported."""
+    usage = getattr(response, 'usage', None)
+    counts = {}
+    for field in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+        value = getattr(usage, field, None)
+        counts[field] = value if type(value) is int and value >= 0 else 0
+    if not counts['total_tokens']:
+        counts['total_tokens'] = counts['prompt_tokens'] + counts['completion_tokens']
+    if not counts['total_tokens']:
+        return None
+    return {**counts, 'model': str(model or '')}
+
+
+def log_history_summary_usage(
+    history_segments, *, user_id, conversation_id, message_id=None, group_id=None, public_workspace_id=None,
+):
+    """Add the older-message summary request to usage reporting. Never raises.
+
+    The summary is its own model request, made before the reply's. Its usage is logged as a
+    separate row so the reply's own count stays the size of one request.
+    """
+    usage = (history_segments or {}).get('summary_usage') if isinstance(history_segments, dict) else None
+    if not isinstance(usage, dict) or not usage.get('total_tokens'):
+        return False
+    try:
+        log_token_usage(
+            user_id=user_id,
+            token_type='chat',
+            total_tokens=usage['total_tokens'],
+            model=usage.get('model') or 'unknown',
+            workspace_type='public' if public_workspace_id else 'group' if group_id else 'personal',
+            prompt_tokens=usage.get('prompt_tokens'),
+            completion_tokens=usage.get('completion_tokens'),
+            conversation_id=conversation_id,
+            message_id=message_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+            additional_context={'execution_path': 'chat', 'purpose': 'history_summary'},
+        )
+        return True
+    except Exception as exc:
+        debug_print(f"[HISTORY_SUMMARY] Failed to log summary usage: {exc}")
+        return False
+
+
 def build_conversation_history_segments(
     all_messages,
     conversation_history_limit,
@@ -29381,6 +29535,7 @@ def build_conversation_history_segments(
     all_messages = _sanitize_saved_analysis_history(all_messages)
     conversation_history_messages = []
     summary_of_older = ""
+    summary_usage = None
     chat_tabular_files = set()
 
     artifact_payload_map = build_message_artifact_payload_map(all_messages or [])
@@ -29496,6 +29651,7 @@ def build_conversation_history_segments(
                             max_completion_tokens=400,
                         )
                 summary_of_older = summary_response_older.choices[0].message.content.strip()
+                summary_usage = _history_summary_usage(summary_response_older, gpt_model)
                 debug_print(f"Generated summary: {summary_of_older}")
             except ScreeningError:
                 raise
@@ -29716,6 +29872,8 @@ def build_conversation_history_segments(
 
     return {
         'summary_of_older': summary_of_older,
+        # What the summary request itself spent, for the caller to add to usage reporting.
+        'summary_usage': summary_usage,
         'history_messages': conversation_history_messages,
         'chat_tabular_files': chat_tabular_files,
         'debug_info': debug_info,

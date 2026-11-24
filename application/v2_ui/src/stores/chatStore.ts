@@ -207,7 +207,7 @@ const FEED_PAGE_SIZE = 30;
 const STREAMING_MESSAGE_ID = '__streaming__';
 
 /** Which mode the right-hand drawer is showing, or null when it is closed. */
-export type DrawerMode = 'contents' | 'documents' | 'plan' | null;
+export type DrawerMode = 'contents' | 'documents' | 'plan' | 'context' | null;
 
 /**
  * How an orchestration run's answer settled into the thread.

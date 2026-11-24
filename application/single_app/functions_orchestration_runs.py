@@ -1154,6 +1154,15 @@ def public_step_record(item):
         'task_completeness',
     )
     row = {key: deepcopy(item[key]) for key in fields if key in item}
+    fill = item.get('context_fill')
+    if isinstance(fill, dict) and type(fill.get('peak_request')) is int and fill['peak_request'] > 0:
+        # How full the step's largest request made its model's window. Counts only, no content.
+        row['context_fill'] = {
+            'model': str(fill.get('model') or ''),
+            'peak_request': fill['peak_request'],
+            'limit': fill['limit'] if type(fill.get('limit')) is int else None,
+            'percent': fill['percent'] if type(fill.get('percent')) is int else None,
+        }
     row['failure'] = safe_failure(item['failure']) if item.get('failure') else None
     failed = item.get('status') in ('failed', 'cancelled')
     row['summary'] = (
