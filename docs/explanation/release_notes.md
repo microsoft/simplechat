@@ -2,6 +2,14 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.476)**
+
+#### Bug Fixes
+
+*   **Advanced Search Opens Older Conversations**
+    *   Advanced-search results now open conversations even when they are not in the currently rendered conversation list. The app loads the conversation into the list before activating it, preventing the false “Conversation not found” result.
+    *   (Ref: `chat-conversations.js`, `test_chat_search_opens_unloaded_conversation.py`, `ADVANCED_CONVERSATION_SEARCH_FIX.md`)
+
 ### **(v0.261.475)**
 
 #### Bug Fixes

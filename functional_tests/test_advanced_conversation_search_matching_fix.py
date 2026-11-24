@@ -2,7 +2,7 @@
 # test_advanced_conversation_search_matching_fix.py
 """
 Functional test for the advanced conversation search matching fix.
-Version: 0.241.097
+Version: 0.261.476
 Implemented in: 0.241.097
 
 This test ensures that advanced conversation search uses partial matching by
@@ -17,10 +17,14 @@ import sys
 import traceback
 
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from test_support.versioning import assert_app_version_at_least
+
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_ROOT = os.path.join(REPO_ROOT, 'application', 'single_app')
 ROUTE_FILE = os.path.join(APP_ROOT, 'route_backend_conversations.py')
-CONFIG_FILE = os.path.join(APP_ROOT, 'config.py')
 FIX_DOC_FILE = os.path.join(
     REPO_ROOT,
     'docs',
@@ -34,14 +38,6 @@ EXPECTED_VERSION = '0.241.097'
 def _read(path):
     with open(path, encoding='utf-8') as file_handle:
         return file_handle.read()
-
-
-def _read_version():
-    config_source = _read(CONFIG_FILE)
-    version_match = re.search(r'VERSION = "([0-9.]+)"', config_source)
-    if not version_match:
-        raise AssertionError('VERSION assignment not found in config.py')
-    return version_match.group(1)
 
 
 def _load_search_helpers():
@@ -192,11 +188,9 @@ def test_route_contract_includes_collaboration_and_titles():
 def test_version_and_fix_documentation_alignment():
     """Config version and fix documentation must stay aligned."""
     print('Testing version and fix documentation alignment...')
-    version = _read_version()
     fix_doc_source = _read(FIX_DOC_FILE)
 
-    if version != EXPECTED_VERSION:
-        raise AssertionError(f'Expected config VERSION to be {EXPECTED_VERSION}, found {version}')
+    assert_app_version_at_least(EXPECTED_VERSION)
     if f'Fixed/Implemented in version: **{EXPECTED_VERSION}**' not in fix_doc_source:
         raise AssertionError('Fix documentation is missing the implemented version section')
     if 'config.py' not in fix_doc_source:

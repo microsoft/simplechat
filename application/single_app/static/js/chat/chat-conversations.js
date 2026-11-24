@@ -937,29 +937,35 @@ export function loadMoreConversations() {
   return loadConversations({ append: true, cursor: conversationFeedNextCursor });
 }
 
-// Ensure a conversation exists in the list; fetch metadata if missing
-export async function ensureConversationPresent(conversationId) {
+async function ensureConversationPresentWithMetadata(conversationId, metadataOverride = null) {
   if (!conversationId) throw new Error('No conversationId provided');
 
   // Already in list
   const existing = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
-  if (existing) return existing;
+  if (existing) {
+    return {
+      conversationItem: existing,
+      metadata: metadataOverride,
+    };
+  }
 
   // Fetch metadata to validate ownership and get details
-  let metadata = null;
-  const res = await fetch(`/api/conversations/${conversationId}/metadata`);
-  if (res.ok) {
-    metadata = await res.json();
-  } else if (window.chatCollaboration?.fetchConversationMetadata) {
-    try {
+  let metadata = metadataOverride;
+  if (!metadata) {
+    const res = await fetch(`/api/conversations/${conversationId}/metadata`);
+    if (res.ok) {
+      metadata = await res.json();
+    } else if (window.chatCollaboration?.fetchConversationMetadata) {
+      try {
         metadata = await window.chatCollaboration.fetchConversationMetadata(conversationId);
-    } catch (error) {
+      } catch (error) {
         const err = await res.json().catch(() => ({}));
         throw new Error(error.message || err.error || `Failed to load conversation ${conversationId}`);
+      }
+    } else {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to load conversation ${conversationId}`);
     }
-  } else {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to load conversation ${conversationId}`);
   }
 
   // Build a conversation object compatible with createConversationItem
@@ -1001,7 +1007,16 @@ export async function ensureConversationPresent(conversationId) {
     });
   }
 
-  return convoItem;
+  return {
+    conversationItem: convoItem,
+    metadata,
+  };
+}
+
+// Ensure a conversation exists in the list; fetch metadata if missing
+export async function ensureConversationPresent(conversationId) {
+  const result = await ensureConversationPresentWithMetadata(conversationId);
+  return result.conversationItem;
 }
 
 export function createConversationItem(convo) {
@@ -1572,28 +1587,28 @@ export function addConversationToList(conversationId, title = null, classificati
 
 // Select a conversation, load messages, update UI
 export async function selectConversation(conversationId, metadataOverride = null) {
+  let convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
+  let metadata = metadataOverride;
+  if (!convoItem) {
+    try {
+      const result = await ensureConversationPresentWithMetadata(conversationId, metadataOverride);
+      convoItem = result.conversationItem;
+      metadata = result.metadata || metadata;
+    } catch (error) {
+      console.warn('Failed to load conversation before selection:', error);
+      showToast('Could not load conversation. It may no longer be available.', 'danger');
+      return;
+    }
+  }
+
   currentConversationId = conversationId;
   window.currentConversationId = conversationId;
   window.adminNewConversationDefaultsActive = false;
   notifyConversationContextChanged("select", conversationId);
 
-  const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
-  if (!convoItem) {
-      console.warn(`Conversation item not found for ID: ${conversationId}`);
-      // Handle case where item might have been deleted or list not fully loaded
-      if (currentConversationTitleEl) currentConversationTitleEl.textContent = "Conversation not found";
-      if (currentConversationClassificationsEl) currentConversationClassificationsEl.innerHTML = "";
-      if (chatbox) chatbox.innerHTML = '<div class="text-center p-5 text-muted">Conversation not found.</div>';
-      highlightSelectedConversation(null); // Deselect all visually
-      toggleConversationInfoButton(false); // Hide the info button
-        hideWorkflowActivityButton();
-      return;
-  }
-
   const conversationTitle = convoItem.getAttribute("data-conversation-title") || "Conversation"; // Use stored title
   let isCollaborativeConversation = convoItem.dataset.conversationKind === 'collaborative'
     || convoItem.dataset.canAcceptInvite === 'true';
-  let metadata = metadataOverride;
 
   // Fetch the latest conversation metadata to get accurate chat_type, pin, and hide status
   try {
