@@ -1308,6 +1308,8 @@ export interface BootstrapPayload {
     workspace_uploads?: {
         categories: { name: string; extensions: string[] }[];
     };
+    /** Server-owned formats for personal and group chat uploads. */
+    chat_uploads?: ChatUploadFormats;
     /**
      * Safety warnings an administrator sent that still need this user's acknowledgment.
      * Only the count: the warnings themselves are read when it is above zero.
@@ -1339,6 +1341,11 @@ export interface WorkspaceSectionAvailability {
     /** Why the section is unavailable. Null when it is enabled. */
     reason: string | null;
     group: WorkspaceSectionGroup;
+}
+
+export interface ChatUploadFormats {
+    personal: string[];
+    group: string[];
 }
 
 export interface WorkspaceAvailability {

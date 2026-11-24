@@ -2,7 +2,7 @@
 """
 Functional contracts for the lightweight V2 active-scope read and phase timings.
 
-Version: 0.261.373
+Version: 0.261.483
 Implemented in: 0.261.305
 
 The real route bodies, scope helper, timer, and authentication decorators execute
@@ -47,9 +47,12 @@ def environment():
         "check_user_access_status": Mock(return_value=(True, None)),
         "get_settings": Mock(return_value={"private_key": "fixture-private-settings"}),
         "sanitize_settings_for_user": Mock(return_value={"enable_group_workspaces": True}),
+        "CLIENTS": {"storage_account_office_docs_client": object()},
+        "_build_chat_upload_formats": Mock(return_value={"personal": ["txt", "vsdx"], "group": ["txt"]}),
         "get_user_settings": Mock(side_effect=lambda user_id: {"settings": preferences}),
         "get_optional_active_group": Mock(return_value=None),
         "get_current_user_info": lambda: {"userId": session.get("user", {}).get("oid")},
+        "get_ui_policy": Mock(return_value={}),
         "get_user_groups": Mock(side_effect=lambda user_id: groups),
         "find_group_by_id": Mock(side_effect=lambda group_id: next(
             (group for group in groups if group["id"] == group_id), None,
@@ -120,6 +123,16 @@ def test_scope_is_private_uncached_and_does_not_build_catalogs(environment):
     for name in ("get_settings", "_build_chat_model_catalog", "_build_chat_prompt_catalog",
                  "build_accessible_agent_catalog", "sanitize_settings_for_user"):
         environment.namespace[name].assert_not_called()
+
+
+def test_bootstrap_exposes_only_chat_format_metadata(environment):
+    response = environment.client.get("/api/v2/bootstrap")
+    assert response.status_code == 200
+    assert response.get_json()["chat_uploads"] == {"personal": ["txt", "vsdx"], "group": ["txt"]}
+    environment.namespace["_build_chat_upload_formats"].assert_called_once_with(
+        {"private_key": "fixture-private-settings"}, True,
+    )
+    assert "fixture-private-settings" not in response.get_data(as_text=True)
 
 
 @pytest.mark.parametrize("group_id,workspace_id", [

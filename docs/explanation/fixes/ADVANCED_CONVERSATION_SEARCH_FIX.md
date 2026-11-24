@@ -50,3 +50,19 @@ Advanced Search now behaves more like the left sidebar search while preserving r
 Before the fix, advanced search could miss recent collaborative/title-only results and could silently filter out stored chat types that did not exactly match modal values.
 
 After the fix, searches such as `Chase` use partial matching by default, include conversation titles, include collaboration messages, and support explicit match modes for broader or narrower searches.
+
+## Unloaded Search Result Navigation
+
+### Issue and root cause
+
+Selecting a search result failed when its conversation was not among the list items currently rendered. `selectConversation()` notified conversation-context listeners before checking the list, then returned without opening the conversation. The metadata request triggered by a listener could succeed, making the conversation appear to exist while the chat still showed “Conversation not found.”
+
+### Fix and version
+
+Implemented in version **0.261.483**. `selectConversation()` now ensures an unloaded conversation is added to the list before changing active state or notifying listeners, and reuses the fetched metadata for the selection. If loading fails, it reports the failure and leaves the current selection unchanged.
+
+### Files and validation
+
+* `application/single_app/static/js/chat/chat-conversations.js`
+* `ui_tests/test_chat_search_opens_unloaded_conversation.py`
+* The UI regression test covers selection of a conversation absent from the rendered list and verifies it is present before listeners are notified.

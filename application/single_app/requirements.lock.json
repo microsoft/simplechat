@@ -1,12 +1,12 @@
 {
-  "selected_at": "2026-11-19T15:30:29.056000+00:00",
+  "selected_at": "2026-11-21T00:18:01.392121+00:00",
   "minimum_age_days": 14,
   "inputs": {
-    "application/single_app/requirements.txt": "b1a2f913664b19e25d2e467cc57db2afafc3dc453e034aeedb15250c65b73fd3",
+    "application/single_app/requirements.txt": "ccac802edb8819718c6f295b97562ef71757b96ce129151bc5ab3e02584f41cc",
     "requirements-dev.txt": "a9c70dcdcd5d87d54e67cc8d8a52dc53b204f709ae08603f0b29eda725811166",
     "ui_tests/requirements.txt": "3e9c0c14d869101fd009a0aa02f5631ff52de3b2ce36d37853633db62e60197c"
   },
-  "lock_sha256": "03968db299672d05b96df5b5806a36be19bbceb74c32a6065caa5d159270d3cb",
+  "lock_sha256": "2e45d0b1082a0039db745ebc473094651efe2486eabb30660f7409bca3f848c9",
   "packages": {
     "aiohappyeyeballs==2.7.1": {
       "released_at": "2026-07-01T17:11:54.055058Z",
@@ -803,10 +803,10 @@
       "source": "https://pypi.org/pypi/pygments/2.21.0/json",
       "grandfathered_pin": true
     },
-    "pyjwt==2.15.0": {
-      "released_at": "2026-09-23T16:55:59.241512Z",
-      "source": "https://pypi.org/pypi/pyjwt/2.15.0/json",
-      "grandfathered_pin": true
+    "pyjwt==2.15.1": {
+      "released_at": "2026-09-28T18:40:41.429003Z",
+      "source": "https://pypi.org/pypi/pyjwt/2.15.1/json",
+      "grandfathered_pin": false
     },
     "pylibsrtp==1.0.0": {
       "released_at": "2025-10-13T16:12:15.620319Z",

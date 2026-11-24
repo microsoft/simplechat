@@ -12,16 +12,9 @@ import {
 import { documentStatus } from './documentExplorer';
 import { isDocumentProcessingComplete } from './documentProcessingStatus';
 import type { ComposerDraft, ComposerReference, ComposerUpload } from './composerDraft';
-import type { ChatMessage, WorkspaceDocument } from './types';
+import type { ChatMessage, ChatUploadFormats, ConversationMetadata, WorkspaceDocument } from './types';
 import type { Dispatch, SetStateAction } from 'react';
 import { useOrchestrationStore } from '../stores/orchestrationStore';
-
-// The /upload route supports these formats, not the workspace-only audio/video processors.
-export const CHAT_UPLOAD_ACCEPT = [
-    'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log',
-    'pdf', 'docx', 'dotx', 'pptx', 'potx', 'ppt', 'csv', 'xlsx', 'xls', 'xlsm', 'msg',
-    'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic',
-].map((extension) => `.${extension}`).join(',');
 
 const IMAGE_FILE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic']);
 const BROWSER_RENDERABLE_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'bmp']);
@@ -103,16 +96,53 @@ export function isBrowserRenderableImageFileName(fileName: string): boolean {
     return BROWSER_RENDERABLE_IMAGE_EXTENSIONS.has(fileExtension(fileName));
 }
 
+export function chatUploadExtensions(
+    formats: ChatUploadFormats | undefined,
+    conversationId: string | null,
+    metadata: ConversationMetadata | null,
+    shared: boolean,
+    groupIds: readonly string[],
+): readonly string[] | null {
+    if (!formats || (conversationId && metadata?.conversation_id !== conversationId)) {
+        return null;
+    }
+    const current = conversationId ? metadata : null;
+    const type = String(current?.chat_type ?? '').trim().toLowerCase();
+    if (shared) {
+        if (type !== 'group_multi_user' && type !== 'personal_multi_user') return null;
+        return type === 'group_multi_user' ? formats.group : formats.personal;
+    }
+    const groupTypes = ['group', 'group-single-user', 'group_single_user', 'group_multi_user'];
+    const hasGroupContext = [...(current?.context ?? []), ...(current?.locked_contexts ?? [])]
+        .some((value) => {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+            const entry = value as Record<string, unknown>;
+            return String(entry.scope ?? '').trim().toLowerCase() === 'group'
+                && Boolean(entry.id || entry.group_id);
+        });
+    const scope = current?.scope;
+    const groupScope = scope && typeof scope === 'object' && !Array.isArray(scope)
+        ? scope as Record<string, unknown> : null;
+    const hasGroup = Boolean(current?.group_id)
+        || (String(groupScope?.type ?? '').trim().toLowerCase() === 'group'
+            && Boolean(groupScope?.group_id || groupScope?.id));
+    return groupTypes.includes(type) || hasGroupContext || hasGroup || groupIds.length > 0
+        ? formats.group : formats.personal;
+}
+
 export function chatUploadValidationError(
     file: File,
     enabled: boolean,
     maxSizeMb: unknown,
+    extensions: readonly string[] | null,
 ): string | null {
     if (!enabled) {
         return 'File uploads are not available for your account.';
     }
-    const extension = `.${file.name.split('.').pop()?.toLowerCase() ?? ''}`;
-    if (!CHAT_UPLOAD_ACCEPT.split(',').includes(extension)) {
+    if (!extensions) {
+        return 'Chat upload formats are unavailable. Reload the page or try again.';
+    }
+    if (!extensions.includes(fileExtension(file.name))) {
         return 'This file type is not supported for chat uploads.';
     }
     const limit = Number(maxSizeMb);

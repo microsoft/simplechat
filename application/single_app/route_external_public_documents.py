@@ -106,6 +106,7 @@ def register_route_external_public_documents(bp):
 
         processed_docs = []
         upload_errors = []
+        allowed_extensions = get_workspace_upload_extensions(get_settings())
 
         for file in files:
             if not file.filename:
@@ -116,7 +117,7 @@ def register_route_external_public_documents(bp):
             safe_suffix_filename = secure_filename(original_filename)
             file_ext = os.path.splitext(safe_suffix_filename)[1].lower()
 
-            if not allowed_file(original_filename):
+            if not allowed_file(original_filename, allowed_extensions):
                 upload_errors.append(f"File type not allowed for: {original_filename}")
                 continue
 

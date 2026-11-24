@@ -1,7 +1,7 @@
 # test_xsd_ingestion_generation_integration.py
 """
 Functional tests for XSD ingestion and schema-bound XML publication.
-Version: 0.261.023
+Version: 0.261.483
 Implemented in: 0.261.023
 
 These tests exercise the application integration boundaries without loading
@@ -1433,7 +1433,11 @@ def test_xsd_chat_upload_ui_is_capability_gated():
     assert 'public_settings["xsd_upload_available"] = bool(' in route_source
     assert 'enable_enhanced_citations' in route_source
     assert 'CLIENTS.get("storage_account_office_docs_client")' in route_source
-    assert "{% if settings.xsd_upload_available %},.xsd{% endif %}" in template_source
+    assert 'personal -= SCHEMA_EXTENSIONS' in route_source
+    assert 'group -= SCHEMA_EXTENSIONS' in route_source
+    assert 'chat_upload_extensions=sorted(chat_upload_extensions)' in route_source
+    assert 'chat_group_upload_extensions=sorted(chat_group_upload_extensions)' in route_source
+    assert 'for extension in chat_upload_extensions' in template_source
     assert "XSD uploads require Enhanced Citations" in route_source
     assert "XSD uploads require an enabled personal or group workspace" in route_source
 

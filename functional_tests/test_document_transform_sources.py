@@ -1,7 +1,7 @@
 # test_document_transform_sources.py
 """
 Functional tests for native Office reference intake and current-authority consumption.
-Version: 0.261.321
+Version: 0.261.483
 Implemented in: 0.261.321
 
 Real guarded packages and screening byte access run against isolated in-memory storage.
@@ -331,6 +331,8 @@ def test_blank_template_ingestion_retains_exact_source_without_di_or_indexing(ex
     namespace = {
         "open": lambda *args, **kwargs: io.BytesIO(content),
         "native_template_pages": native_template_pages, "current_extraction": lambda did: capture if screened else None,
+        "extract_office_accessibility_metadata": lambda *args: (None, None),
+        "_build_word_comment_chunks": lambda *args: ([], 0, 0),
         "json": json, "ContentUnit": ContentUnit, "get_settings": lambda: {},
         "get_chunk_size_config": lambda settings: {}, "WORD_CHUNK_SIZE": 1000,
         "chunk_word_file_into_pages": lambda **kwargs: kwargs["di_pages"],
@@ -511,6 +513,8 @@ def test_populated_template_ingestion_indexes_visible_text_and_reports_usage():
     namespace = {
         "open": lambda *args, **kwargs: io.BytesIO(content),
         "native_template_pages": native_template_pages, "current_extraction": lambda did: None,
+        "extract_office_accessibility_metadata": lambda *args: (None, None),
+        "_build_word_comment_chunks": lambda *args: ([], 0, 0),
         "get_settings": lambda: {}, "get_chunk_size_config": lambda settings: {}, "WORD_CHUNK_SIZE": 1000,
         "chunk_word_file_into_pages": lambda **kwargs: kwargs["di_pages"],
         "_build_office_embedded_image_chunks": lambda *args: ([], 0, "native", 0),

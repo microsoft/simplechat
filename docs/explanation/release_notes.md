@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.483)**
+
+#### Bug Fixes
+
+*   **Consistent Chat Upload Formats and Destinations**
+    *   Chat and workspace uploads now use a shared, feature-aware format policy. Chat accepts `.vsdx` diagrams, `.htm` is supported alongside `.html`, and existing `.dotx` and `.potx` template support is retained.
+    *   V2 uses the server's format list for file selection, paste, drop and retry, and reloads missing conversation details before choosing upload options.
+    *   An active group alone no longer sends new V2 chat uploads to that group. Group-scoped conversations and explicitly selected group context continue to use group upload routing.
+    *   (Ref: `functions_documents.py`, `route_frontend_chats.py`, `route_backend_v2.py`, `ComposerEditor.tsx`, `CHAT_UPLOAD_FORMAT_AND_DESTINATION_FIX.md`)
+
+*   **Advanced Search Opens Older Conversations**
+    *   Advanced-search results now open conversations even when they are not in the currently rendered conversation list. The app loads the conversation into the list before activating it, preventing the false “Conversation not found” result.
+    *   (Ref: `chat-conversations.js`, `test_chat_search_opens_unloaded_conversation.py`, `ADVANCED_CONVERSATION_SEARCH_FIX.md`)
+
+*   **PyJWT Padded-Token Compatibility**
+    *   Updated PyJWT from `2.15.0` to `2.15.1` to accept valid trailing Base64URL padding in JWS segments while continuing to reject non-Base64URL characters.
+    *   (Ref: `application/single_app/requirements.txt`, `application/single_app/requirements.lock.txt`, [PyJWT changelog](https://pyjwt.readthedocs.io/en/2.15.1/changelog.html))
 ### **(v0.261.481)**
 
 #### User Interface Enhancements
@@ -30,7 +47,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   In the V2 chat, a message's actions only appear when the pointer hovers over it, which never happens on a phone or tablet. Pressing and holding a message or generated image for about half a second now opens those actions in a bottom sheet: labelled buttons for Copy, Retry, Read aloud, feedback, sources, Fork and the rest, with the overflow menu's entries listed beneath.
     *   The sheet uses the same actions and handlers as the hover row, which is unchanged on desktop. Mouse input, scrolling, links, buttons and code blocks behave as before. Tap outside, press Escape, or swipe the sheet down to close it.
     *   (Ref: `useLongPress.ts`, `MessageActionSheet.tsx`, `MessageActions.tsx`, `MessageList.tsx`, `test_v2_chat_message_touch_sheet.py`, `V2_CHAT_MESSAGE_TOUCH_SHEET.md`)
-
 ### **(v0.261.475)**
 
 #### Bug Fixes

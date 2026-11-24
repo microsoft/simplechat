@@ -223,6 +223,7 @@ def register_route_backend_public_documents(bp):
             return jsonify({'error': 'No file part'}), 400
         files = request.files.getlist('file')
         processed, errors = [], []
+        allowed_extensions = get_workspace_upload_extensions(get_settings())
 
         for f in files:
             if not f.filename:
@@ -231,7 +232,7 @@ def register_route_backend_public_documents(bp):
             orig = f.filename
             safe_name = secure_filename(orig)
             ext = os.path.splitext(safe_name)[1].lower()
-            if not allowed_file(orig):
+            if not allowed_file(orig, allowed_extensions):
                 errors.append(f'Type not allowed: {orig}')
                 continue
             doc_id = str(uuid.uuid4())

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for chat clipboard paste upload support.
-Version: 0.261.046
+Version: 0.261.483
 Implemented in: 0.241.056; expanded in: 0.261.032; hardened in: 0.261.046
 
 This test ensures chat paste uploads route clipboard files through the shared
@@ -115,6 +115,21 @@ def test_chat_drag_and_drop_upload_binding():
     assert not missing, f"Missing drag-and-drop upload snippets: {missing}"
 
     print("✅ Chat drag-and-drop upload binding passed")
+
+
+def test_chat_picker_refreshes_after_scope_and_conversation_changes():
+    """Verify picker formats follow the same group scope used by uploads."""
+    content = read_file(CHAT_INPUT_ACTIONS_FILE)
+    required_snippets = [
+        "function updateChatUploadFileTypes() {",
+        "const isGroupUpload = getGroupUploadScopeIds().length > 0;",
+        "fileInputEl.dataset.groupAccept : fileInputEl.dataset.personalAccept",
+        'window.addEventListener("chat:scope-changed", updateChatUploadFileTypes);',
+        'window.addEventListener("chat:conversation-context-changed", updateChatUploadFileTypes);',
+        "updateChatUploadFileTypes();",
+    ]
+    missing = [snippet for snippet in required_snippets if snippet not in content]
+    assert not missing, f"Missing picker scope refresh behavior: {missing}"
 
 
 def test_chat_upload_reports_unreadable_files_with_recovery_guidance():

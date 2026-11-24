@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Outlook MSG file upload support.
-Version: 0.242.072
+Version: 0.261.483
 Implemented in: 0.242.063
 
 This test ensures Outlook .msg files are accepted for workspace and chat uploads,
@@ -17,6 +17,8 @@ import sys
 import types
 from pathlib import Path
 
+from test_support.versioning import assert_app_version_at_least
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SINGLE_APP_DIR = ROOT_DIR / "application" / "single_app"
@@ -28,7 +30,6 @@ CHAT_ROUTE_PATH = SINGLE_APP_DIR / "route_frontend_chats.py"
 GROUP_ROUTE_PATH = SINGLE_APP_DIR / "route_frontend_group_workspaces.py"
 CHAT_TEMPLATE_PATH = SINGLE_APP_DIR / "templates" / "chats.html"
 FEATURE_DOC_PATH = ROOT_DIR / "docs" / "explanation" / "features" / "v0.242.063" / "MSG_FILE_INGESTION.md"
-EXPECTED_CONFIG_VERSION = "0.242.072"
 EXPECTED_FEATURE_VERSION = "0.242.063"
 
 
@@ -162,7 +163,7 @@ def test_msg_extension_is_centrally_allowed():
     config_source = read_text(CONFIG_PATH)
     settings_source = read_text(FUNCTIONS_SETTINGS_PATH)
 
-    assert f'VERSION = "{EXPECTED_CONFIG_VERSION}"' in config_source
+    assert_app_version_at_least("0.242.072")
     assert_contains(
         config_source,
         [
@@ -199,18 +200,22 @@ def test_msg_processor_and_chat_paths_are_wired():
     assert_contains(
         chat_route_source,
         [
-            "| EMAIL_EXTENSIONS",
+            "get_workspace_upload_extensions(settings)",
             "elif file_ext_nodot == 'msg':",
             "extracted_content = extract_outlook_msg_text(temp_file_path)",
         ],
         "chat .msg handling",
     )
-    assert_contains(chat_template_source, [".docx,.msg", "docx, msg"], "chat picker .msg support")
+    assert_contains(
+        chat_template_source,
+        ["for extension in chat_upload_extensions", "chat_upload_extensions | join"],
+        "chat picker shared extension list",
+    )
     assert_contains(
         group_route_source,
         [
-            "allowed_extensions = sorted(get_allowed_extensions(",
-            "allowed_extensions_str = \"Allowed: \" + \", \".join(allowed_extensions)",
+            "allowed_extension_categories = get_allowed_extension_categories(",
+            "allowed_extension_categories=allowed_extension_categories",
         ],
         "central group workspace extension label",
     )

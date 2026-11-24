@@ -24,12 +24,19 @@ Use chat upload when you need to ask about a file in the moment: a PDF someone s
 - Admins must enable `enable_chat_file_uploads`; they may also require `require_member_of_chat_file_upload_user`; see [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}).
 - The file type must be in the accept list shown by the **File** button tooltip.
 - The file must fit within `max_file_size_mb` on [General settings]({{ '/admin/appearance/' | relative_url }}).
+- Chat and workspace uploads support the same document formats. Audio and video formats appear when their respective support is enabled; XSD files also require Enhanced Citations and available source storage.
+- HTML documents can use either the `.html` or `.htm` extension.
 
 ## Steps
 
 1. Open **Chat** and choose a conversation.
 2. Select **File** in the chat toolbar.
-3. Choose a supported local file; the button changes to the file name while upload starts.
+3. Choose a supported local file; the button changes to the file name while upload starts. In V2, the picker and pasted or dropped files use the server's format list for the current upload scope.
+
+You can also drag supported files into the chat input. Files sent to an enabled personal or group workspace are queued for the same processing as direct workspace uploads.
+In V2, an active group workspace alone does not make a new chat's uploads group uploads.
+Explicit group chat scope or selected group context can send files to a group workspace,
+where members with access may see them.
 
 {% include media.html src="guides/upload-documents-in-chat-step-3.png"
                       alt="Screenshot showing upload documents in chat step 3."
@@ -180,6 +187,8 @@ use **Use as reference** or **Edit** under the image. See
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | The **File** button is missing | Chat uploads are disabled or role-gated | Ask an admin to enable chat uploads and assign the role if required. |
+| V2 cannot load conversation upload options | Conversation details could not be retrieved | Select **Try again** beneath the message box. |
+| V2 says chat upload formats are unavailable | The server did not provide the upload format list | Reload the page; if the message persists after an update, ask an admin to check that the frontend and server are running the same release. |
 | Pasting a copied file or image does not attach it | The browser received only text, a path, a link, or HTML instead of an actual file | Use **Attach a file**. Pasting cannot bypass upload permissions or format restrictions. |
 | Image mode only accepts image files | With **Image** on, uploads become reference pictures for the image model | Turn off **Image** to upload documents for chat. |
 | Upload is disabled with **Image** on | The selected image model can't use reference images | Turn off **Image** before uploading, or ask an admin about an edit-capable image model. |

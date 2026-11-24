@@ -50,9 +50,11 @@ Both routes use the existing enhanced-citation authorization path and require `e
 
 No separate admin toggle is required beyond existing document upload and enhanced-citation settings.
 
+The chat file picker also accepts `.vsdx` files. Chat uploads use the personal or group workspace ingestion flow when that workspace is enabled; otherwise, personal chat extracts structured page text directly into the conversation. The chat-only path does not create workspace citations or retain the original Visio file.
+
 ## Testing and Validation
 
-Test coverage is provided by `functional_tests/test_visio_ingestion_preview.py`, which validates that `artifacts/architecture.vsdx` can be parsed, indexed into page content, rendered as a PNG preview, and expanded with master stencil geometry only for preview rendering. `functional_tests/test_visio_extensions_config.py` validates that the shared Visio extension constant remains exported and included in allowed uploads.
+Test coverage is provided by `functional_tests/test_visio_ingestion_preview.py`, which validates that `artifacts/architecture.vsdx` can be parsed, indexed into page content, rendered as a PNG preview, and expanded with master stencil geometry only for preview rendering. `functional_tests/test_visio_extensions_config.py` validates that the shared Visio extension constant remains exported and included in allowed uploads. `functional_tests/test_chat_visio_upload.py` covers chat workspace handoff and direct page extraction.
 
 ## Performance Considerations
 

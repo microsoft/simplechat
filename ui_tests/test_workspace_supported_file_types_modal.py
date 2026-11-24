@@ -1,7 +1,7 @@
 # test_workspace_supported_file_types_modal.py
 """
 UI contract test for workspace supported file type modals.
-Version: 0.261.142
+Version: 0.261.483
 Implemented in: 0.250.014
 OneNote coverage ported in: 0.261.142
 
@@ -57,6 +57,18 @@ def test_workspace_upload_areas_use_compact_modal_trigger() -> None:
         assert f'data-bs-target="#{modal_id}"' in content
         assert f"supported_file_types_modal('{modal_id}'" in content
         assert "allowed_extension_categories" in content
+
+
+def test_workspace_file_pickers_match_supported_categories() -> None:
+    """Validate all workspace pickers use the same categories as their modals."""
+    categories = [{"extensions": ["pdf", "vsdx"]}, {"extensions": ["mp4", "wav"]}]
+    for template_name in WORKSPACE_TEMPLATES:
+        content = (TEMPLATES_DIR / template_name).read_text(encoding="utf-8")
+        input_id = "workspace-file-input" if template_name == "workspace.html" else "file-input"
+        markup = next(line for line in content.splitlines() if f'id="{input_id}"' in line)
+        rendered = jinja2.Template(markup).render(allowed_extension_categories=categories)
+        accepted = rendered.split('accept="', 1)[1].split('"', 1)[0].split(",")
+        assert set(accepted) == {".pdf", ".vsdx", ".mp4", ".wav"}
 
 
 def test_workspace_routes_pass_supported_file_type_categories() -> None:

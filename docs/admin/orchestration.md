@@ -151,6 +151,7 @@ uses Auto (or the default model when Auto cannot be used) regardless of a saved 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Enable Chat Orchestration | Makes orchestration mode available in the V2 chat composer. New plans use Gather / Reason / Render whenever this is on. | Off | `enable_chat_orchestration` |
+| Recover From Step Failures | Applies defined recoveries within the approved plan and may allow one constrained follow-up attempt after a failed run. | Off | `enable_chat_orchestration_reactive_loop`; requires `enable_chat_orchestration`. |
 
 ### Single Gather / Reason / Render contract
 

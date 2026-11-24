@@ -57,6 +57,7 @@ from functions_public_workspaces import (
     get_user_visible_public_workspace_ids_from_settings,
 )
 from functions_simplechat_operations import upload_chat_image_bytes_for_user
+from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_appinsights import log_event
 from functions_document_provenance import chat_upload_origin
 from functions_chat_bootstrap_cache import (
@@ -70,15 +71,6 @@ from utils_cache import invalidate_group_search_cache, invalidate_personal_searc
 
 logger = logging.getLogger(__name__)
 
-
-CHAT_WORKSPACE_UPLOAD_EXTENSIONS = (
-    DOCUMENT_EXTENSIONS
-    | IMAGE_EXTENSIONS
-    | TABULAR_EXTENSIONS
-    | SCHEMA_EXTENSIONS
-    | EMAIL_EXTENSIONS
-    | {'doc', 'docm', 'html', 'txt', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
-)
 
 GROUP_CHAT_UPLOAD_ROLES = ('Owner', 'Admin', 'DocumentManager')
 GROUP_WORKFLOW_ACTIVITY_ROLES = ('Owner', 'Admin', 'DocumentManager', 'User')
@@ -112,6 +104,27 @@ XSD_CHAT_UPLOAD_DEFAULT_ERROR = (
 
 def _is_setting_enabled(value):
     return value is True or str(value).strip().lower() == 'true'
+
+
+def _build_chat_upload_formats(settings, source_storage_available):
+    personal = get_workspace_upload_extensions(settings)
+    group = personal.copy()
+    xsd_available = bool(
+        _is_setting_enabled(settings.get('enable_enhanced_citations', False))
+        and source_storage_available
+        and (
+            _is_setting_enabled(settings.get('enable_user_workspace', False))
+            or _is_setting_enabled(settings.get('enable_group_workspaces', False))
+        )
+    )
+    if not xsd_available:
+        personal -= SCHEMA_EXTENSIONS
+        group -= SCHEMA_EXTENSIONS
+    if not _is_setting_enabled(settings.get('enable_user_workspace', False)):
+        personal -= AUDIO_EXTENSIONS | VIDEO_EXTENSIONS | SCHEMA_EXTENSIONS | ONENOTE_EXTENSIONS
+    if not _is_setting_enabled(settings.get('enable_group_workspaces', False)):
+        group.clear()
+    return {"personal": sorted(personal), "group": sorted(group)}
 
 
 def _build_xsd_chat_upload_error_response(error):
@@ -781,9 +794,13 @@ def register_route_frontend_chats(bp):
         public_settings['deep_research_max_search_queries_per_turn'] = deep_research_config.get('deep_research_max_search_queries_per_turn')
         enable_user_feedback = public_settings.get("enable_user_feedback", False)
         enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
+        chat_upload_formats = _build_chat_upload_formats(
+            settings, bool(CLIENTS.get("storage_account_office_docs_client")),
+        )
+        chat_upload_extensions = chat_upload_formats["personal"]
+        chat_group_upload_extensions = chat_upload_formats["group"]
         public_settings["xsd_upload_available"] = bool(
-            enable_enhanced_citations
-            and CLIENTS.get("storage_account_office_docs_client")
+            SCHEMA_EXTENSIONS.intersection(set(chat_upload_extensions) | set(chat_group_upload_extensions))
         )
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
@@ -943,6 +960,8 @@ def register_route_frontend_chats(bp):
         return render_template(
             'chats.html',
             settings=public_settings,
+            chat_upload_extensions=sorted(chat_upload_extensions),
+            chat_group_upload_extensions=sorted(chat_group_upload_extensions),
             ai_notice=ai_notice,
             enable_user_feedback=enable_user_feedback,
             active_group_id=active_group_id,
@@ -1106,7 +1125,7 @@ def register_route_frontend_chats(bp):
             collaboration_conversation_id=(collaboration_conversation or {}).get('id'),
         )
         workspace_upload_enabled = _is_setting_enabled(settings.get('enable_group_workspaces', False)) if group_upload_target else _is_setting_enabled(settings.get('enable_user_workspace', False))
-        workspace_upload_supported = file_ext_nodot in CHAT_WORKSPACE_UPLOAD_EXTENSIONS and allowed_file(original_filename)
+        workspace_upload_supported = allowed_file(original_filename, get_workspace_upload_extensions(settings))
 
         if file_ext_nodot in SCHEMA_EXTENSIONS and not _is_setting_enabled(settings.get('enable_enhanced_citations', False)):
             if temp_file_path and os.path.exists(temp_file_path):
@@ -1407,7 +1426,7 @@ def register_route_frontend_chats(bp):
             # Check if this is an image file
             is_image_file = file_ext_nodot in IMAGE_EXTENSIONS
             
-            if file_ext_nodot in (DOCUMENT_EXTENSIONS | {'html'}) or is_image_file:
+            if file_ext_nodot in (DOCUMENT_EXTENSIONS | {'html', 'htm'}) or is_image_file:
                 extraction_mode = 'read'
                 if file_ext == '.pdf' or is_image_file:
                     extraction_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
@@ -1542,6 +1561,20 @@ def register_route_frontend_chats(bp):
                     extracted_content = extract_outlook_msg_text(temp_file_path)
                 except Exception as e:
                     return jsonify({'error': f'Error extracting text from {filename}: {e}'}), 500
+            elif file_ext_nodot in VISIO_EXTENSIONS:
+                try:
+                    pages = parse_vsdx_pages(temp_file_path)
+                    extracted_content = "\n\n".join(
+                        build_visio_page_markdown(filename, page) for page in pages
+                    )
+                except Exception as error:
+                    log_event(
+                        "[CHAT_UPLOAD] Failed to process Visio file.",
+                        {"filename": filename, "conversation_id": conversation_id, "error_type": type(error).__name__},
+                        level=logging.WARNING,
+                        exceptionTraceback=True,
+                    )
+                    return jsonify({'error': 'Unable to process the Visio file.'}), 500
             elif file_ext_nodot == 'txt':
                 extracted_content  = extract_text_file(temp_file_path)
             elif file_ext_nodot == 'md':

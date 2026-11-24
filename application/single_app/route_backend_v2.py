@@ -208,6 +208,7 @@ from functions_workspace_context import (
     build_public_workspace_context,
 )
 from route_frontend_chats import (
+    _build_chat_upload_formats,
     _build_chat_model_catalog,
     _build_chat_prompt_catalog,
     _build_initial_chat_model_selection,
@@ -1297,6 +1298,9 @@ def register_route_backend_v2(bp):
             timer.mark("notices")
             workspace_uploads = _build_workspace_uploads(public_settings)
             timer.mark("workspace_uploads")
+            chat_uploads = _build_chat_upload_formats(
+                settings, bool(CLIENTS.get("storage_account_office_docs_client")),
+            )
             session_block = _build_session(public_settings)
             timer.mark("session")
 
@@ -1335,6 +1339,7 @@ def register_route_backend_v2(bp):
                 "notices": notices,
                 "workspace": workspace,
                 "workspace_uploads": workspace_uploads,
+                "chat_uploads": chat_uploads,
                 "safety_warnings": {"pending": pending_safety_warnings},
                 "session": session_block,
                 "settings": public_settings,
