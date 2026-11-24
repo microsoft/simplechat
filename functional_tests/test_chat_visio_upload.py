@@ -1,8 +1,8 @@
 # test_chat_visio_upload.py
 """
 Regression tests for Visio chat uploads.
-Version: 0.261.053
-Implemented in: pending application version update
+Version: 0.261.483
+Implemented in: 0.261.483
 
 These tests exercise workspace handoff and chat-local extraction using the
 actual upload route body and the shared Visio parser.

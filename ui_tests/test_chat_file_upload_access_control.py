@@ -2,7 +2,7 @@
 """
 UI test for chat file upload access control.
 
-Version: 0.261.053
+Version: 0.261.483
 Implemented in: 0.241.110; expanded in: 0.242.063
 
 This test ensures the chat toolbar renders the file upload controls only when
@@ -35,6 +35,7 @@ def test_chat_picker_matches_workspace_formats(audio, video, xsd_available):
         "BASE_ALLOWED_EXTENSIONS", "DOCUMENT_EXTENSIONS", "IMAGE_EXTENSIONS",
         "TABULAR_EXTENSIONS", "SCHEMA_EXTENSIONS", "VISIO_EXTENSIONS",
         "EMAIL_EXTENSIONS", "AUDIO_EXTENSIONS", "VIDEO_EXTENSIONS",
+        "ONENOTE_EXTENSIONS",
     }
     definitions = [
         node for node in config_tree.body

@@ -1,7 +1,7 @@
 # test_workspace_supported_file_types_modal.py
 """
 UI contract test for workspace supported file type modals.
-Version: 0.261.142
+Version: 0.261.483
 Implemented in: 0.250.014
 OneNote coverage ported in: 0.261.142
 

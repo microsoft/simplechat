@@ -2,7 +2,7 @@
 # test_advanced_conversation_search_matching_fix.py
 """
 Functional test for the advanced conversation search matching fix.
-Version: 0.261.476
+Version: 0.261.483
 Implemented in: 0.241.097
 
 This test ensures that advanced conversation search uses partial matching by

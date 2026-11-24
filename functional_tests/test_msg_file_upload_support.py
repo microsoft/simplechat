@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Outlook MSG file upload support.
-Version: 0.242.072
+Version: 0.261.483
 Implemented in: 0.242.063
 
 This test ensures Outlook .msg files are accepted for workspace and chat uploads,
@@ -17,6 +17,8 @@ import sys
 import types
 from pathlib import Path
 
+from test_support.versioning import assert_app_version_at_least
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SINGLE_APP_DIR = ROOT_DIR / "application" / "single_app"
@@ -28,7 +30,6 @@ CHAT_ROUTE_PATH = SINGLE_APP_DIR / "route_frontend_chats.py"
 GROUP_ROUTE_PATH = SINGLE_APP_DIR / "route_frontend_group_workspaces.py"
 CHAT_TEMPLATE_PATH = SINGLE_APP_DIR / "templates" / "chats.html"
 FEATURE_DOC_PATH = ROOT_DIR / "docs" / "explanation" / "features" / "v0.242.063" / "MSG_FILE_INGESTION.md"
-EXPECTED_CONFIG_VERSION = "0.242.072"
 EXPECTED_FEATURE_VERSION = "0.242.063"
 
 
@@ -162,7 +163,7 @@ def test_msg_extension_is_centrally_allowed():
     config_source = read_text(CONFIG_PATH)
     settings_source = read_text(FUNCTIONS_SETTINGS_PATH)
 
-    assert f'VERSION = "{EXPECTED_CONFIG_VERSION}"' in config_source
+    assert_app_version_at_least("0.242.072")
     assert_contains(
         config_source,
         [

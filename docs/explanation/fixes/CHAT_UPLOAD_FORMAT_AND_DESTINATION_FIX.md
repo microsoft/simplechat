@@ -1,9 +1,9 @@
-# Chat Upload Format and Destination Fix (v0.261.476)
+# Chat Upload Format and Destination Fix (v0.261.483)
 
-Fixed/Implemented in version: **0.261.476**
+Fixed/Implemented in version: **0.261.483**
 
 The application version is maintained in `application/single_app/config.py` and
-remains **0.261.476**.
+remains **0.261.483**.
 
 ## Issue
 

@@ -59,7 +59,7 @@ Selecting a search result failed when its conversation was not among the list it
 
 ### Fix and version
 
-Implemented in version **0.261.476**. `selectConversation()` now ensures an unloaded conversation is added to the list before changing active state or notifying listeners, and reuses the fetched metadata for the selection. If loading fails, it reports the failure and leaves the current selection unchanged.
+Implemented in version **0.261.483**. `selectConversation()` now ensures an unloaded conversation is added to the list before changing active state or notifying listeners, and reuses the fetched metadata for the selection. If loading fails, it reports the failure and leaves the current selection unchanged.
 
 ### Files and validation
 

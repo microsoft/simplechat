@@ -1,7 +1,7 @@
 # test_v2_chat_clipboard_uploads.py
 """
 Browser regressions for React V2 clipboard and dropped chat attachments.
-Version: 0.261.368
+Version: 0.261.483
 Implemented in: 0.261.368
 
 The real composer, controlled editor, upload queue, and production styles run in
@@ -238,7 +238,7 @@ def test_new_conversation_and_metadata_invalidation_restore_uploads(clipboard_ui
     page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.setState({ metadata: null })")
     page.wait_for_function(
         "(id) => window.OrchHarness.stores.chat.useChatStore.getState().metadata?.conversation_id === id",
-        NEW_CONVERSATION,
+        arg=NEW_CONVERSATION,
     )
     expect(page.locator('input[type="file"]')).to_be_enabled()
     assert len([request for request in api.requests if request["path"].endswith("/metadata")]) == 2

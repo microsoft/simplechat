@@ -1,7 +1,7 @@
 # test_content_screening_pipeline.py
 """
 Functional integration tests for workspace admission and reviewed publication.
-Version: 0.261.400
+Version: 0.261.483
 Implemented in: 0.261.106
 The exec namespace carries ONENOTE_EXTENSIONS, which the upload path reads from 0.261.189: 0.261.189
 Enabled-empty upload admission implemented in: 0.261.114

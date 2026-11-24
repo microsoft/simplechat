@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for chat clipboard paste upload support.
-Version: 0.261.046
+Version: 0.261.483
 Implemented in: 0.241.056; expanded in: 0.261.032; hardened in: 0.261.046
 
 This test ensures chat paste uploads route clipboard files through the shared

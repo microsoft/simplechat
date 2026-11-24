@@ -1,7 +1,7 @@
 # test_document_transform_sources.py
 """
 Functional tests for native Office reference intake and current-authority consumption.
-Version: 0.261.321
+Version: 0.261.483
 Implemented in: 0.261.321
 
 Real guarded packages and screening byte access run against isolated in-memory storage.

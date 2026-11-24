@@ -1,8 +1,8 @@
 # test_chat_search_opens_unloaded_conversation.py
 """
 UI regression test for opening a conversation that is not currently rendered.
-Version: 0.261.476
-Implemented in: 0.261.476
+Version: 0.261.483
+Implemented in: 0.261.483
 
 This test ensures selecting an unloaded conversation fetches its metadata and
 adds it to the conversation list before notifying conversation-context listeners.
