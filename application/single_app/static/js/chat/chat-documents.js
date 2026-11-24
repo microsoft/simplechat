@@ -857,6 +857,84 @@ export function getEffectiveScopes() {
   };
 }
 
+export function buildChatLinkDocumentSourceSelection() {
+  const scopes = getEffectiveScopes();
+  const scopeCount = Number(scopes.personal)
+    + scopes.groupIds.length
+    + scopes.publicWorkspaceIds.length;
+  if (scopeCount !== 1 || !docSelectEl || getSelectedTags().length > 0) {
+    return null;
+  }
+
+  const selectedDocumentIds = Array.from(docSelectEl.options)
+    .filter(option => option.value && option.selected && !option.disabled)
+    .map(option => option.value);
+  if (!selectedDocumentIds.length) {
+    return null;
+  }
+
+  let scope = { kind: 'personal' };
+  if (scopes.groupIds.length === 1) {
+    scope = { kind: 'group', id: scopes.groupIds[0] };
+  } else if (scopes.publicWorkspaceIds.length === 1) {
+    scope = { kind: 'public', id: scopes.publicWorkspaceIds[0] };
+  }
+
+  return {
+    version: 1,
+    mode: 'selected',
+    sources: selectedDocumentIds.map(id => ({
+      kind: 'document',
+      id,
+      scope: { ...scope },
+    })),
+  };
+}
+
+export async function applyChatLinkDocumentSourceSelection(selection) {
+  if (
+    !selection
+    || selection.version !== 1
+    || selection.mode !== 'selected'
+    || !Array.isArray(selection.sources)
+    || !selection.sources.length
+    || selection.sources.some(source => source?.kind !== 'document')
+  ) {
+    throw new Error('The linked document selection is invalid.');
+  }
+
+  const scopes = selection.sources.map(source => source.scope);
+  const firstScope = scopes[0];
+  if (scopes.some(scope => JSON.stringify(scope) !== JSON.stringify(firstScope))) {
+    throw new Error('The linked documents must belong to one workspace.');
+  }
+
+  const nextScopes = {
+    personal: firstScope.kind === 'personal',
+    groupIds: firstScope.kind === 'group' ? [firstScope.id] : [],
+    publicWorkspaceIds: firstScope.kind === 'public' ? [firstScope.id] : [],
+  };
+  await setEffectiveScopes(nextScopes, {
+    force: true,
+    source: 'chat-link',
+  });
+  await ensureDocumentPickerReady({ reload: true, showLoading: true });
+  populateDocumentSelectScope();
+
+  const documentIds = selection.sources.map(source => source.id);
+  applyDocumentSelectionForIds(documentIds, { replaceSelection: true });
+  handleDocumentSelectChange();
+
+  const selected = new Set(Array.from(docSelectEl?.options || [])
+    .filter(option => option.value && option.selected && !option.disabled)
+    .map(option => option.value));
+  const missing = documentIds.filter(id => !selected.has(id));
+  if (missing.length > 0) {
+    throw new Error('One or more linked documents are no longer available.');
+  }
+  return true;
+}
+
 /* ---------------------------------------------------------------------------
    Scope Lock — exported functions
 --------------------------------------------------------------------------- */

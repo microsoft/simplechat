@@ -6,7 +6,7 @@ counts:
   admin_tabs: 49
   admin_sections: 109
   actions: 36
-  chat_controls: 47
+  chat_controls: 52
   sub_elements: 3
   app_pages: 34
   feature_surfaces: 26
@@ -1095,6 +1095,14 @@ chat_controls:
   label: Select an Agent
 - id: cancel-recording-btn
   label: Cancel Recording
+- id: chat-link-copy-btn
+  label: Copy
+- id: chat-link-create-btn
+  label: Create link
+- id: chat-link-revoke-confirm-btn
+  label: Revoke link
+- id: chat-link-start-normal-btn
+  label: Start a normal chat
 - id: chat-mobile-tools-toggle
   label: Tools
 - id: chat-tutorial-btn
@@ -1123,6 +1131,8 @@ chat_controls:
   label: Open used documents
 - id: conversation-info-btn
   label: View conversation details
+- id: create-chat-link-btn
+  label: Create a shareable chat link
 - id: delete-selected-btn
   label: Delete selected conversations
 - id: document-comparison-edit-btn

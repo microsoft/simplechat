@@ -22,6 +22,7 @@ if sys.platform == 'win32':
         sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
 import app_settings_cache
+from chat_link_contract import chat_link_reference_from_path
 from config import *
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel
@@ -95,6 +96,7 @@ from config import cosmos_action_credential_state_container
 from route_backend_search import *
 from route_backend_conversations import *
 from route_backend_conversation_handoffs import register_route_backend_conversation_handoffs
+from route_chat_links import register_route_chat_links
 from route_backend_documents import *
 from route_backend_groups import *
 from route_backend_users import *
@@ -1116,7 +1118,10 @@ def enforce_idle_session_timeout():
             idle_seconds = now_epoch - parsed_last_activity_epoch
             if idle_seconds >= (idle_timeout_minutes * 60):
                 user_id = session.get('user', {}).get('oid') or session.get('user', {}).get('sub')
+                pending_chat_link_reference = chat_link_reference_from_path(request.path)
                 session.clear()
+                if pending_chat_link_reference:
+                    remember_pending_chat_link_path(request.path, now=now_epoch)
 
                 log_event(
                     f"Session expired due to {idle_timeout_minutes} minute inactivity timeout for user {user_id or 'unknown'}.",
@@ -1133,6 +1138,8 @@ def enforce_idle_session_timeout():
                         'requires_reauth': True
                     }), 401
 
+                if pending_chat_link_reference:
+                    return redirect(url_for('frontend_authentication.login'))
                 return redirect(url_for('frontend_authentication.local_logout'))
         except Exception as e:
             log_event(f"Idle timeout evaluation failed: {e}", level=logging.WARNING)
@@ -1508,6 +1515,7 @@ register_route_blueprint('backend_content_screening', register_route_backend_con
 # ------------------- API Conversation Routes ------------
 register_route_blueprint('backend_conversations', register_route_backend_conversations, user_required_blueprint)
 register_route_blueprint('backend_conversation_handoffs', register_route_backend_conversation_handoffs, user_required_blueprint)
+register_route_blueprint('chat_links', register_route_chat_links, user_required_blueprint)
 
 # ------------------- API Collaboration Routes -----------
 register_route_blueprint('backend_collaboration', register_route_backend_collaboration, user_required_blueprint)

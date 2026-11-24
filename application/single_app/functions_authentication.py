@@ -3,10 +3,17 @@
 import base64
 import json
 import re
+import time
 from urllib.parse import unquote, urlparse
 
 from flask import has_request_context
 
+from chat_link_contract import (
+    CHAT_LINK_PENDING_MAX_AGE_SECONDS,
+    CHAT_LINK_PENDING_SESSION_KEY,
+    chat_link_reference_from_path,
+    normalize_chat_link_reference,
+)
 from config import *
 from functions_access_restriction import (
     ACCESS_RESTRICTED_ERROR,
@@ -27,6 +34,40 @@ from functions_debug import debug_print
 REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
 REQUESTED_SCOPES_SESSION_KEY = "requested_oauth_scopes"
 #REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
+
+
+def remember_pending_chat_link_path(path, *, now=None):
+    """Keep one valid chat-link path through the server-side login flow."""
+    reference = chat_link_reference_from_path(path)
+    if not reference:
+        return None
+    session[CHAT_LINK_PENDING_SESSION_KEY] = {
+        "reference": reference,
+        "created_at": int(time.time() if now is None else now),
+    }
+    session.modified = True
+    return reference
+
+
+def consume_pending_chat_link_reference(*, now=None):
+    """Consume an unexpired pending reference after successful authentication."""
+    value = session.pop(CHAT_LINK_PENDING_SESSION_KEY, None)
+    session.modified = True
+    if not isinstance(value, dict):
+        return None
+    reference = normalize_chat_link_reference(value.get("reference"))
+    try:
+        created_at = int(value.get("created_at"))
+    except (TypeError, ValueError):
+        return None
+    current = int(time.time() if now is None else now)
+    if (
+        not reference
+        or created_at > current
+        or current - created_at > CHAT_LINK_PENDING_MAX_AGE_SECONDS
+    ):
+        return None
+    return reference
 
 
 def apply_blueprint_auth(*decorators):
@@ -736,6 +777,7 @@ def login_required(f):
                 debug_print(f"API request to {request.path} blocked (401 Unauthorized). No valid session.")
                 return jsonify({"error": "Unauthorized", "message": "Authentication required"}), 401
             else:
+                remember_pending_chat_link_path(request.path)
                 debug_print(f"Browser request to {request.path} redirected ta login. No valid session.")
                 # Get settings from database, with environment variable fallback
                 from functions_settings import get_settings

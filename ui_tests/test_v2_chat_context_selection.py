@@ -1,13 +1,14 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.395
+Version: 0.261.473
 Implemented in: 0.261.094
 Single orchestration contract updated in: 0.261.181 (the React V2 branch's 0.261.139)
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
 The public chat list is answered as its route answers it (chat_list), with no generated artifact
 awaiting publication: 0.261.183
 The workspace Chat action starts a brand-new conversation instead of reusing the open one: 0.261.226
+Workspace chat deep-link launch and creation: 0.261.473
 
 The real Composer, DocumentExplorer, stores, router, and request builders run in the
 existing Playwright harness. The shared connection fixture supports a configured Azure
@@ -111,12 +112,61 @@ class ContextApi:
         self.deferred_document_ids = set()
         self.pending_documents = []
         self.expected_resource_errors = set()
+        self.chat_link_creations = []
+        self.chat_stream_bodies = []
 
     def handle(self, route: Route):
         request = route.request
         url = urlsplit(request.url)
         path = url.path
         self.requests.append((request.method, path))
+
+        if request.method == "GET" and path == "/api/chat-links":
+            route.fulfill(json={
+                "links": [],
+                "continuation_token": None,
+                "has_more": False,
+            })
+            return
+        if request.method == "POST" and path == "/api/chat-links":
+            self.chat_link_creations.append(request.post_data_json)
+            route.fulfill(json={
+                "reference": "LINK1234567890abcdefgh",
+                "path": "/l/LINK1234567890abcdefgh",
+                "created_at": "2026-11-24T12:00:00Z",
+                "expires_at": None,
+                "lifetime_days": None,
+                "routing": request.post_data_json["routing"],
+                "workspace": {"kind": "personal", "display_name": "My workspace"},
+                "document_source_selection": request.post_data_json["document_source_selection"],
+                "document_count": 1,
+            })
+            return
+        if request.method == "GET" and path == "/api/chat-links/LINK1234567890abcdefgh":
+            route.fulfill(json={
+                "reference": "LINK1234567890abcdefgh",
+                "path": "/l/LINK1234567890abcdefgh",
+                "created_at": "2026-11-24T12:00:00Z",
+                "expires_at": "2027-02-22T12:00:00Z",
+                "lifetime_days": 90,
+                "routing": {
+                    "kind": "model",
+                    "selection_key": "global:global:endpoint-1:model-1",
+                    "display_name": "Configured model",
+                },
+                "workspace": {"kind": "personal", "display_name": "My workspace"},
+                "document_source_selection": {
+                    "version": 1,
+                    "mode": "selected",
+                    "sources": [{
+                        "kind": "document",
+                        "id": "personal-brief",
+                        "scope": {"kind": "personal"},
+                    }],
+                },
+                "document_count": 1,
+            })
+            return
 
         if request.method == "POST" and path == "/api/create_conversation":
             route.fulfill(json={"conversation_id": HANDOFF_CONVERSATION_ID, "title": "New chat"})
@@ -127,6 +177,12 @@ class ContextApi:
             return
         if request.method == "GET" and path == "/api/v2/orchestration/runs":
             route.fulfill(json={"runs": []})
+            return
+        if request.method == "GET" and path == "/api/v2/orchestration/questions":
+            route.fulfill(json={"questions": [], "csrf_token": "synthetic-csrf"})
+            return
+        if request.method == "GET" and path == "/api/v2/user-input/pending":
+            route.fulfill(json={"requests": [], "csrf_token": "synthetic-csrf"})
             return
         if request.method == "GET" and path.startswith("/api/chat/stream/status/"):
             route.fulfill(json={"active": False, "pending": False, "reattachable": False})
@@ -146,6 +202,8 @@ class ContextApi:
             return
 
         if request.method == "POST" and path in STREAM_PATHS.values():
+            if path == STREAM_PATHS["chat"]:
+                self.chat_stream_bodies.append(request.post_data_json)
             if path == STREAM_PATHS["chat"]:
                 frames = [{"response": "Mock answer."}, {"done": True}]
             else:
@@ -382,6 +440,110 @@ def expect_pills(page: Page, *labels):
     expect(page.locator("button[aria-label^='Remove ']")).to_have_count(len(labels))
     for label in labels:
         expect(page.get_by_role("button", name=f"Remove {label}", exact=True)).to_have_count(1)
+
+
+def test_chat_link_hydrates_exact_setup_and_creates_never_expiring_link(context_page):
+    page, api = context_page
+    page.evaluate(
+        """() => {
+        const H = window.OrchHarness;
+        H.reset();
+        const model = {
+            selection_key: 'global:global:endpoint-1:model-1',
+            model_id: 'model-1',
+            deployment_name: 'deployment-1',
+            endpoint_id: 'endpoint-1',
+            provider: 'aoai',
+            scope_type: 'global',
+            scope_id: 'global',
+            display_name: 'Configured model',
+            model_name: 'Configured model',
+            reasoning_capabilities: {},
+        };
+        const bootstrap = H.stores.bootstrap.useBootstrapStore;
+        const data = {
+            features: {
+                enable_user_workspace: true,
+                enable_group_workspaces: true,
+                enable_public_workspaces: true,
+                enable_multi_model_endpoints: true,
+                enable_chat_orchestration: false,
+            },
+            orchestration: {
+                enabled: false,
+                show_manual_controls: true,
+                default_approval_mode: 'manual',
+            },
+            catalogs: {
+                prompts: [],
+                models: [model],
+                agents: [],
+                initial_model_selection: model,
+            },
+            settings: {},
+            user: { id: 'context-tester', display_name: 'Context Tester' },
+            scope: {
+                groups: [{ id: 'group-1', name: 'Marketing' }],
+                public_workspaces: [{ id: 'public-1', name: 'Handbook' }],
+                active_group_id: null,
+                active_public_workspace_id: null,
+            },
+        };
+        bootstrap.setState({
+            data,
+            refreshRequired: async () => bootstrap.getState().data,
+        });
+        H.stores.chat.useChatStore.setState({
+            activeConversationId: null,
+            activeConversationKind: null,
+            messages: [],
+            conversations: [],
+            streaming: false,
+            streamError: null,
+        });
+        H.mount('mount-a', 'ContextWorkflow', { nativeChat: true }, {
+            initialEntries: ['/chat?chat_link=LINK1234567890abcdefgh'],
+        });
+        }""",
+    )
+    expect(page.get_by_role("button", name="Remove Quarterly brief", exact=True)).to_be_visible()
+    expect(page.get_by_label("Current route", exact=True)).to_have_text("/chat")
+    assert not api.chat_link_creations
+    assert not any(path == "/api/create_conversation" for _method, path in api.requests)
+
+    create_link = page.get_by_title("Create chat link", exact=True)
+    if not create_link.is_visible():
+        page.get_by_title("Manual controls", exact=True).click()
+    create_link = page.get_by_title("Create chat link", exact=True)
+    expect(create_link).to_be_visible()
+    create_link.click()
+    expect(page.get_by_role("dialog", name="Create chat link", exact=True)).to_be_visible()
+    page.get_by_label("Expires after", exact=True).select_option("never")
+    page.get_by_role("button", name="Create link", exact=True).click()
+    expect(page.get_by_label("Shareable link", exact=True)).to_have_value(
+        "http://localhost/l/LINK1234567890abcdefgh"
+    )
+    assert api.chat_link_creations[-1]["lifetime_days"] is None
+    assert api.chat_link_creations[-1]["routing"] == {
+        "kind": "model",
+        "selection_key": "global:global:endpoint-1:model-1",
+    }
+    assert api.chat_link_creations[-1]["workspace"] == {"kind": "personal"}
+    assert api.chat_link_creations[-1]["document_source_selection"]["sources"] == [{
+        "kind": "document",
+        "id": "personal-brief",
+        "scope": {"kind": "personal"},
+    }]
+    page.get_by_role("button", name="Done", exact=True).click()
+    page.get_by_role("textbox", name="Message", exact=True).fill("Use the linked setup.")
+    with page.expect_request("**/api/chat/stream") as stream_request:
+        page.get_by_role("button", name="Send message", exact=True).click()
+    assert stream_request.value.post_data_json["chat_link_reference"] == "LINK1234567890abcdefgh"
+    assert stream_request.value.post_data_json["document_source_selection"]["sources"] == [{
+        "kind": "document",
+        "id": "personal-brief",
+        "scope": {"kind": "personal"},
+    }]
 
 
 def open_picker(page: Page):

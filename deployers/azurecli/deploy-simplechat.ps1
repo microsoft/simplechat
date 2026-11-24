@@ -1927,6 +1927,7 @@ if (-not $database) {
 $cosmosContainerDefinitions = @(
     @{ Name = "conversations"; PartitionKeyPath = "/id"; DefaultTtl = $null },
     @{ Name = "messages"; PartitionKeyPath = "/conversation_id"; DefaultTtl = $null },
+    @{ Name = "chat_links"; PartitionKeyPath = "/id"; DefaultTtl = -1 },
     @{ Name = "tabular_export_runs"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
     @{ Name = "personal_workflows"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
     @{ Name = "personal_workflow_runs"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },

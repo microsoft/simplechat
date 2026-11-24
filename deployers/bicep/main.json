@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "17202602035860581707"
+      "templateHash": "1124761919648484475"
     }
   },
   "parameters": {
@@ -1767,7 +1767,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "2652943481133147776"
+              "templateHash": "17852045265248692502"
             }
           },
           "parameters": {
@@ -1821,6 +1821,11 @@
                 "name": "messages",
                 "partitionKeyPath": "/conversation_id",
                 "defaultTtl": null
+              },
+              {
+                "name": "chat_links",
+                "partitionKeyPath": "/id",
+                "defaultTtl": -1
               },
               {
                 "name": "tabular_export_runs",

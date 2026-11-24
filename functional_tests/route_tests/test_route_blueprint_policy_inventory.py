@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.428
+Version: 0.261.473
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -23,6 +23,7 @@ Review center AI assist policy coverage: 0.261.299
 V2 Agents catalogue policy coverage: 0.261.305
 Native personal identity policy coverage: 0.261.315
 V2 user input policy coverage: 0.261.411
+Workspace chat-link policy coverage: 0.261.473
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -120,6 +121,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_v2_admin_agents_actions": ("login_required", "admin_required"),
     "backend_workflows": ("login_required", "user_required"),
     "backend_workspace_identities": ("login_required",),
+    "chat_links": ("login_required", "user_required"),
     "custom_pages": ("login_required",),
     "enhanced_citations": ("login_required", "user_required"),
     "external_health": (),
@@ -176,6 +178,8 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_summary"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_insights"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_chat_readiness"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_chat_links"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_revoke_chat_link"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_activity_logs"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_activity_summary"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_activity_export"): ("login_required", "control_center_required"),

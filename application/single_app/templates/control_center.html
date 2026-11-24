@@ -695,6 +695,14 @@
                 <i class="bi bi-folder2-open me-2"></i>Public Workspaces
             </button>
         </li>
+        {% if has_control_center_admin %}
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="chat-links-tab" data-bs-toggle="tab" data-bs-target="#chat-links"
+                type="button" role="tab" aria-controls="chat-links" aria-selected="false">
+                <i class="bi bi-link-45deg me-2"></i>Chat Links
+            </button>
+        </li>
+        {% endif %}
         <li class="nav-item" role="presentation">
             <button class="nav-link" id="activity-logs-tab" data-bs-toggle="tab" data-bs-target="#activity-logs"
                 type="button" role="tab" aria-controls="activity-logs" aria-selected="false">
@@ -1324,6 +1332,62 @@
                             </div>
                         </div>
                         
+                        {% if has_control_center_admin %}
+                        <!-- Chat Links Tab -->
+                        <div class="tab-pane fade" id="chat-links" role="tabpanel">
+                            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                                <div>
+                                    <h5 class="mb-1"><i class="bi bi-link-45deg me-2"></i>Chat Links</h5>
+                                    <p class="text-muted mb-0">Review active links across users and revoke links that should no longer launch.</p>
+                                </div>
+                                <button id="control-center-chat-links-refresh" type="button" class="btn btn-outline-primary btn-sm">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                                </button>
+                            </div>
+                            <div id="control-center-chat-links-error" class="alert alert-danger d-none" role="alert"></div>
+                            <div class="table-responsive border rounded">
+                                <table class="table table-hover align-middle mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Created by</th>
+                                            <th>Runner</th>
+                                            <th>Workspace</th>
+                                            <th>Documents</th>
+                                            <th>Lifetime</th>
+                                            <th>Created</th>
+                                            <th class="text-end">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="control-center-chat-links-body"></tbody>
+                                </table>
+                            </div>
+                            <div id="control-center-chat-links-empty" class="text-center text-muted py-4 d-none">
+                                There are no active chat links.
+                            </div>
+                            <button id="control-center-chat-links-more" type="button" class="btn btn-link btn-sm mt-2 d-none">Load more</button>
+                        </div>
+
+                        <div class="modal fade" id="control-center-chat-link-revoke-modal" tabindex="-1"
+                             aria-labelledby="control-center-chat-link-revoke-title" aria-hidden="true">
+                            <div class="modal-dialog modal-dialog-centered">
+                                <div class="modal-content">
+                                    <div class="modal-header">
+                                        <h5 class="modal-title" id="control-center-chat-link-revoke-title">Revoke chat link?</h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        The link will stop working immediately for its creator and all recipients.
+                                        Existing conversations are not changed.
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                        <button id="control-center-chat-link-revoke-confirm" type="button" class="btn btn-danger">Revoke link</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
                         <!-- Activity Logs Tab -->
                         <div class="tab-pane fade" id="activity-logs" role="tabpanel">
                             <div class="d-flex justify-content-between align-items-center mb-4">
@@ -3007,6 +3071,7 @@ window.hasControlCenterAdmin = JSON.parse('{{ has_control_center_admin|tojson }}
 </script>
 <script src="{{ url_for('static', filename='js/validation-utils.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/control-center.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/control-center-chat-links.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/control-center-usage.js') }}"></script>
 <script src="{{ url_for('static', filename='js/control-center-sidebar-nav.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/workspace-manager.js') }}"></script>

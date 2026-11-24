@@ -5,7 +5,8 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, activateUserWorkspaceContextForChatUpload, selectWorkspaceDocumentForChatUpload, registerConversationTaskDocument, updateConversationTaskDocumentsFromMessages, getConversationTaskDocumentIds, getConversationTaskDocumentSummary } from "./chat-documents.js";
+import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, buildChatLinkDocumentSourceSelection, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, activateUserWorkspaceContextForChatUpload, selectWorkspaceDocumentForChatUpload, registerConversationTaskDocument, updateConversationTaskDocumentsFromMessages, getConversationTaskDocumentIds, getConversationTaskDocumentSummary } from "./chat-documents.js";
+import { commitChatLinkReference, getChatLinkReferenceForRequest } from "./chat-links.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -7546,6 +7547,28 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     time_zone: getBrowserTimeZone(),
   };
 
+  const chatLinkDocumentSelection = buildChatLinkDocumentSourceSelection();
+  if (chatLinkDocumentSelection) {
+    const chatLinkReference = getChatLinkReferenceForRequest({
+      ...requestPayload,
+      document_source_selection: chatLinkDocumentSelection,
+    });
+    if (chatLinkReference && documentActionType === DOCUMENT_ACTION_NONE) {
+      requestPayload.document_source_selection = chatLinkDocumentSelection;
+      requestPayload.chat_link_reference = chatLinkReference;
+      delete requestPayload.selected_document_id;
+      delete requestPayload.selected_document_ids;
+      delete requestPayload.tags;
+      delete requestPayload.doc_scope;
+      delete requestPayload.active_group_id;
+      delete requestPayload.active_group_ids;
+      delete requestPayload.active_public_workspace_id;
+      delete requestPayload.active_public_workspace_ids;
+    } else if (chatLinkReference) {
+      commitChatLinkReference(chatLinkReference);
+    }
+  }
+
   if (documentActionType !== DOCUMENT_ACTION_NONE) {
     requestPayload.document_action = documentAction;
   }
@@ -7767,7 +7790,6 @@ export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
     );
     return;
   }
-
   // Append user message first with temporary ID
   appendMessage("You", finalMessageToSend, null, tempUserMessageId);
   userInput.value = "";
@@ -7781,7 +7803,12 @@ export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
     {
       endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream',
       fallbackAgentInfo: messageData.agent_info || null,
-      onDone: onVoiceResponseDone,
+      onDone: data => {
+        if (data?.status !== 'waiting_for_credentials' && messageData.chat_link_reference) {
+          commitChatLinkReference(messageData.chat_link_reference);
+        }
+        onVoiceResponseDone?.(data);
+      },
     }
   );
 

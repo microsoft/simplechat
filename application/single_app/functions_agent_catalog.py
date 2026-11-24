@@ -14,7 +14,11 @@ from functions_global_agents import get_global_agents
 from functions_group import get_group_model_endpoints
 from functions_group_actions import get_group_actions
 from functions_group_agents import get_group_agents
-from functions_governance import filter_actions_by_action_type_access, filter_governed_global_actions_for_user
+from functions_governance import (
+    ensure_governance_access,
+    filter_actions_by_action_type_access,
+    filter_governed_global_actions_for_user,
+)
 from functions_keyvault import SecretReturnType
 from functions_personal_actions import get_governed_personal_actions
 from functions_personal_agents import ensure_migration_complete, get_personal_agents
@@ -57,6 +61,30 @@ def build_agent_catalog_key(agent: Dict[str, Any]) -> str:
     if not agent_id:
         return ""
     return f"{scope_type}:{scope_id}:{agent_id}"
+
+
+def is_chat_agent_allowed_by_governance(
+    user_id: str,
+    agent: Dict[str, Any],
+    scope_type: Optional[str] = None,
+) -> bool:
+    """Return whether the current user may invoke this catalog agent in chat."""
+    resolved_scope_type = str(scope_type or agent.get("scope_type") or "personal").strip().lower()
+    try:
+        if resolved_scope_type == "global":
+            ensure_governance_access(
+                "governance_global_agents_usage",
+                user_id,
+                item_entity_type="global_agent",
+                item_id=str(agent.get("id") or agent.get("name") or ""),
+            )
+        elif resolved_scope_type == "group":
+            ensure_governance_access("governance_group_agents", user_id)
+        else:
+            ensure_governance_access("governance_user_agents", user_id)
+        return True
+    except PermissionError:
+        return False
 
 
 def _normalize_agent_tags(agent: Dict[str, Any]) -> List[str]:

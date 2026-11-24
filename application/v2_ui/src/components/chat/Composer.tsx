@@ -75,6 +75,10 @@ import {
 } from '../../lib/composerDraft';
 import { composerAttachmentDrafts, composerAttachmentOwner, useComposerAttachmentDraft } from '../../lib/composerAttachmentDrafts';
 import { clearChatUploadLocalPreviews } from '../../lib/chatUploads';
+import type {
+    ChatLinkCreatePayload,
+    ResolvedChatLink,
+} from '../../lib/chatLinks';
 import { AGREEMENT_PENDING_MESSAGE } from '../../lib/userAgreement';
 import { ComposerEditor, type ComposerEditorActions } from './ComposerEditor';
 import {
@@ -153,6 +157,7 @@ import { VoiceInput, type RecordingState } from './VoiceInput';
 import { WebSearchNotice } from './WebSearchNotice';
 import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
 import { useImageEditCapability } from '../../lib/imageRevisions';
+import { ChatLinkDialog } from './ChatLinkDialog';
 import {
     effectiveReferenceImageLimit,
     imageReferenceKey,
@@ -204,7 +209,13 @@ function currentAttachmentOwner() {
     );
 }
 
-export function Composer({ initialAgentSelection }: { initialAgentSelection?: string } = {}) {
+export function Composer({
+    initialAgentSelection,
+    initialChatLinkLaunch,
+}: {
+    initialAgentSelection?: string;
+    initialChatLinkLaunch?: ResolvedChatLink;
+} = {}) {
     const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
     const publicWorkspaceSelection = useChatStore((state) => state.publicWorkspaceSelection);
     const setPublicWorkspaceSelection = useChatStore((state) => state.setPublicWorkspaceSelection);
@@ -365,9 +376,98 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         imageGeneration: false,
         deepResearch: false,
         urlAccess: false,
-        agentSelection: initialAgentSelection,
+        agentSelection: initialChatLinkLaunch?.routing.kind === 'agent'
+            ? initialChatLinkLaunch.routing.selection_key
+            : initialAgentSelection,
+        modelDeployment: initialChatLinkLaunch?.routing.kind === 'model'
+            ? initialChatLinkLaunch.routing.selection_key
+            : undefined,
+        chatLinkReference: initialChatLinkLaunch?.reference,
     });
     const options = { ...manualOptions, documentSearch: attachments.documentSearch };
+    const [chatLinkDialogOpen, setChatLinkDialogOpen] = useState(false);
+    const chatLinkConfiguration = useMemo<Omit<ChatLinkCreatePayload, 'lifetime_days'> | null>(() => {
+        if (shared || publicWorkspaceSelection || !contextItems.length) return null;
+        const selection = documentSourceSelection(false, contextItems);
+        if (!selection || selection.mode !== 'selected' || !selection.sources.length
+            || selection.sources.some((source) => source.kind !== 'document')) {
+            return null;
+        }
+        const firstScope = selection.sources[0].scope;
+        if (selection.sources.some((source) =>
+            JSON.stringify(source.scope) !== JSON.stringify(firstScope))) {
+            return null;
+        }
+        if (options.agentSelection) {
+            const resolvableAgent = hasResolvableAgent(
+                bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                options.agentSelection,
+            );
+            if (!resolvableAgent) return null;
+        } else if (!findModel(
+            bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+            options.modelDeployment,
+        )) {
+            return null;
+        }
+        const workspace: ChatLinkCreatePayload['workspace'] = firstScope.kind === 'personal'
+            ? { kind: 'personal', display_name: 'My workspace' }
+            : {
+                kind: firstScope.kind,
+                id: firstScope.id,
+                display_name: (
+                    firstScope.kind === 'group'
+                        ? bootstrap?.scope?.groups
+                        : bootstrap?.scope?.public_workspaces
+                )?.find((item) => item.id === firstScope.id)?.name ?? firstScope.id,
+            };
+        return {
+            routing: options.agentSelection
+                ? { kind: 'agent', selection_key: options.agentSelection }
+                : { kind: 'model', selection_key: options.modelDeployment ?? '' },
+            workspace,
+            document_source_selection: selection,
+        };
+    }, [
+        shared,
+        publicWorkspaceSelection,
+        contextItems,
+        options.agentSelection,
+        options.modelDeployment,
+        bootstrap?.catalogs?.agents,
+        bootstrap?.catalogs?.models,
+        bootstrap?.scope,
+    ]);
+    useEffect(() => {
+        if (
+            !initialChatLinkLaunch
+            || !options.chatLinkReference
+            || !attachments.initialized
+        ) {
+            return;
+        }
+        const currentSelection = documentSourceSelection(false, contextItems);
+        const currentRouting = options.agentSelection
+            ? { kind: 'agent', selection_key: options.agentSelection }
+            : { kind: 'model', selection_key: options.modelDeployment ?? '' };
+        const changed = (
+            JSON.stringify(currentSelection)
+                !== JSON.stringify(initialChatLinkLaunch.document_source_selection)
+            || currentRouting.kind !== initialChatLinkLaunch.routing.kind
+            || currentRouting.selection_key !== initialChatLinkLaunch.routing.selection_key
+        );
+        if (changed) {
+            setOptions((current) => ({ ...current, chatLinkReference: undefined }));
+            toast.info('The linked configuration changed. This will use the normal chat flow.');
+        }
+    }, [
+        initialChatLinkLaunch,
+        options.chatLinkReference,
+        options.agentSelection,
+        options.modelDeployment,
+        attachments.initialized,
+        contextItems,
+    ]);
     const messagesLoading = useChatStore((state) => state.messagesLoading);
     const conversationMetadata = useChatStore((state) => state.metadata);
     const metadataLoading = useChatStore((state) => state.metadataLoading);
@@ -378,6 +478,23 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const [sourceMigrationError, setSourceMigrationError] = useState<string>();
     const [sourceMigrationRetry, setSourceMigrationRetry] = useState(0);
     useEffect(() => {
+        if (initialChatLinkLaunch && !activeConversationId && !shared && !attachments.initialized) {
+            const workspaces = [
+                ...(bootstrap?.scope?.groups ?? []).map((item) => ({ kind: 'group', ...item })),
+                ...(bootstrap?.scope?.public_workspaces ?? []).map((item) => ({ kind: 'public', ...item })),
+            ];
+            if (isDocumentSourceSelection(initialChatLinkLaunch.document_source_selection)) {
+                composerAttachmentDrafts.initialize(
+                    owner,
+                    restoreDocumentSources(
+                        initialChatLinkLaunch.document_source_selection,
+                        workspaces,
+                    ),
+                    initialChatLinkLaunch.document_source_selection.mode === 'all',
+                );
+            }
+            return;
+        }
         if (!activeConversationId || shared || messagesLoading || attachments.initialized) return;
         const latest = [...messages].reverse().find((message) =>
             message.role === 'user' && message.conversation_id === activeConversationId);
@@ -396,7 +513,17 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             isDocumentSourceSelection(saved) ? restoreDocumentSources(saved, workspaces, sourceDocuments) : [],
             isDocumentSourceSelection(saved) && saved.mode === 'all',
         );
-    }, [activeConversationId, messagesLoading, messages, shared, bootstrap?.scope, owner, attachments.initialized, sourceDocuments]);
+    }, [
+        activeConversationId,
+        messagesLoading,
+        messages,
+        shared,
+        bootstrap?.scope,
+        owner,
+        attachments.initialized,
+        sourceDocuments,
+        initialChatLinkLaunch,
+    ]);
     const missingSourceDetails = draft.contextItems.filter((item) =>
         item.kind === 'document' && item.label === DOCUMENT_DETAILS_UNAVAILABLE);
     const missingSourceDetailsKey = JSON.stringify(missingSourceDetails.map((item) => item.key));
@@ -544,12 +671,29 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             toast.error('Your saved mode choice could not be read in this browser. Choose your chat mode again.');
         }
     }, [savedMode]);
-    const orchestrating = (savedMode.choice ?? true) && orchestrationAvailable
-        && !options.agentSelection && !answeringFromStoredResult;
+    const orchestrating = !options.chatLinkReference
+        && (savedMode.choice ?? true)
+        && orchestrationAvailable
+        && !options.agentSelection
+        && !answeringFromStoredResult;
+    useEffect(() => {
+        if (options.chatLinkReference && options.imageGeneration) {
+            setOptions((current) => ({ ...current, chatLinkReference: undefined }));
+            toast.info(
+                'That chat mode changed the linked configuration and will use the normal authorized flow.',
+            );
+        }
+    }, [options.chatLinkReference, options.imageGeneration]);
     const toggleOrchestration = () => {
         clearAnalysisResultContext();
         const next = !orchestrating;
-        if (next) setOptions((current) => ({ ...current, agentSelection: undefined }));
+        if (next) {
+            setOptions((current) => ({
+                ...current,
+                agentSelection: undefined,
+                chatLinkReference: undefined,
+            }));
+        }
         rememberConversationMode(modeAccountId, activeConversationId, next);
     };
 
@@ -1390,6 +1534,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         const clearedRevision = clearDraft();
         void sending.then((result) => {
             if (result === false) recoverDraft(sentDraft, clearedRevision);
+            if (result !== false && options.chatLinkReference) {
+                setOptions((current) => ({ ...current, chatLinkReference: undefined }));
+            }
         });
         // Sent, so the indicator other people can see must stop now rather than when the
         // idle timer happens to fire.
@@ -2222,6 +2369,23 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     />
                                 )}
 
+                                {!shared && (
+                                    <ToolToggle
+                                        active={false}
+                                        onClick={() => {
+                                            if (!chatLinkConfiguration) {
+                                                toast.error(
+                                                    'Select an available agent or model and explicit documents from one workspace before creating a link.',
+                                                );
+                                                return;
+                                            }
+                                            setChatLinkDialogOpen(true);
+                                        }}
+                                        icon={<Link2 size={15} />}
+                                        label="Create chat link"
+                                    />
+                                )}
+
                                 {promptOptions.length > 0 && (
                                     <Dropdown
                                         floating
@@ -2445,6 +2609,12 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         setSavingDraft(null);
                         setSaveError(null);
                     }}
+                />
+            ) : null}
+            {chatLinkDialogOpen ? (
+                <ChatLinkDialog
+                    configuration={chatLinkConfiguration}
+                    onClose={() => setChatLinkDialogOpen(false)}
                 />
             ) : null}
         </div>

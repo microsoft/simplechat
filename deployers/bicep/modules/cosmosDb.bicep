@@ -32,6 +32,11 @@ var cosmosContainers = [
     defaultTtl: null
   }
   {
+    name: 'chat_links'
+    partitionKeyPath: '/id'
+    defaultTtl: -1
+  }
+  {
     name: 'tabular_export_runs'
     partitionKeyPath: '/user_id'
     defaultTtl: null

@@ -156,6 +156,7 @@ import asyncio, types
 import ast
 import csv
 from functools import wraps
+from functions_chat_links import ChatLinkError, authorize_chat_link_request
 from public_chat_scope import public_chat_scope_required
 from public_source_policy import current_public_source_policy
 from public_source_access import get_public_source_workspace_ids
@@ -176,7 +177,14 @@ from urllib.parse import urlparse
 import threading
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from config import *
-from flask import Response, copy_current_request_context, g, has_request_context, stream_with_context
+from flask import (
+    Response,
+    copy_current_request_context,
+    g,
+    has_request_context,
+    make_response,
+    stream_with_context,
+)
 from model_catalog_runtime import pin_catalog_task
 from functions_authentication import *
 from functions_search import *
@@ -9084,6 +9092,47 @@ def _persist_retry_terminal_payload(question, payload):
         'attempt_state': state,
     })
     return state
+
+
+def _with_chat_link_request(view):
+    """Reauthorize and compare an optional launch reference before chat work begins."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or "chat_link_reference" not in data:
+            return view(*args, **kwargs)
+        try:
+            authorize_chat_link_request(data, get_current_user_id())
+        except ChatLinkError as error:
+            log_event(
+                "[CHAT_LINKS] Chat send did not match the linked configuration.",
+                extra={"code": error.code, "status": error.status_code},
+                level=logging.INFO,
+                debug_only=True,
+            )
+            response = make_response(
+                jsonify({"error": error.code, "message": error.public_message}),
+                error.status_code,
+            )
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        except Exception as error:
+            log_event(
+                "[CHAT_LINKS] Could not authorize a linked chat send.",
+                extra={"error_type": type(error).__name__},
+                level=logging.WARNING,
+            )
+            response = make_response(
+                jsonify({
+                    "error": "chat_link_service_unavailable",
+                    "message": "Chat links could not be loaded. Please retry.",
+                }),
+                503,
+            )
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        return view(*args, **kwargs)
+    return wrapped
 
 
 def _with_prepared_chat_retry(view):
@@ -19109,6 +19158,7 @@ def register_route_backend_chats(bp):
     @login_required
     @user_required
     @_with_prepared_chat_retry
+    @_with_chat_link_request
     @public_chat_scope_required(
         _authorize_personal_conversation_access, get_current_user_id, get_settings,
         resolve_public_chat_workspace_ids, log_event,
@@ -23553,6 +23603,7 @@ def register_route_backend_chats(bp):
     @login_required
     @user_required
     @_with_prepared_chat_retry
+    @_with_chat_link_request
     @public_chat_scope_required(
         _authorize_personal_conversation_access, get_current_user_id, get_settings,
         resolve_public_chat_workspace_ids, log_event,

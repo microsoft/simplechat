@@ -10,7 +10,18 @@ audience: admin
 
 The V2 Control Center is a separate administration pane for users assigned Control Center access. It is kept out of the primary workspace navigation and appears in **Account → Control Center** when at least one Control Center capability is available to you.
 
-The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. Users, Groups and Public Workspaces have native V2 management.
+The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. Users, Groups, Public Workspaces and Chat Links have native V2 management.
+
+## Chat Links
+
+Implemented in **0.261.473**. Full Control Center administrators can open
+**Chat Links** to review all active server-backed launch references, including
+their creator, runner reference, workspace, document count, creation time, and
+selected expiry. Dashboard-only readers do not see this section.
+
+Revoke removes a link immediately for the creator and every recipient. It does
+not delete conversations that were already created, and it does not grant the
+administrator permission to launch the stored configuration.
 
 ## Refresh the stored figures
 

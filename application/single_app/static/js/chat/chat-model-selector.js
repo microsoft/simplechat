@@ -833,6 +833,37 @@ export async function populateModelDropdown(restoreOptions = {}) {
     suppressScopeNarrowing = false;
 }
 
+export async function selectModelForChatLink(selectionKey) {
+    if (!modelSelect || !selectionKey) {
+        return false;
+    }
+    await populateModelDropdown({
+        preferredModelId: selectionKey,
+        preferredModelDeployment: selectionKey,
+        preserveCurrentSelection: false,
+    });
+    const option = modelSelect.options[modelSelect.selectedIndex];
+    if (
+        !option
+        || option.disabled
+        || (option.dataset.selectionKey || option.value) !== selectionKey
+    ) {
+        return false;
+    }
+    const enableAgentsBtn = document.getElementById('enable-agents-btn');
+    const agentSelectContainer = document.getElementById('agent-select-container');
+    enableAgentsBtn?.classList.remove('active');
+    if (agentSelectContainer) {
+        agentSelectContainer.classList.add('d-none');
+    }
+    if (modelSelectContainer) {
+        modelSelectContainer.classList.remove('d-none');
+        modelSelectContainer.style.removeProperty('display');
+    }
+    modelSelectorController?.refresh();
+    return true;
+}
+
 export function refreshModelSelector() {
     if (!modelSelectorController) {
         initializeModelSelector();

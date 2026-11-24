@@ -7371,6 +7371,26 @@
         "functional_tests/test_workflow_task_result_handoff.py"
       ]
     },
+    "functional_tests/test_workspace_chat_links.py::FakeChatLinkContainer": {
+      "boundary": {
+        "sha256": "c2539ceab5df9d2eacd08fa666cf25946acbf6e7bc68ac130b35888bf1dc055e",
+        "methods": [
+          "create_item",
+          "delete_item",
+          "read_item"
+        ],
+        "kind": "class",
+        "inherited_bases": [],
+        "imports_sha256": "f2b6b2c75bb3d083bb877ef96247f80d7078e50fc54b6b8f8ee9973380db5bb2"
+      },
+      "classification": "sdk-default",
+      "contract": "The owner-runtime double returns installed-SDK CosmosDict for point reads and creates, plain dictionaries for query rows, and preserves partition routing plus 404/409 failures for chat-link CRUD.",
+      "tests": [
+        "functional_tests/test_workspace_chat_links.py::test_creation_uses_opaque_reference_and_selected_lifetime",
+        "functional_tests/test_workspace_chat_links.py::test_exact_configuration_is_bound_again_at_send_time",
+        "functional_tests/test_workspace_chat_links.py::test_owner_and_control_center_revocation_are_object_checked"
+      ]
+    },
     "functional_tests/test_workspace_metadata_outcomes.py::SdkProjectionContainer": {
       "boundary": {
         "imports_sha256": "b33aac7d8cb283a097c1feb2256ff82c9981bb1940cdeb364031e0fa913fd9d4",
@@ -10195,6 +10215,92 @@
       "evidence_scope": "sdk-api-and-source-review",
       "tests": [
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+      ]
+    },
+    "application/single_app/functions_chat_links.py::_read_record": {
+      "boundary": {
+        "sha256": "e3bc7a09cc733900163299d3e7d6947ec7a2a6ea2b8bf9a6525457bda24cfa02",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "target",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "5745e2f19c9c5aa01a249d242296be548074f3daf52c492b4d74f420c5278a49"
+      },
+      "classification": "normalized-strict",
+      "contract": "The point read is normalized from the installed SDK mapping to a plain dictionary before strict schema, ownership, expiry, and projection validation; malformed responses never become an empty success.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_workspace_chat_links.py::test_expiry_and_missing_permission_are_fail_closed",
+        "functional_tests/test_workspace_chat_links.py::test_exact_configuration_is_bound_again_at_send_time"
+      ]
+    },
+    "application/single_app/functions_chat_links.py::create_chat_link": {
+      "boundary": {
+        "sha256": "b96ae4082910622ff460aeb6bb2aafdf43ee0abcb67cefd34d3c2406b0441068",
+        "points": [
+          {
+            "method": "create_item",
+            "receiver": "target",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "5745e2f19c9c5aa01a249d242296be548074f3daf52c492b4d74f420c5278a49"
+      },
+      "classification": "normalized-strict",
+      "contract": "Returned create responses are normalized from CosmosDict and revalidated against the immutable chat-link schema before the route receives a safe projection; collision retries keep partition keys exact.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_workspace_chat_links.py::test_creation_uses_opaque_reference_and_selected_lifetime",
+        "functional_tests/test_workspace_chat_links.py::test_owner_and_control_center_revocation_are_object_checked"
+      ]
+    },
+    "application/single_app/functions_chat_links.py::list_chat_links": {
+      "boundary": {
+        "sha256": "c2fd9bbad7fd56ba50c0a021dc13b3d3fa50734352b7627273956016024f0ea9",
+        "points": [],
+        "queries": [
+          {
+            "method": "query_items",
+            "receiver": "target",
+            "response": "consumed"
+          }
+        ],
+        "batches": [],
+        "module_sha256": "5745e2f19c9c5aa01a249d242296be548074f3daf52c492b4d74f420c5278a49"
+      },
+      "classification": "normalized-strict",
+      "contract": "Paginated query rows stay plain dictionaries and are normalized before strict record validation; creator and expiry predicates are parameterized and only safe list projections leave the owner.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_workspace_chat_links.py::test_admin_listing_uses_parameterized_cross_partition_query"
+      ]
+    },
+    "application/single_app/functions_chat_links.py::revoke_chat_link": {
+      "boundary": {
+        "sha256": "501bf53083d84a7c98aa37d1c30e5d4d4deb89629c60b506a95ecff8b28083a7",
+        "points": [
+          {
+            "method": "delete_item",
+            "receiver": "target",
+            "response": "unused"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "5745e2f19c9c5aa01a249d242296be548074f3daf52c492b4d74f420c5278a49"
+      },
+      "classification": "response-unused",
+      "contract": "The owner first normalizes and authorizes a point-read record; the subsequent delete response is intentionally unused and missing-object failures remain explicit.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_workspace_chat_links.py::test_owner_and_control_center_revocation_are_object_checked"
       ]
     },
     "application/single_app/functions_chat_message_metadata.py::patch_message_metadata": {

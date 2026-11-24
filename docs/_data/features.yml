@@ -1,4 +1,4 @@
-# Feature documentation and full-slide explanations; capability snapshot 0.261.428.
+# Feature documentation and full-slide explanations; capability snapshot 0.261.473.
 # Collection page bodies are generated; keep durable explanations here.
 admin-support-exports:
   name: "Diagnostic support exports"
@@ -63,6 +63,21 @@ chat-file-uploads:
   guides:
     - title: "Upload documents in chat"
       url: /guides/upload-documents-in-chat/
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+workspace-chat-deep-links:
+  name: "Workspace chat deep links"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Creates short opaque URLs for an exact runner, one workspace, and explicitly selected documents."
+  why: "Use these links to communicate a repeatable chat setup through plain-text email. They never grant access: recipients are checked again against current workspace, sharing, model, agent, and document permissions when they open and first send."
+  default_state: "Enabled"
+  admin_tab: chat
+  setting_keys: []
+  guides:
+    - title: "Create workspace chat links"
+      url: /guides/create-workspace-chat-links/
   reference:
     - title: "Chat interface reference"
       url: /reference/chat-controls/

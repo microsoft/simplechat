@@ -9,6 +9,7 @@ import {
     Info,
     ListOrdered,
     ListTree,
+    Link2,
     Maximize2,
     Minimize2,
     MessageSquarePlus,
@@ -35,6 +36,8 @@ import { countConversationDocuments } from '../lib/conversationGeneratedFiles';
 import { resumeOrchestrationForConversation } from '../lib/orchestrationResume';
 import {
     hasWorkflowResultLaunch,
+    CHAT_LINK_PARAM,
+    readChatLinkParam,
     readConversationParam,
     readPendingActionFocus,
     readWorkflowResultLaunch,
@@ -61,6 +64,9 @@ import {
     readWorkspaceAgentLaunch, workspaceAgentForLaunch, workspaceAgentLaunchUnavailableMessage,
 } from '../lib/workspaceAgentLaunch';
 import { agentSelectionKey } from '../lib/agents';
+import { findAgent } from '../lib/agents';
+import { findModel } from '../lib/models';
+import { resolveChatLink, type ResolvedChatLink } from '../lib/chatLinks';
 import { toast } from '../stores/toastStore';
 import type { BootstrapPayload } from '../lib/types';
 import { readPublicWorkspaceSelection } from '../lib/publicChatScope';
@@ -94,6 +100,13 @@ function useConversationUrlSync() {
     const [launchAgentSelection, setLaunchAgentSelection] = useState<string>();
     const agentLinkConsumed = useRef(false);
     const agentLaunchRequest = useRef<Promise<BootstrapPayload> | null>(null);
+    const [chatLinkReference] = useState(() => readChatLinkParam(searchParams));
+    const [hasChatLinkRequest] = useState(() => searchParams.has(CHAT_LINK_PARAM));
+    const [chatLinkHandled, setChatLinkHandled] = useState(!hasChatLinkRequest);
+    const [chatLinkLaunch, setChatLinkLaunch] = useState<ResolvedChatLink>();
+    const [chatLinkError, setChatLinkError] = useState<string>();
+    const chatLinkConsumed = useRef(false);
+    const chatLinkRequest = useRef<Promise<[BootstrapPayload, ResolvedChatLink]> | null>(null);
     // Ask in chat (phase 6a): a new chat asking about one finished workflow run. Captured
     // during the first render like the others, and handled once.
     const [resultLaunch] = useState(() => readWorkflowResultLaunch(searchParams));
@@ -131,6 +144,65 @@ function useConversationUrlSync() {
         }, { replace: true });
         setPublicLaunchHandled(true);
     }, [hasPublicLaunch, publicLaunch, linkedConversationId, hasAgentRequest, hasResultRequest, setSearchParams]);
+
+    useEffect(() => {
+        if (!hasChatLinkRequest || chatLinkConsumed.current) return;
+        if (
+            !chatLinkReference
+            || linkedConversationId
+            || hasAgentRequest
+            || hasResultRequest
+            || hasPublicLaunch
+        ) {
+            chatLinkConsumed.current = true;
+            setChatLinkError('That chat link cannot be combined with another chat launch.');
+            setChatLinkHandled(true);
+            return;
+        }
+        let active = true;
+        chatLinkRequest.current ??= Promise.all([
+            useBootstrapStore.getState().refreshRequired(),
+            resolveChatLink(chatLinkReference),
+        ]);
+        void chatLinkRequest.current.then(([fresh, launch]) => {
+            if (!active || chatLinkConsumed.current) return;
+            chatLinkConsumed.current = true;
+            const routingExists = launch.routing.kind === 'agent'
+                ? Boolean(findAgent(
+                    fresh.catalogs?.agents as Record<string, unknown>[] | undefined,
+                    launch.routing.selection_key,
+                ))
+                : Boolean(findModel(
+                    fresh.catalogs?.models,
+                    launch.routing.selection_key,
+                ));
+            if (!routingExists) {
+                setChatLinkError('This chat link no longer matches an available agent or model.');
+                setChatLinkHandled(true);
+                return;
+            }
+            useChatStore.getState().startNewConversation();
+            setChatLinkLaunch(launch);
+            setChatLinkHandled(true);
+        }, (failure) => {
+            if (!active || chatLinkConsumed.current) return;
+            chatLinkConsumed.current = true;
+            setChatLinkError(
+                failure instanceof Error
+                    ? failure.message
+                    : "You don't have permission to use this linked configuration.",
+            );
+            setChatLinkHandled(true);
+        });
+        return () => { active = false; };
+    }, [
+        hasChatLinkRequest,
+        chatLinkReference,
+        linkedConversationId,
+        hasAgentRequest,
+        hasResultRequest,
+        hasPublicLaunch,
+    ]);
 
     useEffect(() => {
         if (pendingActionRequested.current || !pendingActionFocus || !linkedConversationId) {
@@ -209,7 +281,14 @@ function useConversationUrlSync() {
     useEffect(() => {
         // Held back until the link has been consumed, so the parameter survives long enough
         // to be read.
-        if (!linkHandled || !agentLaunchHandled || !resultLaunchHandled || !publicLaunchHandled) {
+        if (
+            !linkHandled
+            || !agentLaunchHandled
+            || !resultLaunchHandled
+            || !publicLaunchHandled
+            || !chatLinkHandled
+            || chatLinkError
+        ) {
             return;
         }
 
@@ -222,9 +301,37 @@ function useConversationUrlSync() {
         // `history.replaceState`: the address bar should describe what is open, not turn the
         // back button into a list of every conversation visited.
         setSearchParams(next, { replace: true });
-    }, [activeConversationId, linkHandled, agentLaunchHandled, resultLaunchHandled, publicLaunchHandled, searchParams, setSearchParams]);
+    }, [
+        activeConversationId,
+        linkHandled,
+        agentLaunchHandled,
+        resultLaunchHandled,
+        publicLaunchHandled,
+        chatLinkHandled,
+        chatLinkError,
+        searchParams,
+        setSearchParams,
+    ]);
 
-    return { launchAgentSelection, agentLaunchPending: !agentLaunchHandled };
+    const dismissChatLinkError = useCallback(() => {
+        setSearchParams((current) => {
+            const next = new URLSearchParams(current);
+            next.delete(CHAT_LINK_PARAM);
+            return next;
+        }, { replace: true });
+        setChatLinkError(undefined);
+        setChatLinkLaunch(undefined);
+        useChatStore.getState().startNewConversation();
+    }, [setSearchParams]);
+
+    return {
+        launchAgentSelection,
+        agentLaunchPending: !agentLaunchHandled,
+        chatLinkLaunch,
+        chatLinkPending: hasChatLinkRequest && !chatLinkHandled,
+        chatLinkError,
+        dismissChatLinkError,
+    };
 }
 
 function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
@@ -495,7 +602,14 @@ export function ChatPage() {
         (state) => state.setVisibleConversation,
     );
 
-    const { launchAgentSelection, agentLaunchPending } = useConversationUrlSync();
+    const {
+        launchAgentSelection,
+        agentLaunchPending,
+        chatLinkLaunch,
+        chatLinkPending,
+        chatLinkError,
+        dismissChatLinkError,
+    } = useConversationUrlSync();
 
     // Image approvals keep running after the reader goes elsewhere, and are reported by a
     // notice when they do. Only this page knows whether their cards are actually on screen:
@@ -530,8 +644,30 @@ export function ChatPage() {
         void resumeOrchestrationForConversation(activeConversationId);
     }, [activeConversationId, messagesLoading, messages]);
 
-    if (agentLaunchPending) {
-        return <div role="status" className="flex flex-1 items-center justify-center text-sm text-text-3">Opening agent chat...</div>;
+    if (agentLaunchPending || chatLinkPending) {
+        return (
+            <div role="status" className="flex flex-1 items-center justify-center text-sm text-text-3">
+                {chatLinkPending ? 'Opening linked chat...' : 'Opening agent chat...'}
+            </div>
+        );
+    }
+    if (chatLinkError) {
+        return (
+            <div className="flex flex-1 items-center justify-center p-6">
+                <div role="alert" className="max-w-lg rounded-2xl border border-edge bg-surface-1 p-6 text-center">
+                    <Link2 className="mx-auto text-danger" size={24} aria-hidden="true" />
+                    <h1 className="mt-3 text-lg font-semibold text-text-1">Chat link unavailable</h1>
+                    <p className="mt-2 text-sm text-text-2">{chatLinkError}</p>
+                    <button
+                        type="button"
+                        onClick={dismissChatLinkError}
+                        className="mt-5 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white"
+                    >
+                        Start a normal chat
+                    </button>
+                </div>
+            </div>
+        );
     }
 
     return (
@@ -541,7 +677,10 @@ export function ChatPage() {
                 <FileApprovals />
                 <InviteBanner />
                 <MessageList />
-                <Composer initialAgentSelection={launchAgentSelection} />
+                <Composer
+                    initialAgentSelection={launchAgentSelection}
+                    initialChatLinkLaunch={chatLinkLaunch}
+                />
             </div>
             <ConversationDrawer />
             <OrchestrationPlanEditorHost />

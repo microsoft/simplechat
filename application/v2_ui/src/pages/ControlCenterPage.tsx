@@ -7,7 +7,7 @@
 
 import { useState, type ComponentType } from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router-dom';
-import { Activity, BarChart3, FolderOpen, PanelLeftClose, PanelLeftOpen, Users } from 'lucide-react';
+import { Activity, BarChart3, FolderOpen, Link2, PanelLeftClose, PanelLeftOpen, Users } from 'lucide-react';
 import { clsx } from 'clsx';
 import { PageHeader } from '../components/layout/PageHeader';
 import { GlassPanel } from '../components/ui/primitives';
@@ -21,8 +21,9 @@ import { useUserSettingsStore } from '../stores/userSettingsStore';
 import { UsersSection } from '../components/controlCenter/UsersSection';
 import { GroupsSection } from '../components/controlCenter/GroupsSection';
 import { PublicWorkspacesSection } from '../components/controlCenter/PublicWorkspacesSection';
+import { ChatLinksSection } from '../components/controlCenter/ChatLinksSection';
 
-type SectionId = 'dashboard' | 'users' | 'groups' | 'public-workspaces' | 'activity-logs';
+type SectionId = 'dashboard' | 'users' | 'groups' | 'public-workspaces' | 'chat-links' | 'activity-logs';
 
 const SECTIONS: {
     id: SectionId;
@@ -34,6 +35,7 @@ const SECTIONS: {
     { id: 'users', label: 'Users', Icon: Users, capability: 'can_manage_users' },
     { id: 'groups', label: 'Groups', Icon: Users, capability: 'can_manage_groups' },
     { id: 'public-workspaces', label: 'Public Workspaces', Icon: FolderOpen, capability: 'can_manage_workspaces' },
+    { id: 'chat-links', label: 'Chat Links', Icon: Link2, capability: 'can_manage_users' },
     { id: 'activity-logs', label: 'Activity Logs', Icon: Activity, capability: 'can_view_activity_logs' },
 ];
 
@@ -44,6 +46,7 @@ const SECTION_VIEWS: Record<SectionId, ComponentType> = {
     users: UsersSection,
     groups: GroupsSection,
     'public-workspaces': PublicWorkspacesSection,
+    'chat-links': ChatLinksSection,
     'activity-logs': ActivityLogsSection,
 };
 
@@ -55,7 +58,14 @@ export function ControlCenterPage() {
     const updateUserSettings = useUserSettingsStore((state) => state.update);
     // Counts finished refreshes, so the section on screen reloads without losing its filters.
     const [dataVersion, setDataVersion] = useState(0);
-    const sections: SectionId[] = ['dashboard', 'users', 'groups', 'public-workspaces', 'activity-logs'];
+    const sections: SectionId[] = [
+        'dashboard',
+        'users',
+        'groups',
+        'public-workspaces',
+        'chat-links',
+        'activity-logs',
+    ];
     const section = (sections.includes(requestedSection as SectionId) ? requestedSection : 'dashboard') as SectionId;
     const current = SECTIONS.find((item) => item.id === section) ?? SECTIONS[0];
     const allowed = Boolean(capabilities?.[current.capability]);

@@ -264,6 +264,8 @@ export type ReconnectPhase = 'connecting' | 'reconnected' | null;
 export type OrchestrationSurfacePhase = 'planning' | 'running';
 
 export interface ComposerOptions {
+    /** Opaque link binding attached only to the launched draft's first send. */
+    chatLinkReference?: string;
     publicWorkspaceSelection?: PublicWorkspaceSelection | null;
     /**
      * The picker's selection key for the chosen model, NOT its deployment name.
@@ -3681,6 +3683,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 delete requestBody.active_public_workspace_id;
                 delete requestBody.active_public_workspace_ids;
             }
+        }
+        if (options.chatLinkReference) {
+            requestBody.chat_link_reference = options.chatLinkReference;
         }
         // Microsoft 365 email and event times in the answer are written in the reader's zone.
         const timeZone = requestTimeZone();

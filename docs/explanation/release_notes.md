@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.473)**
+
+#### New Features
+
+*   **Workspace Chat Deep Links**
+    *   Users can create compact `/l/<reference>` URLs that prepare a new private chat with one current agent or model, one workspace, and explicitly selected documents.
+    *   Creators choose 7, 30, 90, or 365 days, or **Never expires**; 90 days is the default. Links do not grant access and are reauthorized on creation, resolution, and first send.
+    *   Creators can revoke links from the chat dialog, and full Control Center administrators can list and revoke active links across the deployment in Classic or V2.
+    *   (Ref: `functions_chat_links.py`, `route_chat_links.py`, `ChatLinkDialog.tsx`, [Create workspace chat links](../guides/create-workspace-chat-links.md), [Workspace chat deep links](features/WORKSPACE_CHAT_DEEP_LINKS.md))
+
 ### **(v0.261.472)**
 
 #### New Features
