@@ -5,8 +5,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Copy, ExternalLink, Link2, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import {
     safeChatLinkUrl,
+    chatLinkDocumentLabel,
     chatLinkExpiryLabel,
     chatLinkLifetimeLabel,
+    chatLinkReasoningLabel,
     listControlCenterChatLinks,
     revokeControlCenterChatLink,
     type ChatLinkSummary,
@@ -104,7 +106,8 @@ export function ChatLinksSection() {
                                 <th className="px-4 py-3">Created by</th>
                                 <th className="px-4 py-3">Runner</th>
                                 <th className="px-4 py-3">Workspace</th>
-                                <th className="px-4 py-3">Documents</th>
+                                <th className="px-4 py-3">Sources</th>
+                                <th className="px-4 py-3">Reasoning</th>
                                 <th className="px-4 py-3">Lifetime</th>
                                 <th className="px-4 py-3">Created</th>
                                 <th className="px-4 py-3 text-right">Actions</th>
@@ -126,7 +129,12 @@ export function ChatLinksSection() {
                                         {link.workspace.kind}
                                         {link.workspace.id ? ` · ${link.workspace.id}` : ''}
                                     </td>
-                                    <td className="px-4 py-3 text-text-2">{link.document_count}</td>
+                                    <td className="px-4 py-3 text-text-2">
+                                        {chatLinkDocumentLabel(link)}
+                                    </td>
+                                    <td className="px-4 py-3 text-text-2">
+                                        {chatLinkReasoningLabel(link.routing, link.reasoning_effort)}
+                                    </td>
                                     <td className="px-4 py-3 text-text-2">
                                         <span className="block">{chatLinkLifetimeLabel(link.lifetime_days)}</span>
                                         <span className="block text-xs text-text-3">
@@ -171,7 +179,7 @@ export function ChatLinksSection() {
                             ))}
                             {!loading && links.length === 0 ? (
                                 <tr>
-                                    <td colSpan={7} className="px-4 py-10 text-center text-sm text-text-3">
+                                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-text-3">
                                         There are no active chat links.
                                     </td>
                                 </tr>

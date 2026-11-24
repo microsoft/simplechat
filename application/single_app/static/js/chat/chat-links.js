@@ -7,6 +7,11 @@ import {
 } from './chat-documents.js';
 import { selectAgentForChatLink } from './chat-agents.js';
 import { selectModelForChatLink } from './chat-model-selector.js';
+import {
+    clearReasoningForChatLink,
+    getCurrentReasoningEffort,
+    selectReasoningForChatLink,
+} from './chat-reasoning.js';
 import { showToast } from './chat-toast.js';
 
 const CHAT_LINK_REFERENCE_PATTERN = /^[A-Za-z0-9_-]{22}$/;
@@ -55,10 +60,15 @@ function workspaceName(scope) {
 
 function currentChatLinkConfiguration() {
     const documentSourceSelection = buildChatLinkDocumentSourceSelection();
-    if (
-        !documentSourceSelection
-        || documentSourceSelection.sources.some(source => source.kind !== 'document')
-    ) {
+    if (!documentSourceSelection) {
+        return null;
+    }
+    const wholeWorkspace = documentSourceSelection.sources.length === 1
+        && documentSourceSelection.sources[0].kind === 'workspace';
+    const explicitDocuments = documentSourceSelection.sources.every(
+        source => source.kind === 'document',
+    );
+    if (!wholeWorkspace && !explicitDocuments) {
         return null;
     }
     const sourceScope = documentSourceSelection.sources[0]?.scope;
@@ -70,6 +80,7 @@ function currentChatLinkConfiguration() {
     if (!agentSelection && !modelSelection) {
         return null;
     }
+    const reasoningEffort = agentSelection ? null : getCurrentReasoningEffort();
     return {
         routing: {
             kind: agentSelection ? 'agent' : 'model',
@@ -80,10 +91,18 @@ function currentChatLinkConfiguration() {
             ...(sourceScope.kind === 'personal' ? {} : { id: sourceScope.id }),
         },
         document_source_selection: documentSourceSelection,
+        reasoning_effort: reasoningEffort,
         display: {
             workspace: workspaceName(sourceScope),
-            documents: documentSourceSelection.sources.length,
+            documents: wholeWorkspace
+                ? 'All documents'
+                : documentSourceSelection.sources.length,
             runner: agentSelection ? 'Agent' : 'Model',
+            reasoning: agentSelection
+                ? 'Agent setting'
+                : reasoningEffort
+                    ? reasoningEffort.charAt(0).toUpperCase() + reasoningEffort.slice(1)
+                    : 'Model default',
         },
     };
 }
@@ -146,6 +165,24 @@ function formatExpiry(value) {
     return Number.isNaN(parsed.getTime()) ? 'Unknown' : parsed.toLocaleString();
 }
 
+function documentSelectionLabel(link) {
+    if (link.all_documents) {
+        return 'All documents';
+    }
+    const count = Number(link.document_count || 0);
+    return `${count} ${count === 1 ? 'document' : 'documents'}`;
+}
+
+function reasoningSelectionLabel(link) {
+    if (link.routing.kind === 'agent') {
+        return 'Agent setting';
+    }
+    const value = String(link.reasoning_effort || '').trim();
+    return value
+        ? value.charAt(0).toUpperCase() + value.slice(1)
+        : 'Model default';
+}
+
 function renderOwnLinks() {
     const list = getElement('chat-link-own-list');
     const empty = getElement('chat-link-own-empty');
@@ -162,7 +199,7 @@ function renderOwnLinks() {
         details.className = 'min-w-0';
         const title = document.createElement('div');
         title.className = 'fw-semibold';
-        title.textContent = `${link.routing.kind === 'agent' ? 'Agent' : 'Model'} · ${link.document_count} documents`;
+        title.textContent = `${link.routing.kind === 'agent' ? 'Agent' : 'Model'} · ${documentSelectionLabel(link)} · ${reasoningSelectionLabel(link)}`;
         const expiry = document.createElement('div');
         expiry.className = 'small text-muted';
         expiry.textContent = `${formatLifetime(link.lifetime_days)} · Expires ${formatExpiry(link.expires_at)}`;
@@ -207,9 +244,11 @@ function updateConfigurationSummary(configuration) {
     const runner = getElement('chat-link-summary-runner');
     const workspace = getElement('chat-link-summary-workspace');
     const documents = getElement('chat-link-summary-documents');
+    const reasoning = getElement('chat-link-summary-reasoning');
     if (runner) runner.textContent = configuration?.display?.runner || 'Not selected';
     if (workspace) workspace.textContent = configuration?.display?.workspace || 'Not selected';
     if (documents) documents.textContent = String(configuration?.display?.documents || 0);
+    if (reasoning) reasoning.textContent = configuration?.display?.reasoning || 'Not selected';
 }
 
 async function openCreateDialog() {
@@ -224,7 +263,7 @@ async function openCreateDialog() {
     }
     if (!configuration) {
         setDialogError(
-            'Select an available agent or model and explicit documents from one workspace before creating a link.',
+            'Select an available agent or model, then one workspace or explicit documents from one workspace before creating a link.',
         );
     }
     try {
@@ -239,7 +278,7 @@ async function createChatLink() {
     const configuration = currentChatLinkConfiguration();
     if (!configuration) {
         setDialogError(
-            'Select an available agent or model and explicit documents from one workspace before creating a link.',
+            'Select an available agent or model, then one workspace or explicit documents from one workspace before creating a link.',
         );
         return;
     }
@@ -260,6 +299,7 @@ async function createChatLink() {
                 routing: configuration.routing,
                 workspace: configuration.workspace,
                 document_source_selection: configuration.document_source_selection,
+                reasoning_effort: configuration.reasoning_effort,
                 lifetime_days: lifetimeDays,
             }),
         });
@@ -354,14 +394,34 @@ function requestRoutingMatches(payload, resolution) {
     );
 }
 
+function requestReasoningMatches(payload, resolution) {
+    if (
+        resolution.routing.kind === 'agent'
+        || resolution.reasoning_effort_bound !== true
+    ) {
+        return true;
+    }
+    const value = payload.reasoning_effort === undefined
+        || payload.reasoning_effort === null
+        || payload.reasoning_effort === ''
+        ? null
+        : String(payload.reasoning_effort).trim().toLowerCase();
+    return value === (resolution.reasoning_effort ?? null);
+}
+
 export function getChatLinkReferenceForRequest(payload) {
     if (!activeChatLinkBinding) {
         return null;
     }
     const selectionMatches = JSON.stringify(payload.document_source_selection)
         === JSON.stringify(activeChatLinkBinding.document_source_selection);
-    if (!selectionMatches || !requestRoutingMatches(payload, activeChatLinkBinding)) {
+    if (
+        !selectionMatches
+        || !requestRoutingMatches(payload, activeChatLinkBinding)
+        || !requestReasoningMatches(payload, activeChatLinkBinding)
+    ) {
         activeChatLinkBinding = null;
+        clearReasoningForChatLink();
         return null;
     }
     return activeChatLinkBinding.reference;
@@ -420,7 +480,15 @@ export async function launchChatLink(reference) {
         if (!selected) {
             throw new Error('The linked agent or model is no longer available.');
         }
+        if (
+            resolution.routing.kind === 'model'
+            && resolution.reasoning_effort_bound
+            && !selectReasoningForChatLink(resolution.reasoning_effort)
+        ) {
+            throw new Error('The linked reasoning effort is no longer available.');
+        }
         if (resolution.routing.kind === 'agent') {
+            clearReasoningForChatLink();
             await applyChatLinkDocumentSourceSelection(
                 resolution.document_source_selection,
             );
@@ -432,6 +500,11 @@ export async function launchChatLink(reference) {
             || current.routing.selection_key !== resolution.routing.selection_key
             || JSON.stringify(current.document_source_selection)
                 !== JSON.stringify(resolution.document_source_selection)
+            || (
+                resolution.reasoning_effort_bound
+                && resolution.routing.kind === 'model'
+                && current.reasoning_effort !== resolution.reasoning_effort
+            )
         ) {
             throw new Error('The linked configuration could not be applied exactly.');
         }
@@ -439,12 +512,16 @@ export async function launchChatLink(reference) {
             reference,
             routing: resolution.routing,
             document_source_selection: resolution.document_source_selection,
+            reasoning_effort: resolution.reasoning_effort ?? null,
+            reasoning_effort_bound: resolution.reasoning_effort_bound === true,
         };
         clearChatLinkParameter();
         getElement('chat-link-launch-error')?.classList.add('d-none');
         document.getElementById('user-input')?.focus();
         return true;
     } catch (error) {
+        activeChatLinkBinding = null;
+        clearReasoningForChatLink();
         setLaunchError(error instanceof Error
             ? error.message
             : 'The linked chat configuration could not be opened.');
@@ -479,6 +556,7 @@ export function initializeChatLinkControls() {
     getElement('chat-link-start-normal-btn')?.addEventListener('click', () => {
         clearChatLinkParameter();
         getElement('chat-link-launch-error')?.classList.add('d-none');
+        clearReasoningForChatLink();
         void prepareNewConversationDraft();
     });
 }

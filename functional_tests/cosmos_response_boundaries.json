@@ -10229,7 +10229,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5745e2f19c9c5aa01a249d242296be548074f3daf52c492b4d74f420c5278a49"
+        "module_sha256": "c4ca793fe39eaf4db0074e34c5efe1e52da7cc142219ffbd967a4ee18e2bfade"
       },
       "classification": "normalized-strict",
       "contract": "The point read is normalized from the installed SDK mapping to a plain dictionary before strict schema, ownership, expiry, and projection validation; malformed responses never become an empty success.",
@@ -10241,7 +10241,7 @@
     },
     "application/single_app/functions_chat_links.py::create_chat_link": {
       "boundary": {
-        "sha256": "b96ae4082910622ff460aeb6bb2aafdf43ee0abcb67cefd34d3c2406b0441068",
+        "sha256": "f7bd90598a5e77c5a8c54c1f79cd62c776da86c1716bf4197864685cb199e177",
         "points": [
           {
             "method": "create_item",
@@ -10251,7 +10251,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5745e2f19c9c5aa01a249d242296be548074f3daf52c492b4d74f420c5278a49"
+        "module_sha256": "c4ca793fe39eaf4db0074e34c5efe1e52da7cc142219ffbd967a4ee18e2bfade"
       },
       "classification": "normalized-strict",
       "contract": "Returned create responses are normalized from CosmosDict and revalidated against the immutable chat-link schema before the route receives a safe projection; collision retries keep partition keys exact.",
@@ -10273,7 +10273,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "5745e2f19c9c5aa01a249d242296be548074f3daf52c492b4d74f420c5278a49"
+        "module_sha256": "c4ca793fe39eaf4db0074e34c5efe1e52da7cc142219ffbd967a4ee18e2bfade"
       },
       "classification": "normalized-strict",
       "contract": "Paginated query rows stay plain dictionaries and are normalized before strict record validation; creator and expiry predicates are parameterized and only safe list projections leave the owner.",
@@ -10294,7 +10294,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5745e2f19c9c5aa01a249d242296be548074f3daf52c492b4d74f420c5278a49"
+        "module_sha256": "c4ca793fe39eaf4db0074e34c5efe1e52da7cc142219ffbd967a4ee18e2bfade"
       },
       "classification": "response-unused",
       "contract": "The owner first normalizes and authorizes a point-read record; the subsequent delete response is intentionally unused and missing-object failures remain explicit.",

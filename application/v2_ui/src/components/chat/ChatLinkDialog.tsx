@@ -6,8 +6,10 @@ import { Check, Copy, ExternalLink, Link2, Loader2, Trash2 } from 'lucide-react'
 import {
     safeChatLinkUrl,
     CHAT_LINK_LIFETIMES,
+    chatLinkDocumentLabel,
     chatLinkExpiryLabel,
     chatLinkLifetimeLabel,
+    chatLinkReasoningLabel,
     createChatLink,
     listChatLinks,
     revokeChatLink,
@@ -59,7 +61,7 @@ export function ChatLinkDialog({
 
     const create = async () => {
         if (!configuration) {
-            setError('Choose an agent or model, one workspace, and one or more explicit documents.');
+            setError('Choose an agent or model, then one workspace or explicit documents from one workspace.');
             return;
         }
         setCreating(true);
@@ -118,7 +120,7 @@ export function ChatLinkDialog({
                 <div className="space-y-5">
                     <div className="rounded-xl border border-edge bg-surface-2 p-4">
                         <p className="text-sm font-medium text-text-1">Link configuration</p>
-                        <div className="mt-3 grid gap-2 text-sm text-text-2 sm:grid-cols-3">
+                        <div className="mt-3 grid gap-2 text-sm text-text-2 sm:grid-cols-4">
                             <div>
                                 <span className="block text-xs text-text-3">Runner</span>
                                 <span className="font-medium text-text-1">
@@ -136,7 +138,22 @@ export function ChatLinkDialog({
                             <div>
                                 <span className="block text-xs text-text-3">Documents</span>
                                 <span className="font-medium text-text-1">
-                                    {configuration?.document_source_selection.sources.length ?? 0}
+                                    {configuration?.document_source_selection.sources.some(
+                                        (source) => source.kind === 'workspace',
+                                    )
+                                        ? 'All documents'
+                                        : configuration?.document_source_selection.sources.length ?? 0}
+                                </span>
+                            </div>
+                            <div>
+                                <span className="block text-xs text-text-3">Reasoning</span>
+                                <span className="font-medium text-text-1">
+                                    {configuration
+                                        ? chatLinkReasoningLabel(
+                                            configuration.routing,
+                                            configuration.reasoning_effort,
+                                        )
+                                        : 'Not selected'}
                                 </span>
                             </div>
                         </div>
@@ -219,7 +236,7 @@ export function ChatLinkDialog({
                                     <li key={link.reference} className="flex items-start justify-between gap-3 p-3 text-sm">
                                         <div className="min-w-0">
                                             <p className="font-medium text-text-1">
-                                                {link.routing.kind === 'agent' ? 'Agent' : 'Model'} · {link.document_count} documents
+                                                {link.routing.kind === 'agent' ? 'Agent' : 'Model'} · {chatLinkDocumentLabel(link)} · {chatLinkReasoningLabel(link.routing, link.reasoning_effort)}
                                             </p>
                                             <p className="mt-1 break-words text-xs text-text-3">
                                                 {chatLinkLifetimeLabel(link.lifetime_days)} · Expires {chatLinkExpiryLabel(link.expires_at)}

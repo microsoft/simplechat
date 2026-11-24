@@ -16,8 +16,8 @@ The section rail is filtered to your permissions. The Dashboard is available to 
 
 Implemented in **0.261.473**. Full Control Center administrators can open
 **Chat Links** to review all active server-backed launch references, including
-their creator, runner reference, workspace, document count, creation time, and
-selected expiry. Dashboard-only readers do not see this section.
+their creator, runner reference, workspace, whole-workspace or document count,
+reasoning effort, creation time, and selected expiry. Dashboard-only readers do not see this section.
 
 Revoke removes a link immediately for the creator and every recipient. It does
 not delete conversations that were already created, and it does not grant the

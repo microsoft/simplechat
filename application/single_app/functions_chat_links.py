@@ -37,6 +37,7 @@ from functions_appinsights import log_event
 from functions_chat_model_catalog import build_chat_model_catalog
 from functions_document_source_discovery import admit_document_source_selection, source_catalog
 from functions_group import get_user_groups
+from functions_model_capabilities import REASONING_EFFORTS
 from functions_settings import get_settings, get_user_settings
 
 
@@ -160,17 +161,33 @@ def _normalize_workspace(value):
     raise ChatLinkValidationError("Choose one workspace.")
 
 
+def normalize_chat_link_reasoning_effort(value):
+    """Return one supported provider reasoning value, or model/agent default."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ChatLinkValidationError("Choose a valid reasoning effort.")
+    normalized = value.strip().lower()
+    if normalized not in REASONING_EFFORTS:
+        raise ChatLinkValidationError("Choose a valid reasoning effort.")
+    return normalized
+
+
 def normalize_chat_link_configuration(value):
     """Return the strict server-owned subset of a creation payload."""
     if type(value) is not dict:
         raise ChatLinkValidationError()
     expected = {"routing", "workspace", "document_source_selection", "lifetime_days"}
-    if set(value) != expected:
+    allowed = expected | {"reasoning_effort"}
+    if not expected.issubset(value) or not set(value).issubset(allowed):
         raise ChatLinkValidationError()
 
     workspace = _normalize_workspace(value["workspace"])
     routing = _normalize_routing(value["routing"])
     lifetime_days = normalize_chat_link_lifetime(value["lifetime_days"])
+    reasoning_effort = normalize_chat_link_reasoning_effort(
+        value.get("reasoning_effort")
+    )
     try:
         document_selection = normalize_document_source_selection(
             value["document_source_selection"]
@@ -183,22 +200,36 @@ def normalize_chat_link_configuration(value):
         or document_selection["mode"] != "selected"
         or not document_selection["sources"]
     ):
-        raise ChatLinkValidationError("Choose one or more explicit documents.")
+        raise ChatLinkValidationError(
+            "Choose one workspace or one or more explicit documents."
+        )
     if len(document_selection["sources"]) > CHAT_LINK_MAX_DOCUMENTS:
         raise ChatLinkValidationError(
             f"Chat links support up to {CHAT_LINK_MAX_DOCUMENTS} selected documents."
         )
+    source_kinds = {source.get("kind") for source in document_selection["sources"]}
+    if source_kinds not in ({"document"}, {"workspace"}):
+        raise ChatLinkValidationError(
+            "Choose one workspace or explicit documents from that workspace."
+        )
+    if source_kinds == {"workspace"} and len(document_selection["sources"]) != 1:
+        raise ChatLinkValidationError("Choose only one workspace.")
     for source in document_selection["sources"]:
-        if source.get("kind") != "document" or source.get("scope") != workspace:
+        if source.get("scope") != workspace:
             raise ChatLinkValidationError(
-                "A chat link must select explicit documents from one workspace."
+                "Every linked source must belong to the selected workspace."
             )
+    if routing["kind"] == "agent" and reasoning_effort is not None:
+        raise ChatLinkValidationError(
+            "Agents use their own configured reasoning effort."
+        )
 
     return {
         "routing": routing,
         "workspace": workspace,
         "document_source_selection": document_selection,
         "lifetime_days": lifetime_days,
+        "reasoning_effort": reasoning_effort,
     }
 
 
@@ -231,6 +262,7 @@ def _normalize_record(record):
             "workspace": record.get("workspace"),
             "document_source_selection": record.get("document_source_selection"),
             "lifetime_days": lifetime_days,
+            "reasoning_effort": record.get("reasoning_effort"),
         })
     except ChatLinkValidationError as error:
         raise ChatLinkUnavailableError() from error
@@ -250,6 +282,7 @@ def _normalize_record(record):
         "created_at": iso_utc(created_at),
         "expires_at": iso_utc(expires_at) if expires_at else None,
         "lifetime_days": lifetime_days,
+        "_reasoning_effort_bound": "reasoning_effort" in record,
         **config,
     }
     if expires_at:
@@ -450,6 +483,25 @@ def resolve_chat_link_configuration(user_id, config, *, settings=None):
             routing_record, routing_projection = _resolve_model(
                 user_id, routing, settings
             )
+            reasoning_effort = config["reasoning_effort"]
+            reasoning_policy = (
+                routing_record.get("reasoning_capabilities")
+                if isinstance(routing_record, dict)
+                else None
+            )
+            supported_efforts = (
+                reasoning_policy.get("efforts")
+                if isinstance(reasoning_policy, dict)
+                and reasoning_policy.get("status") == "supported"
+                else []
+            )
+            if (
+                reasoning_effort is not None
+                and reasoning_effort not in (supported_efforts or [])
+            ):
+                raise ChatLinkValidationError(
+                    "The selected reasoning effort is not available for this model."
+                )
         workspace = _resolve_workspace(
             user_id,
             config["workspace"],
@@ -473,6 +525,10 @@ def resolve_chat_link_configuration(user_id, config, *, settings=None):
 
 
 def _resolved_projection(record, resolution):
+    all_documents = any(
+        source.get("kind") == "workspace"
+        for source in record["document_source_selection"]["sources"]
+    )
     return {
         "reference": record["id"],
         "path": f"/l/{record['id']}",
@@ -484,7 +540,14 @@ def _resolved_projection(record, resolution):
         "document_source_selection": deepcopy(
             record["document_source_selection"]
         ),
-        "document_count": len(record["document_source_selection"]["sources"]),
+        "document_count": (
+            None
+            if all_documents
+            else len(record["document_source_selection"]["sources"])
+        ),
+        "all_documents": all_documents,
+        "reasoning_effort": record["reasoning_effort"],
+        "reasoning_effort_bound": record.get("_reasoning_effort_bound", False),
     }
 
 
@@ -493,11 +556,14 @@ def resolve_chat_link(reference, user_id, *, settings=None, container=None, now=
     record = _read_record(reference, container=container)
     if _record_is_expired(record, now=now):
         raise ChatLinkUnavailableError()
-    resolution = resolve_chat_link_configuration(
-        user_id,
-        record,
-        settings=settings,
-    )
+    try:
+        resolution = resolve_chat_link_configuration(
+            user_id,
+            record,
+            settings=settings,
+        )
+    except ChatLinkValidationError as error:
+        raise ChatLinkUnavailableError() from error
     return {
         "record": record,
         "routing_record": resolution["routing_record"],
@@ -544,6 +610,7 @@ def create_chat_link(
             "created_at": iso_utc(created_at),
             "expires_at": iso_utc(expires_at) if expires_at else None,
             "lifetime_days": config["lifetime_days"],
+            "reasoning_effort": config["reasoning_effort"],
             "routing": deepcopy(config["routing"]),
             "workspace": deepcopy(config["workspace"]),
             "document_source_selection": deepcopy(
@@ -578,6 +645,10 @@ def create_chat_link(
 
 
 def _list_projection(record, *, include_creator):
+    all_documents = any(
+        source.get("kind") == "workspace"
+        for source in record["document_source_selection"]["sources"]
+    )
     projected = {
         "reference": record["id"],
         "path": f"/l/{record['id']}",
@@ -589,7 +660,13 @@ def _list_projection(record, *, include_creator):
             "selection_key": record["routing"]["selection_key"],
         },
         "workspace": deepcopy(record["workspace"]),
-        "document_count": len(record["document_source_selection"]["sources"]),
+        "document_count": (
+            None
+            if all_documents
+            else len(record["document_source_selection"]["sources"])
+        ),
+        "all_documents": all_documents,
+        "reasoning_effort": record["reasoning_effort"],
     }
     if include_creator:
         projected["created_by_user_id"] = record["created_by_user_id"]
@@ -742,6 +819,18 @@ def authorize_chat_link_request(data, user_id, *, settings=None, container=None)
         raise ChatLinkConflictError() from error
     if request_selection != record["document_source_selection"]:
         raise ChatLinkConflictError()
+    if (
+        record.get("_reasoning_effort_bound", False)
+        and record["routing"]["kind"] == "model"
+    ):
+        try:
+            request_reasoning = normalize_chat_link_reasoning_effort(
+                data.get("reasoning_effort")
+            )
+        except ChatLinkValidationError as error:
+            raise ChatLinkConflictError() from error
+        if request_reasoning != record["reasoning_effort"]:
+            raise ChatLinkConflictError()
 
     if record["routing"]["kind"] == "agent":
         request_agent = data.get("agent_info")

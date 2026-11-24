@@ -1,4 +1,4 @@
-# Feature documentation and full-slide explanations; capability snapshot 0.261.473.
+# Feature documentation and full-slide explanations; capability snapshot 0.261.474.
 # Collection page bodies are generated; keep durable explanations here.
 admin-support-exports:
   name: "Diagnostic support exports"
@@ -70,7 +70,7 @@ workspace-chat-deep-links:
   name: "Workspace chat deep links"
   area: "Chat and retrieval"
   audience: "End users"
-  summary: "Creates short opaque URLs for an exact runner, one workspace, and explicitly selected documents."
+  summary: "Creates short opaque URLs for an exact runner, one whole workspace or selected documents, and the selected reasoning effort."
   why: "Use these links to communicate a repeatable chat setup through plain-text email. They never grant access: recipients are checked again against current workspace, sharing, model, agent, and document permissions when they open and first send."
   default_state: "Enabled"
   admin_tab: chat

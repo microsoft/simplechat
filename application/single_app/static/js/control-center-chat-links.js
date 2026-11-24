@@ -25,6 +25,24 @@ function formatDate(value) {
     return Number.isNaN(parsed.getTime()) ? 'Unknown' : parsed.toLocaleString();
 }
 
+function documentSelectionLabel(link) {
+    if (link.all_documents) {
+        return 'All documents';
+    }
+    const count = Number(link.document_count || 0);
+    return `${count} ${count === 1 ? 'document' : 'documents'}`;
+}
+
+function reasoningSelectionLabel(link) {
+    if (link.routing.kind === 'agent') {
+        return 'Agent setting';
+    }
+    const value = String(link.reasoning_effort || '').trim();
+    return value
+        ? value.charAt(0).toUpperCase() + value.slice(1)
+        : 'Model default';
+}
+
 function normalizeChatLinkUrl(path) {
     if (!/^\/l\/[A-Za-z0-9_-]{22}$/.test(path || '')) {
         return '';
@@ -92,7 +110,9 @@ function renderRows() {
             ? `${link.workspace.kind} · ${link.workspace.id}`
             : link.workspace.kind;
         const documents = document.createElement('td');
-        documents.textContent = String(link.document_count);
+        documents.textContent = documentSelectionLabel(link);
+        const reasoning = document.createElement('td');
+        reasoning.textContent = reasoningSelectionLabel(link);
         const lifetime = document.createElement('td');
         const lifetimeLabel = document.createElement('div');
         lifetimeLabel.textContent = formatLifetime(link.lifetime_days);
@@ -131,7 +151,7 @@ function renderRows() {
             }, 'outline-danger'),
         );
         actions.appendChild(actionGroup);
-        row.append(creator, runner, workspace, documents, lifetime, created, actions);
+        row.append(creator, runner, workspace, documents, reasoning, lifetime, created, actions);
         body.appendChild(row);
     });
     empty.classList.toggle('d-none', chatLinkRows.length > 0);

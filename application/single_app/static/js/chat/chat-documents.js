@@ -869,9 +869,6 @@ export function buildChatLinkDocumentSourceSelection() {
   const selectedDocumentIds = Array.from(docSelectEl.options)
     .filter(option => option.value && option.selected && !option.disabled)
     .map(option => option.value);
-  if (!selectedDocumentIds.length) {
-    return null;
-  }
 
   let scope = { kind: 'personal' };
   if (scopes.groupIds.length === 1) {
@@ -883,11 +880,13 @@ export function buildChatLinkDocumentSourceSelection() {
   return {
     version: 1,
     mode: 'selected',
-    sources: selectedDocumentIds.map(id => ({
-      kind: 'document',
-      id,
-      scope: { ...scope },
-    })),
+    sources: selectedDocumentIds.length > 0
+      ? selectedDocumentIds.map(id => ({
+          kind: 'document',
+          id,
+          scope: { ...scope },
+        }))
+      : [{ kind: 'workspace', scope: { ...scope } }],
   };
 }
 
@@ -898,7 +897,15 @@ export async function applyChatLinkDocumentSourceSelection(selection) {
     || selection.mode !== 'selected'
     || !Array.isArray(selection.sources)
     || !selection.sources.length
-    || selection.sources.some(source => source?.kind !== 'document')
+    || selection.sources.some(source => !['document', 'workspace'].includes(source?.kind))
+  ) {
+    throw new Error('The linked document selection is invalid.');
+  }
+  const hasWorkspaceSource = selection.sources.some(source => source.kind === 'workspace');
+  if (
+    (hasWorkspaceSource && selection.sources.length !== 1)
+    || selection.sources.some(source =>
+      !hasWorkspaceSource && source.kind !== 'document')
   ) {
     throw new Error('The linked document selection is invalid.');
   }
@@ -921,7 +928,9 @@ export async function applyChatLinkDocumentSourceSelection(selection) {
   await ensureDocumentPickerReady({ reload: true, showLoading: true });
   populateDocumentSelectScope();
 
-  const documentIds = selection.sources.map(source => source.id);
+  const documentIds = hasWorkspaceSource
+    ? []
+    : selection.sources.map(source => source.id);
   applyDocumentSelectionForIds(documentIds, { replaceSelection: true });
   handleDocumentSelectChange();
 

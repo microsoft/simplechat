@@ -382,6 +382,9 @@ export function Composer({
         modelDeployment: initialChatLinkLaunch?.routing.kind === 'model'
             ? initialChatLinkLaunch.routing.selection_key
             : undefined,
+        reasoningEffort: initialChatLinkLaunch?.reasoning_effort_bound
+            ? initialChatLinkLaunch.reasoning_effort ?? undefined
+            : undefined,
         chatLinkReference: initialChatLinkLaunch?.reference,
     });
     const options = { ...manualOptions, documentSearch: attachments.documentSearch };
@@ -389,8 +392,15 @@ export function Composer({
     const chatLinkConfiguration = useMemo<Omit<ChatLinkCreatePayload, 'lifetime_days'> | null>(() => {
         if (shared || publicWorkspaceSelection || !contextItems.length) return null;
         const selection = documentSourceSelection(false, contextItems);
-        if (!selection || selection.mode !== 'selected' || !selection.sources.length
-            || selection.sources.some((source) => source.kind !== 'document')) {
+        if (!selection || selection.mode !== 'selected' || !selection.sources.length) {
+            return null;
+        }
+        const sourceKinds = new Set(selection.sources.map((source) => source.kind));
+        const wholeWorkspace = sourceKinds.size === 1
+            && sourceKinds.has('workspace')
+            && selection.sources.length === 1;
+        const explicitDocuments = sourceKinds.size === 1 && sourceKinds.has('document');
+        if (!wholeWorkspace && !explicitDocuments) {
             return null;
         }
         const firstScope = selection.sources[0].scope;
@@ -427,6 +437,9 @@ export function Composer({
                 : { kind: 'model', selection_key: options.modelDeployment ?? '' },
             workspace,
             document_source_selection: selection,
+            reasoning_effort: options.agentSelection
+                ? null
+                : options.reasoningEffort ?? null,
         };
     }, [
         shared,
@@ -434,6 +447,7 @@ export function Composer({
         contextItems,
         options.agentSelection,
         options.modelDeployment,
+        options.reasoningEffort,
         bootstrap?.catalogs?.agents,
         bootstrap?.catalogs?.models,
         bootstrap?.scope,
@@ -455,6 +469,11 @@ export function Composer({
                 !== JSON.stringify(initialChatLinkLaunch.document_source_selection)
             || currentRouting.kind !== initialChatLinkLaunch.routing.kind
             || currentRouting.selection_key !== initialChatLinkLaunch.routing.selection_key
+            || (
+                initialChatLinkLaunch.reasoning_effort_bound
+                && (options.reasoningEffort ?? null)
+                    !== initialChatLinkLaunch.reasoning_effort
+            )
         );
         if (changed) {
             setOptions((current) => ({ ...current, chatLinkReference: undefined }));
@@ -465,6 +484,7 @@ export function Composer({
         options.chatLinkReference,
         options.agentSelection,
         options.modelDeployment,
+        options.reasoningEffort,
         attachments.initialized,
         contextItems,
     ]);
@@ -1203,7 +1223,13 @@ export function Composer({
         reasoningPolicy,
         adminDefaultReasoningEffort,
     );
-    const derivedReasoning = reasoningResolution.effective_effort ?? undefined;
+    const linkedReasoningBound = Boolean(
+        options.chatLinkReference
+        && initialChatLinkLaunch?.reasoning_effort_bound,
+    );
+    const derivedReasoning = linkedReasoningBound
+        ? initialChatLinkLaunch?.reasoning_effort ?? undefined
+        : reasoningResolution.effective_effort ?? undefined;
 
     useEffect(() => {
         setOptions((current) =>
@@ -1242,6 +1268,7 @@ export function Composer({
     }, [settingsLoaded]);
 
     useEffect(() => {
+        if (linkedReasoningBound) return;
         if (!reasoningKey || !settingsLoaded || !reasoningResolution.adjustment_reason) {
             return;
         }
@@ -1258,7 +1285,14 @@ export function Composer({
             storeReasoningLevels({ [reasoningKey]: derivedReasoning });
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [reasoningKey, reasoningResolution.requested_effort, derivedReasoning, settingsLoaded, reasoningPolicy]);
+    }, [
+        reasoningKey,
+        reasoningResolution.requested_effort,
+        derivedReasoning,
+        settingsLoaded,
+        reasoningPolicy,
+        linkedReasoningBound,
+    ]);
 
     /** Store a chosen level against the current model, for both interfaces to read back. */
     const chooseReasoningLevel = (level: string | undefined) => {
@@ -1267,11 +1301,19 @@ export function Composer({
         if (!level) {
             // Only reachable where the control is clearable, which is where no level is
             // stored, so there is nothing to clear but the session's own choice.
-            setOptions((current) => ({ ...current, reasoningEffort: undefined }));
+            setOptions((current) => ({
+                ...current,
+                reasoningEffort: undefined,
+                chatLinkReference: undefined,
+            }));
             return;
         }
 
-        setOptions((current) => ({ ...current, reasoningEffort: level }));
+        setOptions((current) => ({
+            ...current,
+            reasoningEffort: level,
+            chatLinkReference: undefined,
+        }));
 
         // A catalog-less selection has no persistent identity to store against.
         if (!reasoningKey) {
@@ -2375,7 +2417,7 @@ export function Composer({
                                         onClick={() => {
                                             if (!chatLinkConfiguration) {
                                                 toast.error(
-                                                    'Select an available agent or model and explicit documents from one workspace before creating a link.',
+                                                    'Select an available agent or model, then one workspace or explicit documents from one workspace before creating a link.',
                                                 );
                                                 return;
                                             }

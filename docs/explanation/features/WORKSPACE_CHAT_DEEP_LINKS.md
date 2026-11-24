@@ -2,11 +2,14 @@
 
 **Implemented in version: 0.261.473**
 
+**Whole-workspace selection and reasoning persistence updated in version: 0.261.474**
+
 ## Overview
 
 Workspace chat deep links are compact, server-backed URLs that prepare a new
-private chat with one exact agent or model, one workspace, and explicit selected
-documents. A link is an opaque reference, not a capability. Recipients must
+private chat with one exact agent or model, one workspace, and either that
+whole workspace or explicit selected documents. The model's selected reasoning
+effort is stored as part of the link. A link is an opaque reference, not a capability. Recipients must
 already be authorized for every selected resource.
 
 ## Dependencies
@@ -22,7 +25,8 @@ already be authorized for every selected resource.
 ### Architecture
 
 The application stores only identifiers, schema metadata, creator identity,
-creation time, selected lifetime, and the canonical scoped document selection.
+creation time, selected lifetime, the canonical scoped selection, and the model
+reasoning effort.
 It does not store prompts, conversation history, agent instructions, document
 contents, endpoint credentials, or service URLs.
 
@@ -77,8 +81,8 @@ links in an account restore.
 
 ### Create and send a link
 
-1. Select an available agent or model.
-2. Choose one workspace and one or more explicit documents.
+1. Select an available agent or model and, for a model, its reasoning effort.
+2. Choose one whole personal, group, or public workspace, or explicit documents from one workspace.
 3. Open **Create chat link**.
 4. Select a lifetime. The default is 90 days; **Never expires** remains available.
 5. Create and copy the plain-text URL.
@@ -113,8 +117,9 @@ Coverage includes:
 - Opaque reference generation and collision handling
 - 90-day default, fixed lifetimes, and never-expiring records
 - Creator, recipient, group, public, and document authorization
+- Whole personal, group, and public workspace selections
 - Expiry, revocation, stale resources, and malformed records
-- Exact agent/model and canonical document binding at first send
+- Exact agent/model, reasoning, and canonical source binding at first send
 - Classic and V2 hydration without an empty conversation
 - Control Center admin-only listing and revocation
 - Copy/manual-copy fallback, keyboard navigation, and mobile placement
@@ -126,7 +131,8 @@ administrator queries. Link records are small and exclude search content.
 
 Known limitations:
 
-- Links support one workspace and explicit document references; whole-workspace,
-  tag-only, and “all documents” presets are intentionally not encoded.
+- Links support either one selected workspace or explicit document references
+  from one workspace. Tag-only, mixed-workspace, and global **Search all
+  documents** presets are intentionally not encoded.
 - Personal agent and model references are useful only to their authorized owner.
 - Restored account data still requires an explicit link invalidation decision.

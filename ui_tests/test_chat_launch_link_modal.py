@@ -1,8 +1,9 @@
 # test_chat_launch_link_modal.py
 """
 UI regression for the Classic chat-link creation and revocation modal.
-Version: 0.261.473
+Version: 0.261.474
 Implemented in: 0.261.473
+Whole-workspace and reasoning display: 0.261.474
 
 This test verifies the default lifetime, plain-text link inventory, and
 confirmation-based revocation without depending on a specific workspace seed.
@@ -61,7 +62,10 @@ def test_classic_chat_link_modal_defaults_to_ninety_days_and_revokes_with_confir
                     "selection_key": "global:global:endpoint:model",
                 },
                 "workspace": {"kind": "personal"},
-                "document_count": 2,
+                "document_count": None,
+                "all_documents": True,
+                "reasoning_effort": "high",
+                "reasoning_effort_bound": True,
             }],
             "continuation_token": None,
             "has_more": False,
@@ -76,6 +80,8 @@ def test_classic_chat_link_modal_defaults_to_ninety_days_and_revokes_with_confir
         modal = page.locator("#chat-link-modal")
         expect(modal).to_be_visible()
         expect(page.locator("#chat-link-lifetime")).to_have_value("90")
+        expect(page.locator("#chat-link-own-list")).to_contain_text("All documents")
+        expect(page.locator("#chat-link-own-list")).to_contain_text("High")
         expect(page.locator("#chat-link-own-list")).to_contain_text("Never expires")
 
         page.locator("#chat-link-own-list [data-chat-link-reference]").click()

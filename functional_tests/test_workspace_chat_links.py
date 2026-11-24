@@ -1,8 +1,9 @@
 # test_workspace_chat_links.py
 """
 Functional tests for workspace chat launch links.
-Version: 0.261.473
+Version: 0.261.474
 Implemented in: 0.261.473
+Whole-workspace and reasoning support: 0.261.474
 
 These tests verify strict configuration capture, selectable lifetimes, exact
 recipient authorization, send-time binding, and creator/admin revocation.
@@ -164,6 +165,11 @@ def chat_links(monkeypatch):
             "provider": "aoai",
             "scope_type": "global",
             "scope_id": "global",
+            "reasoning_capabilities": {
+                "status": "supported",
+                "efforts": ["low", "medium", "high"],
+                "default_effort": "medium",
+            },
         }],
     )
     dependency(
@@ -172,6 +178,7 @@ def chat_links(monkeypatch):
         source_catalog=lambda *args, **kwargs: [
             {"kind": "personal", "id": None, "name": "My workspace"},
             {"kind": "group", "id": "group-1", "name": "Policy team"},
+            {"kind": "public", "id": "public-1", "name": "Policy library"},
         ],
         admit_document_source_selection=lambda value, *args, **kwargs: (value, value["sources"]),
     )
@@ -210,6 +217,7 @@ def payload(lifetime_days=90):
             }],
         },
         "lifetime_days": lifetime_days,
+        "reasoning_effort": None,
     }
 
 
@@ -227,7 +235,8 @@ def test_chat_link_contract_is_exact_and_lifetime_is_explicit(chat_links):
             "version": 1,
             "mode": "selected",
             "sources": [{
-                "kind": "workspace",
+                "kind": "tag",
+                "tag": "policy",
                 "scope": {"kind": "personal"},
             }],
         },
@@ -245,6 +254,41 @@ def test_chat_link_contract_is_exact_and_lifetime_is_explicit(chat_links):
     })
     with pytest.raises(chat_links.module.ChatLinkValidationError):
         chat_links.module.normalize_chat_link_configuration(mixed)
+
+
+@pytest.mark.parametrize("workspace", [
+    {"kind": "personal"},
+    {"kind": "group", "id": "group-1"},
+    {"kind": "public", "id": "public-1"},
+])
+def test_whole_workspace_sources_are_allowed(chat_links, workspace, monkeypatch):
+    monkeypatch.setattr(
+        chat_links.module.secrets,
+        "token_urlsafe",
+        Mock(return_value=REFERENCE_A),
+    )
+    value = payload()
+    value["workspace"] = workspace
+    value["document_source_selection"] = {
+        "version": 1,
+        "mode": "selected",
+        "sources": [{
+            "kind": "workspace",
+            "scope": workspace,
+        }],
+    }
+    normalized = chat_links.module.normalize_chat_link_configuration(value)
+    assert normalized["document_source_selection"]["sources"] == [{
+        "kind": "workspace",
+        "scope": workspace,
+    }]
+    created = chat_links.module.create_chat_link(
+        "creator-1",
+        value,
+        now=FIXED_NOW,
+    )
+    assert created["projection"]["workspace"]["kind"] == workspace["kind"]
+    assert created["projection"]["all_documents"] is True
 
 
 def test_creation_uses_opaque_reference_and_selected_lifetime(chat_links, monkeypatch):
@@ -273,6 +317,31 @@ def test_creation_uses_opaque_reference_and_selected_lifetime(chat_links, monkey
     record = chat_links.container.items[REFERENCE_B]
     assert record["expires_at"] is None and "ttl" not in record
     assert never["projection"]["lifetime_days"] is None
+
+
+def test_whole_workspace_projection_reports_all_documents(chat_links, monkeypatch):
+    monkeypatch.setattr(
+        chat_links.module.secrets,
+        "token_urlsafe",
+        Mock(return_value=REFERENCE_A),
+    )
+    value = payload()
+    value["document_source_selection"] = {
+        "version": 1,
+        "mode": "selected",
+        "sources": [{
+            "kind": "workspace",
+            "scope": {"kind": "personal"},
+        }],
+    }
+    created = chat_links.module.create_chat_link(
+        "creator-1",
+        value,
+        now=FIXED_NOW,
+    )
+    assert created["projection"]["all_documents"] is True
+    assert created["projection"]["document_count"] is None
+    assert created["projection"]["reasoning_effort"] is None
 
 
 def test_reference_collision_retries_without_reusing_an_item(chat_links, monkeypatch):
@@ -370,11 +439,14 @@ def test_model_link_requires_the_exact_multi_endpoint_identity(chat_links, monke
         "kind": "model",
         "selection_key": "global:global:endpoint-1:model-1",
     }
+    value["reasoning_effort"] = "high"
     created = chat_links.module.create_chat_link(
         "creator-1",
         value,
         now=FIXED_NOW,
     )
+    assert created["record"]["reasoning_effort"] == "high"
+    assert created["record"]["_reasoning_effort_bound"] is True
     request = {
         "chat_link_reference": created["record"]["id"],
         "document_source_selection": value["document_source_selection"],
@@ -385,11 +457,56 @@ def test_model_link_requires_the_exact_multi_endpoint_identity(chat_links, monke
         "model_provider": "aoai",
         "model_scope_type": "global",
         "model_scope_id": "global",
+        "reasoning_effort": "high",
     }
     chat_links.module.authorize_chat_link_request(request, "creator-1")
     request["model_endpoint_id"] = "endpoint-2"
     with pytest.raises(chat_links.module.ChatLinkConflictError):
         chat_links.module.authorize_chat_link_request(request, "creator-1")
+
+    request["model_endpoint_id"] = "endpoint-1"
+    request["reasoning_effort"] = "medium"
+    with pytest.raises(chat_links.module.ChatLinkConflictError):
+        chat_links.module.authorize_chat_link_request(request, "creator-1")
+
+
+def test_model_link_rejects_an_unsupported_reasoning_effort(chat_links):
+    value = payload()
+    value["routing"] = {
+        "kind": "model",
+        "selection_key": "global:global:endpoint-1:model-1",
+    }
+    value["reasoning_effort"] = "xhigh"
+    with pytest.raises(chat_links.module.ChatLinkValidationError):
+        chat_links.module.create_chat_link(
+            "creator-1",
+            value,
+            now=FIXED_NOW,
+        )
+
+
+def test_legacy_link_without_reasoning_remains_readable(chat_links, monkeypatch):
+    monkeypatch.setattr(
+        chat_links.module.secrets,
+        "token_urlsafe",
+        Mock(return_value=REFERENCE_A),
+    )
+    created = chat_links.module.create_chat_link(
+        "creator-1",
+        payload(),
+        now=FIXED_NOW,
+    )
+    legacy = dict(chat_links.container.items[REFERENCE_A])
+    legacy.pop("reasoning_effort")
+    chat_links.container.items[REFERENCE_A] = legacy
+
+    resolved = chat_links.module.resolve_chat_link(
+        created["record"]["id"],
+        "creator-1",
+    )
+    assert resolved["record"]["reasoning_effort"] is None
+    assert resolved["record"]["_reasoning_effort_bound"] is False
+    assert resolved["projection"]["reasoning_effort_bound"] is False
 
 
 def test_owner_and_control_center_revocation_are_object_checked(chat_links, monkeypatch):
@@ -481,6 +598,12 @@ def test_control_center_and_both_chat_interfaces_keep_admin_and_launch_wiring():
     classic_requests = (
         APP_DIR / "static" / "js" / "chat" / "chat-messages.js"
     ).read_text(encoding="utf-8")
+    classic_reasoning = (
+        APP_DIR / "static" / "js" / "chat" / "chat-reasoning.js"
+    ).read_text(encoding="utf-8")
+    classic_documents = (
+        APP_DIR / "static" / "js" / "chat" / "chat-documents.js"
+    ).read_text(encoding="utf-8")
 
     assert "api_v2_control_center_chat_links" in control_routes
     assert "api_v2_control_center_revoke_chat_link" in control_routes
@@ -494,3 +617,5 @@ def test_control_center_and_both_chat_interfaces_keep_admin_and_launch_wiring():
     assert "hasActiveChatLinkBinding()" in classic_launch
     assert "getChatLinkReferenceForRequest" in classic_requests
     assert "documentActionType === DOCUMENT_ACTION_NONE" in classic_requests
+    assert "selectReasoningForChatLink" in classic_reasoning
+    assert "kind: 'workspace'" in classic_documents

@@ -30,6 +30,7 @@ export interface ChatLinkCreatePayload {
     routing: Pick<ChatLinkRouting, 'kind' | 'selection_key'>;
     workspace: ChatLinkWorkspace;
     document_source_selection: DocumentSourceSelection;
+    reasoning_effort: string | null;
     lifetime_days: number | null;
 }
 
@@ -41,7 +42,10 @@ export interface ChatLinkSummary {
     lifetime_days: number | null;
     routing: ChatLinkRouting;
     workspace: ChatLinkWorkspace;
-    document_count: number;
+    document_count: number | null;
+    all_documents: boolean;
+    reasoning_effort: string | null;
+    reasoning_effort_bound?: boolean;
     created_by_user_id?: string;
 }
 
@@ -75,6 +79,7 @@ export function createChatLink(payload: ChatLinkCreatePayload) {
             ? { kind: 'personal' }
             : { kind: payload.workspace.kind, id: payload.workspace.id },
         document_source_selection: payload.document_source_selection,
+        reasoning_effort: payload.reasoning_effort,
         lifetime_days: payload.lifetime_days,
     });
 }
@@ -115,4 +120,19 @@ export function chatLinkExpiryLabel(value: string | null): string {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return 'Unknown';
     return date.toLocaleString();
+}
+
+export function chatLinkDocumentLabel(link: Pick<ChatLinkSummary, 'all_documents' | 'document_count'>): string {
+    if (link.all_documents) return 'All documents';
+    const count = link.document_count ?? 0;
+    return `${count} ${count === 1 ? 'document' : 'documents'}`;
+}
+
+export function chatLinkReasoningLabel(
+    routing: Pick<ChatLinkRouting, 'kind'>,
+    reasoningEffort: string | null,
+): string {
+    if (routing.kind === 'agent') return 'Agent setting';
+    if (!reasoningEffort) return 'Model default';
+    return reasoningEffort.charAt(0).toUpperCase() + reasoningEffort.slice(1);
 }

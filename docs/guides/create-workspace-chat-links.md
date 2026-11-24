@@ -4,7 +4,7 @@ title: "Create workspace chat links"
 description: "Share an exact model or agent, one workspace, and selected documents with people who already have access."
 section: "Guides"
 audience: user
-version: "0.261.473"
+version: "0.261.474"
 ---
 
 ## What this does
@@ -13,21 +13,22 @@ Workspace chat links give another person a short URL that opens SimpleChat with
 the same available model or agent, workspace, and selected documents. The link
 does not share a conversation and does not grant access.
 
-Implemented in **0.261.473**.
+Implemented in **0.261.473**. Whole-workspace selection and reasoning
+persistence were added in **0.261.474**.
 
 ## Before you start
 
-- Select an available agent or model.
+- Select an available agent or model and, for a model, its reasoning effort.
 - Select one personal, group, or public workspace.
-- Select one or more explicit documents.
-- Do not mix workspaces or use a tag/workspace-wide selection for the link.
+- Select the workspace itself to include all of its documents, or select one or more explicit documents from that workspace.
+- Do not mix workspaces, use tags, or use the global **Search all documents** mode for the link.
 
 ## Create a link
 
 1. Open a new or existing personal chat.
-2. Configure the runner and selected documents.
+2. Configure the runner, reasoning effort, and either a whole workspace or selected documents.
 3. Select **Create chat link** in the composer tools.
-4. Review the runner, workspace, and document count.
+4. Review the runner, workspace, source summary, and reasoning effort.
 5. Choose an expiry:
    - 7 days
    - 30 days
@@ -60,7 +61,7 @@ access to launch a link whose resources they cannot otherwise use.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| The create control says to select explicit documents | The composer has none, has a tag-only selection, or spans multiple workspaces | Select exact documents from one workspace. |
+| The create control says to select a workspace or documents | The composer has no source, has a tag-only selection, or spans multiple workspaces | Select one whole workspace or exact documents from one workspace. |
 | The recipient sees a permission message | The recipient is not authorized for a runner, workspace, or selected document | Grant access through the normal workspace, sharing, or governance process. The link itself cannot grant it. |
 | The recipient sees that the link is unavailable | It expired, was revoked, or one of its referenced resources no longer exists | Create a new link from a currently valid configuration. |
 | A link opens but later returns a configuration-changed message | The current model/agent or document selection changed before the first send | Resolve the link again and send without changing its setup. |

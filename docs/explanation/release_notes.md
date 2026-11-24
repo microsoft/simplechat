@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.474)**
+
+#### Bug Fixes
+
+*   **Whole-Workspace Chat Links and Reasoning**
+    *   Workspace chat links can now bind one whole personal, group, or public workspace in addition to explicit document selections.
+    *   Model reasoning effort is stored, shown in link previews, restored in Classic and V2, and checked again on the first send. Agent links continue to use the agent's own configured reasoning.
+    *   (Ref: `functions_chat_links.py`, `chat-links.js`, `Composer.tsx`, [Create workspace chat links](../guides/create-workspace-chat-links.md))
+
 ### **(v0.261.473)**
 
 #### New Features
