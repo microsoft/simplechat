@@ -1,9 +1,10 @@
 # test_orchestration_document_action_binding.py
 """
 Functional regressions for enforced native document action source bindings.
-Version: 0.261.439
+Version: 0.261.478
 Implemented in: 0.261.419
 Pre-read incompatible-section correction added in: 0.261.439
+Named rule on a stopped action added in: 0.261.478
 
 The real action runner, Semantic Kernel filters, Document Search plugin and
 citation projection run with model and source-service I/O doubled. Existing
@@ -267,9 +268,15 @@ def test_search_without_a_model_filter_is_restricted_before_source_io(native_act
 def test_unselected_documents_are_rejected_before_source_io(native_action, function, arguments):
     state = native_action
     state.replies = [tool_call(function, arguments)]
-    with pytest.raises(state.runtime.ActionExecutionError):
+    with pytest.raises(state.runtime.ActionExecutionError) as stopped:
         state.loop.run_until_complete(execute(state))
     assert state.native_reads == []
+    # 0.261.478: the failure names which check stopped it, for the log only.
+    assert stopped.value.orchestration_rule == (
+        "search_document_unselected" if function == "search_documents" else "read_document_unselected"
+    )
+    assert state.runtime.ActionExecutionError("x", rule="Not A Token").orchestration_rule is None
+    assert state.runtime.ActionExecutionError("x").orchestration_rule is None
 
 
 def test_action_workspace_restrictions_remain_in_force(native_action):

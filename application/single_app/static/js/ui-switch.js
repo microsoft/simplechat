@@ -24,6 +24,8 @@ document.addEventListener('click', async (event) => {
         if (target.origin !== window.location.origin || !/^\/v2(?:\/|$)/.test(target.pathname)) {
             throw new Error('Invalid modern destination');
         }
+        // The modern address names its interface the way a classic one does with ui=classic.
+        target.searchParams.set('ui', 'modern');
         // The V2 fragment translator maps classic tabs after the interface changes.
         target.hash = window.location.hash;
         window.location.assign(target.href);

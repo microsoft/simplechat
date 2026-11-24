@@ -23,6 +23,7 @@ from datetime import datetime
 from azure.core import MatchConditions
 from azure.cosmos import exceptions
 
+from functions_control_center_dashboard import CONTROL_CENTER_ACTION_TYPE
 from functions_orchestration_invocation_capture import OrchestrationInvocationControlError
 from functions_orchestration_schema import build_failure, step_input_specs
 from functions_orchestration_registry import build_planner_capability_projection, get_capability
@@ -227,6 +228,31 @@ def context_state(context):
     return state
 
 
+def role_gated_action(action):
+    """Whether the action catalog lists this action only for a caller holding an app role.
+
+    The same test the catalog applies before it checks the caller's roles
+    (``_is_control_center_action`` in functions_action_catalog.py).
+    """
+    action_type = action.get('type') if isinstance(action, dict) else None
+    return isinstance(action_type, str) and action_type.strip().lower() == CONTROL_CENTER_ACTION_TYPE
+
+
+def bound_action_catalog(context):
+    """The actions a run is bound to: those whose listing does not depend on a role claim.
+
+    A run that waits is resumed by a background worker, which holds no role claims and so is
+    never offered a role-gated action. Binding to those entries refused every such resume for a
+    caller who holds the role, whatever the plan used. The gate itself is unchanged: a plan
+    step naming an action its context does not list is rejected when the plan is validated
+    for execution, before any step runs.
+    """
+    return [
+        action for action in (getattr(context, 'action_catalog', None) or [])
+        if not role_gated_action(action)
+    ]
+
+
 def _context_binding_payload(context, plan, settings):
     model = getattr(context, 'model_context', None) or {}
     inputs = {key: getattr(context, key, None) for key in INPUT_FIELDS}
@@ -238,7 +264,7 @@ def _context_binding_payload(context, plan, settings):
         'model': {key: model.get(key) for key in ('model_id', 'endpoint_id', 'provider', 'model_deployment')},
         'memory_digest': _memory_fingerprint(getattr(context, 'memory_context', None)),
         'agent_catalog_digest': fingerprint(getattr(context, 'agent_catalog', []) or []),
-        'action_catalog_digest': fingerprint(getattr(context, 'action_catalog', []) or []),
+        'action_catalog_digest': fingerprint(bound_action_catalog(context)),
         'settings_digest': _execution_settings_fingerprint(settings),
         'plan_contract_version': 2,
         'final_response': plan.get('final_response'),
@@ -563,11 +589,14 @@ def restore_context(context, payload):
 class CheckpointStore:
     def __init__(
         self, container, *, run_id, user_id, conversation_id, turn_id, authorize,
-        token=None, claim_id=None, plan_contract_version=2,
+        token=None, claim_id=None, plan_contract_version=2, prior_run_id=None,
     ):
         if type(plan_contract_version) is not int or plan_contract_version != 2:
             raise CheckpointError('checkpoint_invalid')
         self.container = container
+        # The attempt this run retries, when it is one. Read-only, and only for what the next
+        # attempt of the same turn is told about its predecessor.
+        self.prior_run_id = prior_run_id if type(prior_run_id) is str and prior_run_id else None
         self.identity = {
             'run_id': run_id, 'user_id': user_id, 'conversation_id': conversation_id,
             'turn_id': turn_id, 'schema_version': CHECKPOINT_VERSION,
@@ -745,6 +774,44 @@ class CheckpointStore:
         json_bytes(document['state'])
         self._validate_lowering_state(document['state'])
         return deepcopy(document['state'])
+
+    def load_prior_attempt_lowering(self, step_id):
+        """The previous attempt's last program for this step and the finding it ended on.
+
+        Returns ``{'program', 'last_failure'}`` or None. The record must belong to the same
+        user, conversation and turn. It is never state for this run: its binding and inputs
+        are the previous attempt's, so the caller may only show it to the author.
+        """
+        if self.prior_run_id is None or type(step_id) is not str or not step_id:
+            return None
+        self._authorized()
+        try:
+            document = self.container.read_item(
+                item=f'lowering:{fingerprint(step_id)}', partition_key=self.prior_run_id,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        except Exception as exc:
+            raise CheckpointError(self._storage_error_code) from exc
+        identity = {**self.identity, 'run_id': self.prior_run_id}
+        if (
+            not isinstance(document, dict)
+            or any(document.get(key) != value for key, value in identity.items())
+            or document.get('record_type') != 'lowering_state'
+            or document.get('step_id') != step_id
+            or type(document.get('state')) is not dict
+        ):
+            return None
+        state = document['state']
+        try:
+            json_bytes(state)
+            self._validate_lowering_state(state)
+        except CheckpointError:
+            return None
+        if state['phase'] != 'failure_saved' or state.get('completion_confirmed') is not True:
+            return None
+        failure = {key: deepcopy(value) for key, value in state['last_failure'].items() if key != 'program'}
+        return {'program': deepcopy(state['program']), 'last_failure': failure}
 
     def _validate_lowering_state(self, state):
         if (

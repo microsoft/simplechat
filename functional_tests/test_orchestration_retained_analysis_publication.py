@@ -1,7 +1,7 @@
 # test_orchestration_retained_analysis_publication.py
 """
 Authorized retained Analyze descriptors on replies with downstream failures.
-Version: 0.261.398
+Version: 0.261.477
 Implemented in: 0.261.398
 
 Use real native producers, immutable saved readers and SDK-backed storage doubles.
@@ -63,7 +63,11 @@ def test_partial_analysis_remains_partial_and_inspection_does_not_complete_the_r
 
     def unsupported(prompt):
         payload = json.loads(original(prompt))
-        payload["findings"][-1]["status"] = "unresolved"
+        # A finding the validator refuses (its passage is not in the source). From 0.261.477 a
+        # finding the model itself does not conclude is a stated gap, not a partial analysis.
+        payload["findings"][-1]["evidence"] = [
+            {"chunk_sequence": 1, "quote": "This passage is absent from the source."},
+        ]
         return json.dumps(payload)
 
     internal.model.response_builder = unsupported

@@ -537,6 +537,32 @@ class OrchestrationResults:
             self.access._read_operation.reset(authority_token)
             self._read_operation.reset(token)
 
+    def lineage_names_external_source(self, references):
+        """Whether one of these retained results, or a result it was prepared from, names an
+        external source (an agent, an action, memory, the web).
+
+        An external source is authorized against the signed-in user's session on every read, so
+        a result that names one cannot be read by work that has no session. Manifests only: no
+        content is read and nothing is authorized beyond each producer's run and conversation.
+        """
+        pending, seen = list(references), set()
+        while pending:
+            reference = pending.pop()
+            if type(reference) is not ResultRef:
+                raise ResultContractError("result_reference_invalid")
+            key = reference.producer, reference.manifest_sha256
+            if key in seen:
+                continue
+            if len(seen) >= MAX_LINEAGE_RESULTS:
+                raise ResultContractError("result_lineage_limit")
+            seen.add(key)
+            lineage = self._load_manifest(reference)["lineage"]
+            parents = _lineage(lineage)
+            if lineage.get("external_sources"):
+                return True
+            pending.extend(parents)
+        return False
+
     def _load_manifest(self, reference):
         self.access.authorize_producer(reference.producer)
         operation = _current_read_operation(self._read_operation)

@@ -1,9 +1,10 @@
 # test_orchestration_relational_results.py
 """
 Functional tests for authorized, retained multi-file calculation results.
-Version: 0.261.470
+Version: 0.261.481
 Implemented in: 0.261.437; 0.261.446
 Evaluation findings returned to the authoring model added in: 0.261.470
+Previous attempt's program carried forward, incomplete replies asked again added in: 0.261.478
 Source-header failure classification added in: 0.261.439
 Stable runtime failure codes and locations added in: 0.261.443
 Complete preparation and owner-bound prepared lowering added in: 0.261.446
@@ -20,6 +21,7 @@ import importlib
 import io
 import json
 import sys
+import types
 
 import pytest
 from azure.core import MatchConditions
@@ -228,6 +230,8 @@ def test_relational_arguments_and_legacy_single_source_contracts_are_distinct():
         "saved_wrong_sources", "resume_correction",
         "two_corrections", "correction_exhausted", "authored_version",
         "evaluation_correction", "evaluation_exhausted",
+        "prior_attempt", "prior_attempt_other_turn", "prior_attempt_completed",
+        "reply_cut_off_after_finding", "reply_empty_exhausted", "reply_refused",
     ],
 )
 def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(monkeypatch, mutation):
@@ -358,11 +362,32 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
         faulty_replies = {
             "two_corrections": 2, "correction_exhausted": 3,
             "evaluation_correction": 1, "evaluation_exhausted": 3,
+            "reply_cut_off_after_finding": 1,
         }.get(mutation, 0)
+        # The harness's own error names its rule as ``validation_rule``. Its module needs the
+        # application's logging, which this offline runtime doubles, so the class is stood in
+        # for where the owner looks it up: by name in the loaded module.
+        class harness_error(Exception):
+            def __init__(self, code, *, rule=None, stage=None):
+                self.code, self.validation_rule, self.stage = code, rule, stage
+                super().__init__(code)
+
+        if mutation in ("reply_cut_off_after_finding", "reply_empty_exhausted", "reply_refused"):
+            runtime.native.patcher.setitem(
+                sys.modules, "functions_orchestration_execution",
+                types.SimpleNamespace(HarnessExecutionError=harness_error),
+            )
+        no_program = {
+            "reply_cut_off_after_finding": ("generation_incomplete", (2,)),
+            "reply_empty_exhausted": ("reply_empty", (1, 2, 3)),
+            "reply_refused": ("reply_refused", (1,)),
+        }.get(mutation, (None, ()))
 
         def invoke(prompt, *, stage, metadata):
             calls.append((stage, metadata))
             prompts.append(json.loads(prompt))
+            if len(calls) in no_program[1]:
+                raise harness_error("model_failed", rule=no_program[0], stage=stage)
             if len(calls) <= faulty_replies:
                 faulty = deepcopy(spec)
                 if mutation.startswith("evaluation"):
@@ -392,8 +417,35 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
             checkpoint_container, run_id="parent-run", user_id=USER,
             conversation_id="conversation-1", turn_id="turn-1",
             authorize=lambda: True, token="execution-token", claim_id="claim-1",
+            prior_run_id="prior-run" if (mutation or "").startswith("prior_attempt") else None,
         )
         checkpoint_store.initialize()
+        if (mutation or "").startswith("prior_attempt"):
+            # What the previous attempt of this turn left: its last program and the finding.
+            prior_store = checkpoints.CheckpointStore(
+                checkpoint_container, run_id="prior-run", user_id=USER,
+                conversation_id="conversation-1",
+                turn_id="turn-0" if mutation == "prior_attempt_other_turn" else "turn-1",
+                authorize=lambda: True, token="prior-token", claim_id="claim-0",
+            )
+            prior_store.initialize()
+            rejected = deepcopy(spec)
+            rejected["steps"][0]["on"][0]["right"] = "catalog.missing"
+            completed = mutation == "prior_attempt_completed"
+            prior_store.save_lowering_state(
+                runtime.step["step_id"], {
+                    "version": "tabular-program-lowering-v1",
+                    "phase": "retained" if completed else "failure_saved", "calls_used": 3,
+                    "completion_contract_version": "harness-stop-v1",
+                    "completion_confirmed": True, "program": rejected,
+                    "program_sha256": hashlib.sha256(contracts.canonical_bytes(rejected)).hexdigest(),
+                    **({} if completed else {"last_failure": {
+                        "category": "relational_column_missing", "check": "column_missing",
+                        "step_index": 0, "program": rejected,
+                        "feedback": {"missing_columns": ["catalog.missing"]},
+                    }}),
+                }, binding="prior-binding", input_fingerprint="0" * 64,
+            )
         runtime.context.completeness_store = checkpoint_store
         runtime.context.completeness_binding = binding
 
@@ -461,11 +513,58 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
                 "header_row"
             ] = 2
         result = execute(runtime)
+        if mutation in ("reply_empty_exhausted", "reply_refused"):
+            # No whole program came back. An empty reply is asked again while calls remain; a
+            # refused one is not. Either way the cause is logged by its rule.
+            assert result["status"] == "failed", result
+            assert len(calls) == (3 if mutation == "reply_empty_exhausted" else 1)
+            bridge = [item for item in failures if (item or {}).get("execution_code") == "model_failed"]
+            assert [item["execution_rule"] for item in bridge] == [no_program[0]]
+            assert (result["failure"].get("calculation_cause") == "generation_incomplete") == (
+                mutation == "reply_empty_exhausted"
+            )
+            asked_again = [item for item in failures if (item or {}).get("correction_check") == "reply_empty"]
+            assert len(asked_again) == (3 if mutation == "reply_empty_exhausted" else 0)
+            assert len(commits(runtime)) == initial_commits
+            return
         if mutation in ("correction_exhausted", "evaluation_exhausted"):
             assert result["status"] == "failed", result
             assert len(calls) == module.LOWERING_MAX_CALLS == checkpoints.LOWERING_STATE_MAX_CALLS == 3
             assert len(commits(runtime)) == initial_commits
             assert "catalog.missing" not in json.dumps(failures, default=str)
+            return
+        if (mutation or "").startswith("prior_attempt"):
+            assert result["status"] == "completed", result
+            carried = [item for item in failures if (item or {}).get("stage") == "tabular_program_lowering"
+                       and "calls_used" not in (item or {}) and "correction_category" in (item or {})]
+            if mutation == "prior_attempt":
+                # The first call of the new attempt is given the previous attempt's last
+                # program and what it was told, and uses none of this attempt's calls for it.
+                assert len(calls) == 1
+                assert prompts[0]["rejected_program"]["steps"][0]["on"][0]["right"] == "catalog.missing"
+                assert prompts[0]["rejection"]["feedback"]["missing_columns"] == ["catalog.missing"]
+                assert "previous attempt" in prompts[0]["instructions"]
+                assert len(carried) == 1 and carried[0]["correction_category"] == "relational_column_missing"
+                assert "catalog.missing" not in json.dumps(failures, default=str)
+            else:
+                # Another turn's record, or an attempt that ended with a retained program,
+                # carries nothing.
+                assert "rejected_program" not in prompts[0] and "rejection" not in prompts[0]
+                assert carried == []
+            state = checkpoint_store.load_lowering_state(
+                "compute", binding=binding, input_fingerprint=fingerprint(runtime.step, runtime.context),
+            )
+            assert state["phase"] == "retained" and state["calls_used"] == 1
+            return
+        if mutation == "reply_cut_off_after_finding":
+            # Call 1 was told a column is missing; call 2's reply was cut off. Call 3 still holds
+            # the finding and its program, and is told the reply between held no program.
+            assert result["status"] == "completed", result
+            assert len(calls) == 3
+            assert prompts[2]["rejected_program"] == prompts[1]["rejected_program"]
+            assert prompts[2]["rejection"] == prompts[1]["rejection"]
+            assert "ended before it held a whole program" in prompts[2]["instructions"]
+            assert "ended before it held a whole program" not in prompts[1]["instructions"]
             return
         if mutation not in (
             None, "resume_correction", "two_corrections", "authored_version", "evaluation_correction",
@@ -514,6 +613,45 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
         assert state["program_sha256"] == hashlib.sha256(
             contracts.canonical_bytes(spec)
         ).hexdigest()
+
+
+def test_a_refused_table_selection_logs_its_rule_and_operation(monkeypatch):
+    """0.261.478: a refused selection in the chat tabular plugin says which rule and function."""
+    with bridge_runtime(monkeypatch):
+        plugin = importlib.import_module("semantic_kernel_plugins.tabular_processing_plugin")
+        logged = []
+        monkeypatch.setattr(
+            plugin, "log_event", lambda message, extra=None, **_kwargs: logged.append((message, extra)),
+        )
+
+        def describe_tabular_file():
+            return plugin.TabularProcessingPlugin._tabular_error_payload(plugin.TabularSelectionError(
+                "PRIVATE sheet name is required.", code="sheet_selection_required",
+                choices=[{"name": "PRIVATE"}, {"name": "PRIVATE 2"}],
+            ))
+
+        payload = describe_tabular_file()
+        assert payload["error_code"] == "sheet_selection_required"
+        [(message, extra)] = logged
+        assert message.endswith("Tabular operation could not complete.")
+        assert extra == {
+            "exception_type": "TabularSelectionError", "operation": "describe_tabular_file",
+            "error_code": "sheet_selection_required", "choice_count": 2,
+        }
+        # 0.261.480: file work runs in a worker closure; the log names the plugin function.
+        logged.clear()
+
+        class TabularProcessingPlugin:
+            def lookup_value(self):
+                def _sync_work():
+                    return plugin.TabularProcessingPlugin._tabular_error_payload(ValueError("PRIVATE"))
+                return _sync_work()
+
+        TabularProcessingPlugin().lookup_value()
+        assert logged[0][1]["operation"] == "lookup_value"
+        logged.clear()
+        plugin.TabularProcessingPlugin._tabular_error_payload(ValueError("PRIVATE"))
+        assert set(logged[0][1]) == {"exception_type", "operation"}
 
 
 def test_source_schema_assertion_failure_is_not_reported_as_missing_named_outputs(monkeypatch):
@@ -594,13 +732,74 @@ def test_saved_lowering_program_requires_supported_completion_and_exact_digest(m
         )
 
 
-def test_program_correction_never_repairs_genuine_interval_or_numeric_faults():
+def test_program_correction_never_repairs_genuine_interval_or_numeric_faults(monkeypatch):
     native = importlib.import_module("functions_orchestration_native_results")
     relational = importlib.import_module("functions_tabular_relational")
-    # A join whose matches contradict its declared cardinality is still never returned.
+    # From 0.261.477 a join whose matches contradict its declared cardinality is returned, for
+    # each of the three cardinality checks. An overlapping effective interval is not (below).
+    for check, role in (
+        ("left_reuse", "join_left_cardinality"), ("right_cardinality", "join_right_cardinality"),
+        ("right_match_cardinality", "join_right_cardinality"),
+    ):
+        returned = native._safe_program_correction(relational.TabularRelationalError(
+            "relational_match_ambiguous", detail={"check": check, "role": role, "step_index": 5},
+        ))
+        assert returned == {
+            "category": "relational_match_ambiguous", "check": check, "step_index": 5,
+            "location": {"role": role},
+        }
+        assert native._saved_correction_admissible(returned)
     assert native._safe_program_correction(relational.TabularRelationalError(
-        "relational_match_ambiguous", detail={"check": "left_reuse", "step_index": 5},
+        "relational_match_ambiguous", detail={"step_index": 5},
     )) is None
+    # From 0.261.478 a key column the author named whose cell is empty or untyped is returned,
+    # with the role and row position and no cell value. The same code for other checks is not.
+    for check in ("event_key", "detail_key", "cumulative_partition"):
+        returned = native._safe_program_correction(relational.TabularRelationalError(
+            "relational_key_invalid", detail={"check": check, "value_index": 7, "step_index": 2},
+        ))
+        assert returned == {
+            "category": "relational_key_invalid", "check": check, "step_index": 2,
+            "location": {"value_index": 7},
+        }
+        assert native._saved_correction_admissible(returned)
+        failure = native._failure({"step_id": "calculate"}, relational.TabularRelationalError(
+            "relational_key_invalid", detail={"check": check},
+        ), "execution")["failure"]
+        assert failure["calculation_cause"] == "calculation_program_invalid"
+        assert failure["calculation_revisable"] is True
+    assert native._safe_program_correction(relational.TabularRelationalError("relational_key_invalid")) is None
+    # From 0.261.481 a cell that is not a date in the column a cumulative sum is ordered by is
+    # returned, like the effective-date column. An invalid cumulative value is not (below).
+    returned = native._safe_program_correction(relational.TabularRelationalError(
+        "relational_date_invalid", detail={"check": "cumulative_order", "value_index": 2, "step_index": 21},
+    ))
+    assert returned == {
+        "category": "relational_date_invalid", "check": "cumulative_order", "step_index": 21,
+        "location": {"value_index": 2},
+    }
+    assert native._saved_correction_admissible(returned)
+    assert native._failure({"step_id": "calculate"}, relational.TabularRelationalError(
+        "relational_date_invalid", detail={"check": "cumulative_order"},
+    ), "execution")["failure"]["calculation_revisable"] is True
+    # The record of a returned finding says where it is and whether it is the same one again.
+    logged = []
+    monkeypatch.setattr(native, "log_event", lambda message, extra=None, **_kwargs: logged.append(extra))
+    run = types.SimpleNamespace(run_id="PRIVATE_RUN", conversation_id="PRIVATE_CONVERSATION")
+    native._log_program_returned(run, {"step_id": "calculate"}, returned, {"calls_used": 1})
+    native._log_program_returned(
+        run, {"step_id": "calculate"}, returned, {"calls_used": 2},
+        given={**returned, "program": {"steps": []}},
+    )
+    native._log_program_returned(
+        run, {"step_id": "calculate"}, returned, {"calls_used": 3},
+        given={**returned, "location": {"value_index": 9}},
+    )
+    assert [entry["correction_repeated"] for entry in logged] == [False, True, False]
+    assert all(
+        (entry["native_step_index"], entry["native_value_index"]) == (21, 2) and "native_check" not in entry
+        for entry in logged
+    )
     transformations = importlib.import_module("functions_tabular_transformations")
     stopped = transformations.TabularTransformationEvaluationError("Numeric value is invalid")
     stopped.detail = {
@@ -625,6 +824,30 @@ def test_program_correction_never_repairs_genuine_interval_or_numeric_faults():
         "relational_numeric_invalid",
         detail={"check": "cumulative_value", "step_index": 2},
     )) is None
+    # From 0.261.476: three faults in how the program is written or which column it reads are
+    # returned, each for one named check. The same codes for any other check stay refused.
+    for category, check in (
+        ("relational_columns_ambiguous", "join_columns_ambiguous"),
+        ("relational_columns_ambiguous", "allocate_columns_ambiguous"),
+        ("relational_selection_invalid", "document_ids_mismatch"),
+        ("relational_date_invalid", "effective_value"),
+    ):
+        returned = native._safe_program_correction(relational.TabularRelationalError(
+            category, detail={"check": check, "step_index": 3, "step_op": "join"},
+        ))
+        assert returned == {
+            "category": category, "check": check, "step_index": 3, "location": {"step_op": "join"},
+        }
+        assert native._saved_correction_admissible(returned)
+    for category, check in (
+        ("relational_columns_ambiguous", None), ("relational_selection_invalid", "duplicate_dataset"),
+        ("relational_selection_invalid", None), ("relational_date_invalid", "effective_start"),
+        ("relational_date_invalid", "effective_end"), ("relational_date_invalid", None),
+        ("relational_numeric_invalid", "effective_value"), ("relational_column_limit", "join_columns_ambiguous"),
+    ):
+        detail = {"step_index": 3, **({"check": check} if check else {})}
+        assert native._safe_program_correction(relational.TabularRelationalError(category, detail=detail)) is None
+        assert not native._saved_correction_admissible({"category": category, **detail})
     correction = native._safe_program_correction(relational.TabularRelationalError(
         "relational_column_missing",
         detail={"check": "column_missing", "step_index": 0},
@@ -808,3 +1031,42 @@ def test_real_compiler_executor_and_export_consume_trusted_legacy_manual_rows(ru
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_an_attempt_that_ran_out_of_authoring_calls_may_have_a_next_attempt():
+    """0.261.477: the calls ran out while a finding was still being returned to the author."""
+    native = importlib.import_module("functions_orchestration_native_results")
+    relational = importlib.import_module("functions_tabular_relational")
+    schema = importlib.import_module("functions_orchestration_schema")
+    step = {"step_id": "calculate"}
+    cases = (
+        # (error, cause, the author is given this finding)
+        (relational.TabularRelationalError("relational_spec_invalid", detail={"check": "schema"}),
+         "calculation_program_invalid", True),
+        (relational.TabularRelationalError("relational_source_unused", detail={"check": "result_sources"}),
+         "calculation_program_invalid", True),
+        (relational.TabularRelationalError("relational_match_ambiguous", detail={"check": "left_reuse"}),
+         "relationship_grain_invalid", True),
+        (relational.TabularRelationalError(
+            "relational_match_ambiguous", detail={"check": "effective_interval_overlap"}),
+         "relationship_grain_invalid", False),
+        (relational.TabularRelationalError("relational_spec_invalid", detail={"check": "json_parse"}),
+         "calculation_program_invalid", False),
+        (relational.TabularRelationalError("relational_row_limit"), "calculation_program_invalid", False),
+    )
+    for error, cause, revisable in cases:
+        failure = native._failure(step, error, "execution")["failure"]
+        assert failure["calculation_cause"] == cause
+        assert (failure.get("calculation_revisable") is True) == revisable
+        # The saved step keeps the flag, and the public text is unchanged by it.
+        saved = schema.safe_failure(failure)
+        assert saved["code"] == cause and saved["message"] == schema.FAILURE_MESSAGES[cause]
+        assert (saved.get("calculation_revisable") is True) == revisable
+        assert schema.failure_repeats_on_retry(saved) is (not revisable)
+    # The flag means nothing without a calculation cause, and only True is read.
+    assert "calculation_revisable" not in schema.build_failure("result_invalid", calculation_revisable=True)
+    assert schema.failure_repeats_on_retry({
+        "calculation_cause": "calculation_program_invalid", "calculation_revisable": "yes",
+    })
+    assert schema.failure_repeats_on_retry({"calculation_cause": "generation_incomplete"})
+    assert schema.failure_repeats_on_retry({"code": "image_content_refused", "calculation_revisable": True})

@@ -41,7 +41,7 @@ import functions_orchestration_runs as run_store
 from functions_appinsights import log_event, workflow_log_context
 from functions_orchestration_checkpoints import (
     CHECKPOINT_VERSION, DEPENDENCY_STATE_FIELDS, LIFECYCLE_ID, OPTIONAL_STATE_FIELDS, STATE_FIELDS,
-    CheckpointError, CheckpointStore, context_binding, context_binding_parts, context_state,
+    CheckpointError, CheckpointStore, bound_action_catalog, context_binding, context_binding_parts, context_state,
     effective_plan, fingerprint, orchestration_answer_message_id, publication_documents_match,
     restore_context, step_input_fingerprint,
 )
@@ -336,7 +336,7 @@ def checkpoint_store(record, authorize, *, token=None, claim_id=None):
         run_store.cosmos_orchestration_run_steps_container,
         run_id=record['id'], user_id=record['user_id'], conversation_id=record['conversation_id'],
         turn_id=record.get('turn_id') or record['plan'].get('turn_id'), authorize=authorize,
-        token=token, claim_id=claim_id,
+        token=token, claim_id=claim_id, prior_run_id=record.get('retry_of_run_id'),
     )
 
 
@@ -1730,12 +1730,18 @@ def log_binding_parts(record, context, plan, settings, outcome):
 
     Comparing the two lines for one run names the part that changed.
     """
+    actions = getattr(context, 'action_catalog', None) or []
     log_event(
         '[ORCHESTRATION_RUNS] Execution binding parts.',
         extra={
             **workflow_log_context(run_id=record.get('id'), conversation_id=record.get('conversation_id')),
             'stage': 'execution_binding', 'binding_outcome': outcome,
             **context_binding_parts(context, plan, settings),
+            # Counts only. Role-gated actions are outside the binding; their count shows
+            # whether this context was offered any.
+            'action_count': len(actions),
+            'role_gated_action_count': len(actions) - len(bound_action_catalog(context)),
+            'agent_count': len(getattr(context, 'agent_catalog', None) or []),
         },
     )
 

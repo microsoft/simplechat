@@ -1,13 +1,14 @@
 # test_orchestration_planner_contract_recovery.py
 """
 Functional regressions for effective planner contracts and document action binding.
-Version: 0.261.446
+Version: 0.261.481
 Implemented in: 0.261.419; 0.261.422
 Source-schema preflight and native semantic correction added in: 0.261.439
 Column preflight and content-free schema locations added in: 0.261.443
 Complete tabular purpose handoff added in: 0.261.444
 Effective-limit and protocol recovery added in: 0.261.445
 Prepared multi-source admission added in: 0.261.446
+Unselected source returned to the planner, never accepted: 0.261.481
 
 Real registry, planner, validation, source preparation and logger owners run with
 external model/storage I/O isolated. A corrected draft must retain the original
@@ -498,10 +499,14 @@ def test_argument_type_feedback_names_only_the_registered_field(planning, caplog
 def test_correction_cannot_authorize_an_unselected_source(planning):
     invalid = proposal([LEFT])
     invalid["steps"][0]["outputs"] = []
+    # 0.261.481: a plan naming the unselected source is refused and returned to the planner.
+    # It is never accepted: a planner that names it again is refused when corrections run out.
     with pytest.raises(planning.harness.planner.PlannerError):
-        run_plan(planning, [invalid, proposal([RIGHT]), proposal([LEFT])])
-    assert len(planning.harness.model_calls) == 2 and len(planning.harness.replies) == 1
+        run_plan(planning, [invalid, proposal([RIGHT]), proposal([RIGHT])])
+    assert len(planning.harness.model_calls) == 3 and planning.harness.replies == []
     assert planning.harness.assistant_messages() == []
+    kind, plan = run_plan(planning, [invalid, proposal([RIGHT]), proposal([LEFT])])
+    assert kind == "plan" and plan["steps"][0]["arguments"]["document_ids"] == [LEFT]
 
 
 def test_unknown_argument_names_are_corrected_but_never_logged(planning, caplog):

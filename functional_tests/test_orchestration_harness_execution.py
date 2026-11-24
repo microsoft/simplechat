@@ -1,10 +1,12 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.446
+Version: 0.261.481
 Implemented in: 0.261.127
+Delivery summary states rows only for files of records, and a readable size, in: 0.261.481
 Incomplete completion rejection added in: 0.261.445
 Prepared stop-only completion enforcement added in: 0.261.446
+Named rule on every model failure, read by the calculation owner, added in: 0.261.478
 Invocation, catalog, and citation regressions implemented in: 0.261.129
 Direct initial-binding scope coverage implemented in: 0.261.130
 Single orchestration contract updated in: 0.261.139
@@ -699,6 +701,46 @@ def test_required_complete_generation_accepts_only_provider_stop(
     assert failure.value.stage == "tabular_program_lowering"
     assert usage == {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9}
     assert invoke.enforces_complete_generation is True
+    # The calculation owner reads the rule from this error. Before 0.261.478 it read an
+    # attribute this class does not have, so a cut-off reply was never asked again.
+    native = importlib.import_module("functions_orchestration_native_results")
+    assert native._failure_rule(failure.value) == "generation_incomplete"
+    assert native._failure_rule(failure.value) in native._REPLY_INCOMPLETE_RULES
+
+
+@pytest.mark.parametrize("reply,rule", [
+    ("empty", "reply_empty"), ("no_choices", "reply_empty"),
+    ("refusal", "reply_refused"), ("content_filter", "reply_refused"),
+])
+def test_a_model_failure_names_what_came_back(harness, monkeypatch, reply, rule):
+    """0.261.478: ``model_failed`` says which kind, so telemetry and the owner can tell them apart."""
+    harness.create(replies=["unused"])
+    execution = harness.prepare()
+    response = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=5, completion_tokens=4, total_tokens=9),
+        choices=[] if reply == "no_choices" else [SimpleNamespace(
+            finish_reason="content_filter" if reply == "content_filter" else "stop",
+            message=SimpleNamespace(
+                content="" if reply == "empty" else '{"valid":"json"}',
+                refusal="declined" if reply == "refusal" else None,
+            ),
+        )],
+    )
+    monkeypatch.setattr(execution.answer_model, "create_completion", Mock(return_value=response))
+    invoke = build_harness_invoke_prompt(
+        execution.answer_model, token_usage={}, revalidate=execution._revalidate_context,
+    )
+    try:
+        with pytest.raises(HarnessExecutionError) as failure:
+            invoke(
+                "Return a complete program.", stage="tabular_program_lowering",
+                metadata={"require_complete_generation": True},
+            )
+    finally:
+        execution.close()
+    assert failure.value.code == "model_failed" and failure.value.validation_rule == rule
+    native = importlib.import_module("functions_orchestration_native_results")
+    assert (native._failure_rule(failure.value) in native._REPLY_INCOMPLETE_RULES) == (rule == "reply_empty")
 
 
 def test_required_complete_generation_accepts_provider_stop(harness, monkeypatch):
@@ -906,6 +948,24 @@ def test_delivery_summary_requires_a_current_committed_card():
     assert "ready (2 rows)" in lines[1]
     assert "unavailable" in lines[2] and "unavailable" in lines[3]
     assert "999" not in summary
+
+
+def test_delivery_summary_states_the_facts_that_fit_each_file_type():
+    def line(file_name, **facts):
+        output = {"output_id": "o", "file_name": file_name, "state": "completed", "available": True, **facts}
+        return _delivery_summary([output], [{"output_id": "o"}]).splitlines()[1]
+
+    # The reported case: a finished Word document carried zero records and a character count.
+    word = line("review.docx", output_format="docx", row_count=0, character_count=18898, size_bytes=41274)
+    assert word.endswith("ready (40.3 KB).")
+    assert "rows" not in word and "characters" not in word and "bytes" not in word
+    assert line("deck.pptx", row_count=0, size_bytes=2048).endswith("ready (2 KB).")
+    # Rows are a fact about a file of records, and zero is a real count there.
+    assert line("rows.csv", output_format="csv", row_count=50, size_bytes=1006).endswith("ready (50 rows, 1006 B).")
+    assert line("one.xlsx", row_count=1, size_bytes=5 * 1024 * 1024).endswith("ready (1 row, 5 MB).")
+    assert line("empty.csv", row_count=0, size_bytes=0).endswith("ready (0 rows, 0 B).")
+    assert line("notes.txt", row_count=0, character_count=0, size_bytes=0).endswith("ready (0 B).")
+    assert line("unknown.docx").endswith("ready.")
 
 
 def test_prepared_checkpoint_uses_the_actual_owning_result_guard(harness, monkeypatch):

@@ -608,6 +608,19 @@ def check_and_correct(
                 "report_repair_count": state.get("report_repairs", 0),
                 "evidence_key_count": len(evidence),
             }
+            audit = getattr(error, "audit", None)
+            if isinstance(audit, dict):
+                # The check's input did not fit the model's input budget: say by how much and
+                # where the limit came from. Counts and closed tokens only.
+                for key in (
+                    "input_tokens", "input_budget_tokens", "context_window_tokens",
+                    "max_input_tokens", "max_output_tokens", "output_reserve_tokens", "safety_tokens",
+                ):
+                    if type(audit.get(key)) is int:
+                        diagnostic[key] = audit[key]
+                for key in ("limit_source", "limit_status", "output_reservation", "decision"):
+                    if type(audit.get(key)) is str and re.fullmatch(r"[a-z][a-z0-9_+]{0,39}", audit[key]):
+                        diagnostic[key] = audit[key]
             if isinstance(error, CompletenessError):
                 for key in ("evidence_ref_count", "evidence_refs_list"):
                     if type(error.details.get(key)) in (int, bool):

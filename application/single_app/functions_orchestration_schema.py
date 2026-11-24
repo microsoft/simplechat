@@ -1521,9 +1521,19 @@ def validate_dependency_plan(
                             code='source_binding_invalid', rule='document_limit_exceeded', argument_field=name,
                         )
                     if authorized_document_ids is not None and set(arguments[name]) - set(authorized_document_ids):
+                        # The IDs go back only to the planner that wrote them, so it can name
+                        # a document this request may read. Nothing says whether such a
+                        # document exists or who may read it.
                         raise _step_contract_error(
-                            'A required source is unavailable.', raw,
+                            'A step names a document that is not one of the documents available '
+                            'to this request.', raw,
                             code='source_unavailable', rule='document_authorization_required',
+                            feedback={
+                                'argument': name,
+                                'document_ids_not_available': sorted(
+                                    set(arguments[name]) - set(authorized_document_ids)
+                                )[:PLAN_FEEDBACK_MAX_STEPS],
+                            },
                         )
             if 'reference_document_ids' in arguments:
                 _validate_reference_id_list(arguments['reference_document_ids'], 'Reference document IDs')
@@ -3019,7 +3029,7 @@ def _m365_approval_id(value):
 
 def build_failure(
     code='step_failed', *, step_id=None, capability_id=None, provider_status=None, m365_sources=None,
-    approval_id=None, calculation_cause=None,
+    approval_id=None, calculation_cause=None, calculation_revisable=None,
 ):
     """Only application-owned text may cross a failure boundary."""
     code = code if code in FAILURE_MESSAGES else 'step_failed'
@@ -3047,6 +3057,9 @@ def build_failure(
         'generation_incomplete', 'relationship_grain_invalid', 'calculation_program_invalid',
     }:
         result['calculation_cause'] = calculation_cause
+        if calculation_revisable is True:
+            # The attempt ended on a finding its author is given: see failure_repeats_on_retry.
+            result['calculation_revisable'] = True
     return result
 
 
@@ -3064,6 +3077,7 @@ def safe_failure(value, *, step_id=None, capability_id=None):
         m365_sources=value.get('m365_sources'),
         approval_id=value.get('approval_id'),
         calculation_cause=calculation_cause,
+        calculation_revisable=value.get('calculation_revisable'),
     )
 
 
@@ -3137,14 +3151,21 @@ REQUEST_REFUSAL_FAILURE_CODES = frozenset({
 
 
 def failure_repeats_on_retry(failure):
-    """Whether resending the same planned request would reproduce this failure."""
+    """Whether resending the same planned request would reproduce this failure.
+
+    A calculation is authored again on each attempt, so its failure repeats only when the
+    author has nothing to act on. An attempt that used its authoring calls while a finding was
+    still being returned to the author (``calculation_revisable``) does not repeat: the next
+    attempt authors the program again. Whether a second such attempt is a third is decided by
+    the round limit and the stall check, not here.
+    """
     failure = failure if isinstance(failure, dict) else {}
     return (
         failure.get('code') in REQUEST_REFUSAL_FAILURE_CODES
         or failure.get('calculation_cause') in {
             'generation_incomplete', 'relationship_grain_invalid',
             'calculation_program_invalid',
-        }
+        } and failure.get('calculation_revisable') is not True
     )
 
 

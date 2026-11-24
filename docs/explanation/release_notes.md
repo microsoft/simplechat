@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.476)**
+### **(v0.261.483)**
 
 #### Bug Fixes
 
@@ -19,7 +19,34 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **PyJWT Padded-Token Compatibility**
     *   Updated PyJWT from `2.15.0` to `2.15.1` to accept valid trailing Base64URL padding in JWS segments while continuing to reject non-Base64URL characters.
     *   (Ref: `application/single_app/requirements.txt`, `application/single_app/requirements.lock.txt`, [PyJWT changelog](https://pyjwt.readthedocs.io/en/2.15.1/changelog.html))
+### **(v0.261.481)**
 
+#### User Interface Enhancements
+
+*   **Generated File Cards Show an Icon, the File Name and a Download Button**
+    *   In the modern chat, each file a plan produces is now one compact row: a file-type icon (Word, PDF, PowerPoint, Excel, CSV and the text formats each have their own), the file name, a line of details, and a **Download** button at the end of the row. The green **Completed** badge is gone, since the Download button already says the file is ready; files that are still rendering, failed or cancelled keep their badge.
+    *   The details line fits the file type. Spreadsheets and data files show rows and size; Word, PDF, PowerPoint, Markdown and text files show size only, so a finished Word document no longer says "0 rows". The Generated list in the documents drawer follows the same rule.
+    *   The reply text above the card reads `ready (40.3 KB)` or `ready (50 rows, 1006 B)` in place of `ready (0 rows, 18,898 characters, 41,274 bytes)`.
+    *   (Ref: `GeneratedFileIcon.tsx`, `OrchestrationOutputs.tsx`, `GeneratedArtifactCard.tsx`, `orchestrationOutputs.ts`, `conversationGeneratedFiles.ts`, `functions_orchestration_execution.py`, `test_v2_generated_file_card_details_logic.mjs`, `V2_GENERATED_FILE_CARD.md`)
+
+### **(v0.261.479)**
+
+#### User Interface Enhancements
+
+*   **Classic and Modern Use the Same Names and the Same Address Variable**
+    *   The server-rendered interface is now called **Classic** everywhere a person chooses an interface, matching the `ui=classic` address variable. Admin Settings offers **Classic and modern**, **Modern only** and **Classic only**, the default interface lists **Classic**, and the modern account menu says **Switch to classic UI**. Stored values are unchanged, so no setting or preference needs to be saved again.
+    *   Modern now has the matching variable. Adding `ui=modern` to a classic address opens its modern page for that visit, whatever the saved preference, the same way `ui=classic` keeps a page classic. **Switch to modern UI** lands on an address that carries `ui=modern`.
+    *   Administrator policy still decides: **Classic only** ignores `ui=modern`, as **Modern only** already ignores `ui=classic`. A missing modern bundle, a signed-out visitor or an account without an application role stays on the classic page.
+    *   (Ref: `functions_ui_redirect.py`, `functions_ui_mode.py`, `app.py`, `ui-switch.js`, `admin_settings_fields.py`, `branding.html`, `Sidebar.tsx`, `test_ui_modern_url_variable.py`, `UI_INTERFACE_SELECTION.md`)
+
+### **(v0.261.476)**
+
+#### User Interface Enhancements
+
+*   **Press and Hold a Message for Its Actions on Touch Screens**
+    *   In the V2 chat, a message's actions only appear when the pointer hovers over it, which never happens on a phone or tablet. Pressing and holding a message or generated image for about half a second now opens those actions in a bottom sheet: labelled buttons for Copy, Retry, Read aloud, feedback, sources, Fork and the rest, with the overflow menu's entries listed beneath.
+    *   The sheet uses the same actions and handlers as the hover row, which is unchanged on desktop. Mouse input, scrolling, links, buttons and code blocks behave as before. Tap outside, press Escape, or swipe the sheet down to close it.
+    *   (Ref: `useLongPress.ts`, `MessageActionSheet.tsx`, `MessageActions.tsx`, `MessageList.tsx`, `test_v2_chat_message_touch_sheet.py`, `V2_CHAT_MESSAGE_TOUCH_SHEET.md`)
 ### **(v0.261.475)**
 
 #### Bug Fixes
