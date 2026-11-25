@@ -1,7 +1,7 @@
 # test_orchestration_failure_telemetry.py
 """Specific orchestration failure rules reach telemetry without private plan text.
 
-Version: 0.261.481
+Version: 0.261.483
 Implemented in: 0.261.140
 Step, capability, format, and authority-reason codes covered in: 0.261.141
 Partial-input producer capability and step hash fields covered in: 0.261.191
@@ -10,6 +10,7 @@ Bounded, non-regex application-version validation implemented in: 0.261.342
 Two shared planning corrections covered in: 0.261.422
 Recovery guard detail through the Warning logger covered in: 0.261.444
 Diagnostic rule and code fields added in 0.261.478 reaching telemetry covered in: 0.261.480
+Sizes of a request that did not fit reaching telemetry covered in: 0.261.483
 
 Uses real planner/validation/logging modules with offline provider replies.
 The synthetic invalid proposals test diagnostics, not the unknown historical
@@ -189,6 +190,59 @@ def test_the_rule_and_code_fields_added_for_troubleshooting_reach_telemetry(harn
     assert (properties["sc_limit_source"], properties["sc_limit_status"]) == ("compatibility_policy", "unknown")
     for key in ("failure_rule", "execution_rule", "error_code", "calculation_cause", "limit_source"):
         assert f"sc_{key}" not in telemetry._build_logger_extra("Failure.", {key: "PRIVATE text"})
+
+
+def test_the_sizes_of_a_request_that_did_not_fit_reach_telemetry(harness):
+    """0.261.483: from 0.261.478 these were logged under names containing "token".
+
+    The filter replaces any such value with a present flag, as it would a credential, so three
+    runs reported that a check's input did not fit without saying by how much.
+    """
+    telemetry = importlib.import_module("functions_appinsights")
+    policy = importlib.import_module("functions_workflow_policy_errors")
+    context = importlib.import_module("functions_workflow_context")
+    # The real audit of a real refusal, so the names below are the ones the budget produces.
+    audit = context.calculate_workflow_context_budget(
+        [{"role": "user", "content": "PRIVATE " * 20000}], "fixture-model-without-limits",
+        output_tokens=500,
+    )
+    assert audit["decision"] == "blocked" and audit["input_tokens"] > audit["input_budget_tokens"]
+
+    hidden = telemetry._build_logger_extra("Check unavailable.", audit)
+    assert hidden["sc_input_tokens_present"] is True and "sc_input_tokens" not in hidden
+    assert "sc_token_estimator" not in hidden and "sc_decision" not in hidden
+
+    fields = policy.context_budget_log_fields(audit)
+    properties = telemetry._build_logger_extra("Check unavailable.", fields)
+    assert properties["sc_input_size"] == audit["input_tokens"]
+    assert properties["sc_input_budget"] == audit["input_budget_tokens"]
+    assert properties["sc_output_reserve"] == audit["output_reserve_tokens"] == 500
+    assert properties["sc_safety_margin"] == audit["safety_tokens"]
+    assert properties["sc_budget_decision"] == "blocked"
+    assert properties["sc_output_reservation"] == "requested"
+    assert properties["sc_size_estimator"] == audit["token_estimator"]
+    assert properties["sc_limit_status"] == audit["limit_status"]
+    assert properties["sc_limit_source"] == audit["limit_source"].replace("+", "_and_")
+    # Every count the audit holds is carried, and every field carried is kept by telemetry:
+    # none is turned into a present flag or a bare length.
+    carried = dict(policy._CONTEXT_BUDGET_LOG_COUNTS)
+    for key, name in carried.items():
+        assert (name in fields) is (type(audit.get(key)) is int), key
+    for key, value in fields.items():
+        assert properties[f"sc_{key}"] == value, key
+    assert not [key for key in properties if key.endswith("_present")]
+    assert "PRIVATE" not in json.dumps(properties)
+    # A limit drawn from two origins is still one code telemetry keeps.
+    joined = telemetry._build_logger_extra("Check unavailable.", policy.context_budget_log_fields(
+        {"limit_source": "catalog+configured"},
+    ))
+    assert joined["sc_limit_source"] == "catalog_and_configured"
+    # A value that is not a count or a closed code is left out, not logged.
+    assert policy.context_budget_log_fields({
+        "input_tokens": True, "decision": "PRIVATE text", "limit_source": "catalog+PRIVATE",
+        "model_id": "PRIVATE-DEPLOYMENT",
+    }) == {}
+    assert policy.context_budget_log_fields(None) == {}
 
 
 def test_admission_diagnostic_identifies_sdk_type_without_private_record(harness, monkeypatch):

@@ -1,10 +1,11 @@
 # test_orchestration_document_action_binding.py
 """
 Functional regressions for enforced native document action source bindings.
-Version: 0.261.478
+Version: 0.261.483
 Implemented in: 0.261.419
 Pre-read incompatible-section correction added in: 0.261.439
 Named rule on a stopped action added in: 0.261.478
+Word comment requests with paging or filter arguments corrected before any read in: 0.261.483
 
 The real action runner, Semantic Kernel filters, Document Search plugin and
 citation projection run with model and source-service I/O doubled. Existing
@@ -249,6 +250,76 @@ def test_repeated_incompatible_native_request_stops_without_reading_or_relaxing_
     assert failure.value.orchestration_failure_code == "document_action_read_unsupported"
     assert state.native_reads == []
     assert len(state.requests) == 2
+
+
+@pytest.mark.parametrize("argument,value", [
+    ("native_section", "all"), ("native_cursor", "opaque-cursor"),
+    ("sheet_name", "Summary"), ("cell_range", "A1:B2"),
+])
+def test_word_comments_asked_with_a_paging_argument_are_corrected_once_before_any_read(
+    native_action, argument, value,
+):
+    """0.261.483: this request ended the step (document_action_read_failed) on a plain error."""
+    state = native_action
+    state.metadata["format"] = "docx"
+    state.replies = [
+        tool_call("get_document_accessibility_report", {
+            "document_id": SOURCE, "sections": "comments", argument: value,
+        }),
+        tool_call("get_document_accessibility_report", {"document_id": SOURCE, "sections": "comments"}),
+    ]
+    result = state.loop.run_until_complete(execute(state))
+    assert result["calls"] == 2
+    # The refused request read nothing; the corrected one is the only read.
+    assert len(state.native_reads) == 1
+    read = state.native_reads[0][1]
+    assert read["sections"] == "comments" and read["native_section"] == "comments"
+    assert not read["native_cursor"] and not read["sheet_name"] and not read["cell_range"]
+    correction = state.requests[1]
+    assert "native_word_comments_arguments_unsupported" in correction
+    assert f'"unsupported_arguments": ["{argument}"]' in correction
+    assert '"source_read_performed": false' in correction
+
+
+def test_word_comments_asked_with_their_default_section_are_read_without_a_correction(native_action):
+    state = native_action
+    state.metadata["format"] = "docx"
+    state.replies = [tool_call("get_document_accessibility_report", {
+        "document_id": SOURCE, "sections": "comments", "native_section": "comments",
+    })]
+    result = state.loop.run_until_complete(execute(state))
+    assert result["calls"] == 1 and len(state.native_reads) == 1 and len(state.requests) == 2
+    assert "native_word_comments_arguments_unsupported" not in state.requests[1]
+
+
+def test_a_second_refused_word_comment_request_stops_without_reading(native_action):
+    state = native_action
+    state.metadata["format"] = "docx"
+    state.replies = [
+        tool_call("get_document_accessibility_report", {
+            "document_id": SOURCE, "sections": "comments", "native_section": "all",
+        }),
+        tool_call("get_document_accessibility_report", {
+            "document_id": SOURCE, "sections": "comments", "native_cursor": "opaque-cursor",
+        }),
+    ]
+    with pytest.raises(state.runtime.ActionExecutionError) as failure:
+        state.loop.run_until_complete(execute(state))
+    assert failure.value.orchestration_failure_code == "document_action_read_unsupported"
+    assert state.native_reads == []
+
+
+def test_an_excel_comment_request_keeps_its_paging_arguments(native_action):
+    """The refusal is about Word: a workbook's comments are paged and filtered as before."""
+    state = native_action
+    state.metadata["format"] = "xlsx"
+    state.replies = [tool_call("get_document_accessibility_report", {
+        "document_id": SOURCE, "sections": "comments", "native_section": "all", "sheet_name": "Summary",
+    })]
+    result = state.loop.run_until_complete(execute(state))
+    assert result["calls"] == 1 and len(state.native_reads) == 1
+    assert state.native_reads[0][1]["native_section"] == "all"
+    assert state.native_reads[0][1]["sheet_name"] == "Summary"
 
 
 def test_search_without_a_model_filter_is_restricted_before_source_io(native_action):

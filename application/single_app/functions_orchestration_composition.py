@@ -70,6 +70,7 @@ from functions_orchestration_workflow_context import resolve_turn_time_zone, wor
 from functions_task_completeness import (
     check_and_correct, completeness_policy, public_completeness_report,
 )
+from functions_workflow_policy_errors import context_budget_log_fields
 from functions_native_audit import (
     NATIVE_AUDIT_ANSWER_VERSION, NATIVE_AUDIT_REVIEW_POLICY, NativeAuditAnswerError,
     decode_native_audit_answer, native_audit_contract, native_audit_model_inputs,
@@ -1335,6 +1336,8 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 'failure_code': failure['code'],
                 **({'execution_code': code} if type(code) is str and code else {}),
                 **({'authority_reason': authority_reason} if type(authority_reason) is str and authority_reason else {}),
+                # An answer whose own input did not fit says by how much, as its check does.
+                **(context_budget_log_fields(exc.audit) if isinstance(exc, WorkflowContextBudgetError) else {}),
             },
         )
         return build_step_result(

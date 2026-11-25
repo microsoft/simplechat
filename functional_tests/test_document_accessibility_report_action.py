@@ -2,9 +2,10 @@
 # test_document_accessibility_report_action.py
 """
 Functional test for the get_document_accessibility_report Semantic Kernel function.
-Version: 0.261.444
+Version: 0.261.483
 Implemented in: 0.261.392
 Explicit native slide request contract covered in: 0.261.444
+Typed refusal of Word comment requests with paging or filter arguments covered in: 0.261.483
 
 This test ensures that:
 1. get_document_accessibility_payload returns the full stored accessibility, style, and issue
@@ -12,6 +13,8 @@ This test ensures that:
 2. It refuses chat-scope documents and documents that have no stored metadata, with guidance.
 3. The Document Search plugin exposes the function, and the agent citation layer treats it as a
    document-level citation.
+4. Word comments asked together with a paging or filter argument are refused with a typed request
+   error before any source is read, naming the arguments that were refused.
 """
 
 import ast
@@ -27,7 +30,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from functions_native_document_inspection import has_retained_native_source, inspect_native_document  # noqa: E402
 from functions_native_audit import build_native_audit  # noqa: E402
-from native_document_evidence import validate_native_report_sections  # noqa: E402
+from native_document_evidence import (  # noqa: E402
+    NativeInspectionRequestError, validate_native_report_request,
+)
 
 
 def _load_payload_namespace(document, scope="personal", chunks=None):
@@ -64,7 +69,7 @@ def _load_payload_namespace(document, scope="personal", chunks=None):
         "has_retained_native_source": has_retained_native_source,
         "inspect_native_document": inspect_native_document,
         "build_native_audit": build_native_audit,
-        "validate_native_report_sections": validate_native_report_sections,
+        "validate_native_report_request": validate_native_report_request,
     }
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name in wanted_functions:
@@ -151,6 +156,37 @@ def test_payload_errors():
     return True
 
 
+def test_word_comment_request_conflict_is_a_typed_refusal():
+    """0.261.483: this was a plain ValueError, which ended an action step instead of correcting it."""
+    print("Testing the Word comment request refusal...")
+    document = {"id": "doc-w", "file_name": "review.docx", "accessibility_metadata": {"format": "docx"}}
+    namespace = _load_payload_namespace(document)
+    for arguments in (
+        {"native_section": "all"}, {"native_cursor": "opaque-cursor"},
+        {"sheet_name": "Summary"}, {"cell_range": "A1:B2"},
+        {"native_cursor": "opaque-cursor", "cell_range": "A1:B2"},
+    ):
+        try:
+            namespace["get_document_accessibility_payload"]("doc-w", "user-1", sections="comments", **arguments)
+        except NativeInspectionRequestError as error:
+            assert error.code == "native_word_comments_arguments_unsupported", error.code
+            assert error.validation_rule == "native_word_comments_arguments_unsupported"
+            assert set(error.refused_arguments) == set(arguments), error.refused_arguments
+            assert error.argument_field == error.refused_arguments[0]
+        else:
+            raise AssertionError(f"Expected a typed refusal for {arguments}")
+    assert not namespace["_calls"]["chunks"], "A refused request must not read the source"
+
+    # The same request is valid for a workbook, for a Word request that keeps the defaults, and
+    # for any request that does not ask for comments.
+    validate_native_report_request("xlsx", "comments", native_section="all", sheet_name="Summary")
+    validate_native_report_request("docx", "comments")
+    validate_native_report_request("docx", "comments", native_section="comments", native_cursor="")
+    validate_native_report_request("docx", "accessibility,style", native_section="all")
+    print("Word comment request refusal test passed!")
+    return True
+
+
 def test_plugin_and_citation_contract():
     print("Testing plugin and citation contract...")
     plugin_source = (APP_ROOT / "semantic_kernel_plugins" / "document_search_plugin.py").read_text(encoding="utf-8")
@@ -183,6 +219,7 @@ if __name__ == "__main__":
         test_payload_returns_full_metadata_and_sections,
         test_payload_page_chunks,
         test_payload_errors,
+        test_word_comment_request_conflict_is_a_typed_refusal,
         test_plugin_and_citation_contract,
         test_version,
     ]
