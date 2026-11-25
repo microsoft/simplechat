@@ -660,11 +660,6 @@ function modelPublishesCapability(model, capability) {
         (!Array.isArray(model.enabled_capabilities) || model.enabled_capabilities.includes(capability));
 }
 
-function announceConnectionDraft() {
-    connectionDraftChanged = true;
-    window.dispatchEvent(new CustomEvent("simplechat:model-connections-changed", { detail: { saved: false } }));
-}
-
 function markModalDraftChanged() {
     modalDraftChanged = true;
 }
@@ -2678,8 +2673,10 @@ function buildCustomEndpointPayload(source, existing, identityHeader) {
         ...(explicitRouting
             ? {
                 routing_schema_version: 2,
+                // New connections start connection-first (resetModal); saved ones keep the
+                // model-first order they resolve with when no order was stored.
                 routing_path_order:
-                    modalEndpoint.routing_path_order || "connection_first",
+                    modalEndpoint.routing_path_order || "model_first",
             }
             : { api_type: descriptor.value }),
         ...profileSettings,

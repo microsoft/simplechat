@@ -110,7 +110,7 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
-from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route, routing_schema_version
+from functions_model_endpoint_urls import routing_schema_version
 from functions_model_endpoint_validation import validate_custom_model_endpoint, validate_model_endpoint_routing
 from functions_mixed_source_orchestration import (
     MixedSourceCancellationError,
@@ -169,13 +169,12 @@ import os
 import app_settings_cache
 import queue
 import re
-import requests
 import time
 import traceback
 from contextlib import nullcontext
 from urllib.parse import urlparse
 import threading
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional
 from config import *
 from flask import (
     Response,
@@ -388,7 +387,6 @@ from functions_source_review import (
     validate_url_access_request,
     URL_ACCESS_CONTEXT_CHAT,
 )
-from functions_agents import get_agent_id_by_name
 from functions_group import (
     assert_group_role,
     find_group_by_id,

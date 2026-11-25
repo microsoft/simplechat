@@ -86,7 +86,6 @@ from functions_model_endpoint_identity_header import (
 )
 from functions_model_endpoint_providers import (
     get_model_endpoint_provider,
-    normalize_api_type_value,
     normalize_custom_endpoint_auth_type,
     normalize_custom_endpoint_url_mode,
 )
@@ -104,7 +103,7 @@ from functions_model_endpoint_urls import (
     routing_schema_version,
 )
 from model_endpoint_profiles import (
-    get_custom_endpoint_profile, merge_profile_credential_approval, validate_genai_profile,
+    get_custom_endpoint_profile, merge_profile_credential_approval,
 )
 from functions_model_endpoint_validation import (
     endpoint_uses_mai_chat_completions,

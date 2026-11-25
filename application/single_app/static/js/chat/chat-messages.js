@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, buildChatLinkDocumentSourceSelection, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, activateUserWorkspaceContextForChatUpload, selectWorkspaceDocumentForChatUpload, registerConversationTaskDocument, updateConversationTaskDocumentsFromMessages, getConversationTaskDocumentIds, getConversationTaskDocumentSummary } from "./chat-documents.js";
+import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, buildChatLinkDocumentSourceSelection, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, activateUserWorkspaceContextForChatUpload, selectWorkspaceDocumentForChatUpload, registerConversationTaskDocument, updateConversationTaskDocumentsFromMessages, getConversationTaskDocumentIds, getConversationTaskDocumentSummary } from "./chat-documents.js";
 import { commitChatLinkReference, getChatLinkReferenceForRequest } from "./chat-links.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
@@ -1566,35 +1566,145 @@ updateDocumentActionControls().catch(error => {
  * This fixes the issue where AI responses contain tables in code blocks,
  * preventing them from being rendered as proper HTML tables.
  *
+ * Lines are scanned once with precomputed runs. This keeps the fence matching of
+ * the previous regular expression, which backtracked exponentially on long runs of
+ * pipe-delimited lines and could freeze the browser while rendering:
+ * /```(?:\w+)?\n((?:[^\n]*\|[^\n]*\n)+(?:\|[-\s|:]+\|\n)?(?:[^\n]*\|[^\n]*\n)*)\n?```/g
+ *
  * @param {string} content - The markdown content to process
  * @returns {string} - Content with tables unwrapped from code blocks
  */
 function unwrapTablesFromCodeBlocks(content) {
-  // Pattern to match code blocks that contain markdown tables
-  const codeBlockTablePattern = /```(?:\w+)?\n((?:[^\n]*\|[^\n]*\n)+(?:\|[-\s|:]+\|\n)?(?:[^\n]*\|[^\n]*\n)*)\n?```/g;
+  const lines = content.split('\n');
+  const lastLine = lines.length - 1;
+  const lineStarts = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStarts.push(offset);
+    offset += line.length + 1;
+  }
 
-  return content.replace(codeBlockTablePattern, (match, tableContent) => {
-    // Check if the content inside the code block looks like a markdown table
-    const lines = tableContent.trim().split('\n');
+  // Runs of newline-terminated lines: any line with a pipe, or only [-\s|:] characters.
+  const pipeRunEnd = new Array(lines.length);
+  const separatorRunEnd = new Array(lines.length);
+  for (let index = lastLine; index >= 0; index -= 1) {
+    const terminated = index < lastLine;
+    pipeRunEnd[index] = terminated && lines[index].includes('|') ? pipeRunEnd[index + 1] : index - 1;
+    separatorRunEnd[index] = terminated && /^[-\s|:]*$/.test(lines[index]) ? separatorRunEnd[index + 1] : index - 1;
+  }
+  const separatorRunStart = new Array(lines.length);
+  const lastFenceLine = new Array(lines.length);
+  const lastPipeStartLine = new Array(lines.length);
+  lines.forEach((line, index) => {
+    separatorRunStart[index] = separatorRunEnd[index] >= index
+      ? Math.min(index, separatorRunStart[index - 1] ?? index)
+      : index + 1;
+    lastFenceLine[index] = line.startsWith('```') ? index : (lastFenceLine[index - 1] ?? -1);
+    lastPipeStartLine[index] = line.startsWith('|') ? index : (lastPipeStartLine[index - 1] ?? -1);
+  });
 
-    // A markdown table should have:
-    // 1. At least 2 lines
-    // 2. Lines containing pipe characters (|)
-    // 3. Potentially a separator line with dashes and pipes
-    if (lines.length >= 2) {
-      const hasTableStructure = lines.every(line => line.includes('|'));
-      const hasSeparatorLine = lines.some(line => /^[\s|:-]+$/.test(line));
-
-      // If it looks like a table, unwrap it from the code block
-      if (hasTableStructure && (hasSeparatorLine || lines.length >= 3)) {
-        console.log('🔧 Unwrapping table from code block:', tableContent.substring(0, 50) + '...');
-        return '\n\n' + tableContent.trim() + '\n\n';
+  // The closing fence right after a body line, optionally after one blank line.
+  const closingAfter = bodyLastLine => {
+    const next = bodyLastLine + 1;
+    if (lines[next] === '' && next < lastLine && lines[next + 1].startsWith('```')) {
+      return { bodyEndLine: next, closingLine: next + 1 };
+    }
+    if (next <= lastLine && lines[next].startsWith('```')) {
+      return { bodyEndLine: next, closingLine: next };
+    }
+    return null;
+  };
+  // Pipe lines from firstLine (possibly none), longest first, then fences that start a line.
+  const closingForPipeLines = firstLine => {
+    const runEnd = pipeRunEnd[firstLine];
+    const fence = lastFenceLine[Math.max(runEnd, 0)];
+    return closingAfter(runEnd)
+      || (runEnd >= firstLine && fence >= firstLine ? { bodyEndLine: fence, closingLine: fence } : null);
+  };
+  // The optional separator group could bridge blank or dash-only lines after a run.
+  // Its result depends only on where that run ends, so each run is scanned once.
+  const bridgedClosings = new Map();
+  const closingAcrossSeparatorLines = runEnd => {
+    if (!bridgedClosings.has(runEnd)) {
+      let closing = null;
+      for (let line = separatorRunEnd[runEnd]; line > runEnd && !closing; line -= 1) {
+        if (lines[line].endsWith('|')) {
+          closing = closingForPipeLines(line + 1);
+        }
       }
+      bridgedClosings.set(runEnd, closing);
+    }
+    return bridgedClosings.get(runEnd);
+  };
+  // Same precedence as the backtracking pattern: longest pipe body, then the later of an
+  // interior fence or a separator bridge that starts on a later line.
+  const findClosing = firstLine => {
+    const runEnd = pipeRunEnd[firstLine];
+    if (runEnd < firstLine) {
+      return null;
+    }
+    const endClosing = closingAfter(runEnd);
+    if (endClosing) {
+      return endClosing;
+    }
+    const fence = lastFenceLine[runEnd] > firstLine ? lastFenceLine[runEnd] : -1;
+    const bridgeStart = lastPipeStartLine[runEnd];
+    const bridged = bridgeStart > firstLine && bridgeStart > fence && bridgeStart >= separatorRunStart[runEnd]
+      ? closingAcrossSeparatorLines(runEnd)
+      : null;
+    return bridged || (fence >= 0 ? { bodyEndLine: fence, closingLine: fence } : null);
+  };
+
+  let result = '';
+  let cursor = 0;
+  for (let index = 0; index < lastLine; index += 1) {
+    const fenceOffset = findOpeningCodeFence(lines[index]);
+    const matchStart = lineStarts[index] + fenceOffset;
+    const closing = fenceOffset >= 0 && matchStart >= cursor ? findClosing(index + 1) : null;
+    if (!closing) {
+      continue;
     }
 
-    // If it doesn't look like a table, keep it as a code block
-    return match;
-  });
+    const matchEnd = lineStarts[closing.closingLine] + 3;
+    const tableContent = content.slice(lineStarts[index + 1], lineStarts[closing.bodyEndLine]);
+    result += content.slice(cursor, matchStart)
+      + unwrapCodeBlockTable(content.slice(matchStart, matchEnd), tableContent);
+    cursor = matchEnd;
+    // The closing line may still open another block after the consumed fence.
+    index = closing.closingLine - 1;
+  }
+  return result + content.slice(cursor);
+}
+
+function findOpeningCodeFence(line) {
+  let languageStart = line.length;
+  while (languageStart > 0 && /\w/.test(line[languageStart - 1])) {
+    languageStart -= 1;
+  }
+  return line.endsWith('```', languageStart) ? languageStart - 3 : -1;
+}
+
+function unwrapCodeBlockTable(match, tableContent) {
+  // Check if the content inside the code block looks like a markdown table
+  const lines = tableContent.trim().split('\n');
+
+  // A markdown table should have:
+  // 1. At least 2 lines
+  // 2. Lines containing pipe characters (|)
+  // 3. Potentially a separator line with dashes and pipes
+  if (lines.length >= 2) {
+    const hasTableStructure = lines.every(line => line.includes('|'));
+    const hasSeparatorLine = lines.some(line => /^[\s|:-]+$/.test(line));
+
+    // If it looks like a table, unwrap it from the code block
+    if (hasTableStructure && (hasSeparatorLine || lines.length >= 3)) {
+      console.log('🔧 Unwrapping table from code block:', tableContent.substring(0, 50) + '...');
+      return '\n\n' + tableContent.trim() + '\n\n';
+    }
+  }
+
+  // If it doesn't look like a table, keep it as a code block
+  return match;
 }
 
 /**
@@ -5840,8 +5950,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     generatedOutputsContainer.classList.remove('d-none');
   }
 
-  function renderInlineExportButtonContent(button, labelText, iconHtml) {
-    button.innerHTML = `${iconHtml || ''}${labelText}`;
+  function renderInlineExportButtonContent(button, labelText, icon) {
+    button.replaceChildren(...(icon ? [icon] : []), String(labelText ?? ''));
   }
 
   function setInlineExportButtonPendingState(button, isPending, actionName) {
@@ -5860,16 +5970,19 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     button.title = isPending ? pendingLabel : defaultTitle;
 
     if (isPending) {
-      renderInlineExportButtonContent(
-        button,
-        pendingLabel,
-        '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>'
-      );
+      const spinner = document.createElement('span');
+      spinner.className = 'spinner-border spinner-border-sm me-1';
+      spinner.setAttribute('aria-hidden', 'true');
+      renderInlineExportButtonContent(button, pendingLabel, spinner);
       return;
     }
 
-    const iconHtml = iconClass ? `<i class="${iconClass} me-1"></i>` : '';
-    renderInlineExportButtonContent(button, defaultLabel, iconHtml);
+    let icon = null;
+    if (iconClass) {
+      icon = document.createElement('i');
+      icon.className = `${iconClass} me-1`;
+    }
+    renderInlineExportButtonContent(button, defaultLabel, icon);
   }
 
   function waitForUiPaint() {

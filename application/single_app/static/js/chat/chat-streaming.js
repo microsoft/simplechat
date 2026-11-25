@@ -900,8 +900,6 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 updateUserMessageId(
                     tempUserMessageId,
                     persistedUserMessageId,
-                    analysisContextRevision,
-                    submissionId,
                     { refreshExpandedMetadata: true }
                 );
             } else {

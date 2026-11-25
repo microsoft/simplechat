@@ -22,17 +22,12 @@ from functions_ai_connections import (
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_capabilities import resolve_model_token_budget
 from functions_model_endpoint_auth import (
-    normalize_custom_endpoint_auth_type,
     resolve_client_certificate,
     resolve_custom_endpoint_credentials,
 )
-from functions_model_endpoint_providers import (
-    get_model_endpoint_provider,
-    normalize_custom_endpoint_url_mode,
-)
+from functions_model_endpoint_providers import get_model_endpoint_provider
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
-    MODEL_ENDPOINT_PROVIDER_CUSTOM,
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )

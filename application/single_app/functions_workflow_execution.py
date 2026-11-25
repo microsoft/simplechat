@@ -12,7 +12,7 @@ from functions_workflow_result_store import load_workflow_task_result, save_work
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_policy_errors import (
     WorkflowTaskPolicyError,
-    WORKFLOW_FAILURE_FIELDS, safe_workflow_failure_summary,
+    safe_workflow_failure_summary,
     workflow_failure_diagnostics,
     workflow_policy_failure,
 )

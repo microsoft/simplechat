@@ -2,13 +2,14 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.261.432
+Version: 0.261.485
 Implemented in: 0.241.179; schema-v2 resolver in 0.261.041; live route adapters in 0.261.044
 Capability, async transport, and cancellation coverage added in: 0.261.046
 APIM revision path coverage added in: 0.261.056
 Shared editor control integration verified in: 0.261.057
 Anthropic completion reason normalization: 0.261.103
 Exact catalog capabilities through explicit Custom routing: 0.261.431
+Legacy Foundry host inference coverage added in: 0.261.485
 
 This test ensures that Foundry model endpoint runtime calls infer Claude as
 Anthropic messages, OpenAI-compatible Foundry endpoints as /openai/v1, and
@@ -29,8 +30,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from urllib.parse import quote
-from openai import AzureOpenAI
 import pytest
 
 
@@ -44,7 +43,6 @@ from model_endpoint_clients import (  # noqa: E402
     MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
     AnthropicChatCompletionClient,
     AnthropicSemanticKernelChatCompletion,
-    SanitizedCustomChatCompletionClient,
     build_anthropic_chat_client,
     build_openai_style_chat_client,
     bind_model_endpoint_request_policy,
@@ -56,18 +54,13 @@ from model_endpoint_clients import (  # noqa: E402
     normalize_openai_style_base_url,
     resolve_openai_style_request_api_version,
 )
-from functions_model_endpoint_auth import (  # noqa: E402
-    normalize_custom_endpoint_auth_type,
-    resolve_client_certificate,
-    resolve_custom_endpoint_credentials,
-)
-from functions_model_endpoint_providers import get_model_endpoint_provider  # noqa: E402
-from functions_ai_connections import AIConnectionError, require_model_capability  # noqa: E402
+from functions_ai_connections import require_model_capability  # noqa: E402
 from functions_model_endpoint_validation import ModelEndpointValidationError  # noqa: E402
 from test_custom_model_endpoint_provider import load_model_endpoint_runtime_module, _restore_modules  # noqa: E402
 from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model  # noqa: E402
 from functions_model_endpoint_urls import (  # noqa: E402
     build_model_endpoint_routing_context,
+    infer_model_endpoint_protocol as infer_legacy_model_endpoint_protocol,
     resolve_model_endpoint_route,
 )
 from semantic_kernel.contents.chat_history import ChatHistory  # noqa: E402
@@ -153,6 +146,15 @@ def test_legacy_anthropic_http_failure_preserves_observed_status_without_reading
 def assert_equal(actual, expected, description):
     if actual != expected:
         raise AssertionError(f"{description}: expected {expected!r}, got {actual!r}")
+
+
+@pytest.mark.parametrize(("endpoint", "expected"), [
+    ("https://resource.services.ai.azure.com", MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE),
+    ("https://resource.services.ai.azure.com.attacker.example", MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI),
+    ("https://gateway.test/?next=services.ai.azure.com", MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI),
+])
+def test_legacy_foundry_inference_reads_the_host_not_any_url_substring(endpoint, expected):
+    assert infer_legacy_model_endpoint_protocol("aifoundry", endpoint) == expected
 
 
 def test_model_endpoint_protocol_inference():

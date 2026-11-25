@@ -81,10 +81,10 @@ export async function playTTS(messageId, text) {
         // Update button to show loading state
         updateTTSButton(messageId, 'loading');
         
-        // Strip HTML tags and get plain text
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = text;
-        const plainText = tempDiv.textContent || tempDiv.innerText || '';
+        // Strip HTML tags with an inert parser; a detached element would still load
+        // images and run event handlers from markup in the message text.
+        const parsed = new DOMParser().parseFromString(text, 'text/html');
+        const plainText = parsed.body.textContent || '';
         
         // Split text into word-based chunks
         // Group 1: Progressive chunks (10, 15, 20, 25, 30 words)

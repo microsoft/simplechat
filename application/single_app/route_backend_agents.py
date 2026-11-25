@@ -2633,6 +2633,7 @@ def collect_agent_model_endpoints(settings, user_id=None, group_id=None):
                     enriched["group_id"] = group_id
                     endpoints.append(enriched)
             except PermissionError:
+                # Governance blocks group endpoints for this user; omit them from the picker.
                 pass
     elif user_id:
         if allow_user_custom_endpoints:
@@ -2649,6 +2650,7 @@ def collect_agent_model_endpoints(settings, user_id=None, group_id=None):
                     enriched["scope"] = "user"
                     endpoints.append(enriched)
             except PermissionError:
+                # Governance blocks personal endpoints for this user; omit them from the picker.
                 pass
 
     return endpoints

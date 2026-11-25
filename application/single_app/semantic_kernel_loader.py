@@ -347,8 +347,6 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
                 "anthropic_version": agent_config.get("anthropic_version") or "",
                 "auth": agent_config.get("auth") or {},
                 "request_model": agent_config["deployment"],
-                "endpoint_id": agent_config.get("model_endpoint_id") or "",
-                "model_id": agent_config.get("model_id") or "",
             },
             resolved_model_endpoint=(
                 resolved_model_endpoint

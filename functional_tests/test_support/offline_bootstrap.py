@@ -1,8 +1,9 @@
 # offline_bootstrap.py
 """External-I/O-only bootstrap seams for fresh-process application integration tests.
 
-Version: 0.261.324
+Version: 0.261.485
 Implemented in: 0.261.324 (SDK-shaped point response default)
+Conditional partial updates implemented in: 0.261.485
 """
 
 import asyncio
@@ -14,8 +15,11 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosAccessConditionFailedError, CosmosResourceNotFoundError
 from azure.cosmos._cosmos_responses import CosmosDict
+
+from test_support.cosmos_patch import patch_document
 
 
 class OfflineContainer:
@@ -43,6 +47,21 @@ class OfflineContainer:
 
     def replace_item(self, item, body, **kwargs):
         return self.upsert_item(body)
+
+    def patch_item(
+        self, item, partition_key, patch_operations, *, filter_predicate=None,
+        etag=None, match_condition=None, no_response=False, **kwargs,
+    ):
+        if item not in self.items:
+            raise CosmosResourceNotFoundError(status_code=404)
+        current = self.items[item]
+        if match_condition is not None:
+            if match_condition is not MatchConditions.IfNotModified:
+                raise AssertionError(f"Unsupported patch match condition: {match_condition}")
+            if etag != current.get("_etag"):
+                raise CosmosAccessConditionFailedError(status_code=412, message="Precondition failed.")
+        saved = self.upsert_item(patch_document(current, patch_operations, filter_predicate=filter_predicate))
+        return self._response({}) if no_response else saved
 
     def query_items(self, *args, **kwargs):
         return []

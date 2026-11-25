@@ -31,7 +31,8 @@ MAX_METADATA_BYTES = 1500000
 MAX_AUDIT_EVENTS = 50
 REFERENCE_DEADLINE_SECONDS = 120
 MAX_WRITE_ATTEMPTS = 5
-CERTIFICATE_PATTERN = re.compile(br"-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----")
+PEM_CERTIFICATE_BEGIN = b"-----BEGIN CERTIFICATE-----"
+PEM_CERTIFICATE_END = b"-----END CERTIFICATE-----"
 SOURCE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,256}\Z")
 _PEM_CACHE = OrderedDict()
 _PEM_CACHE_LOCK = threading.Lock()
@@ -99,11 +100,34 @@ def endpoint_ca_bundle_ids(endpoints: list) -> set[str]:
     return bundle_ids
 
 
+def _split_pem_certificates(data: bytes) -> tuple[list[bytes], bool]:
+    """Return PEM certificate blocks and whether non-whitespace surrounds them.
+
+    A lazy BEGIN...END regular expression rescans to the end of the upload for
+    every unterminated BEGIN marker, which is quadratic on crafted input. Each
+    search here resumes where the previous block ended, so the scan is linear.
+    """
+    blocks = []
+    position = 0
+    has_other_content = False
+    while True:
+        start = data.find(PEM_CERTIFICATE_BEGIN, position)
+        if start < 0:
+            break
+        end = data.find(PEM_CERTIFICATE_END, start + len(PEM_CERTIFICATE_BEGIN) + 1)
+        if end < 0:
+            break
+        has_other_content = has_other_content or bool(data[position:start].strip())
+        position = end + len(PEM_CERTIFICATE_END)
+        blocks.append(data[start:position])
+    return blocks, has_other_content or bool(data[position:].strip())
+
+
 def validate_ca_certificates(data: bytes) -> tuple[bytes, list[dict]]:
     if not isinstance(data, bytes) or not data or len(data) > MAX_CA_BYTES:
         raise CABundleError("ca_bundle_invalid", "Upload a nonempty PEM certificate bundle no larger than 1 MiB.")
-    blocks = CERTIFICATE_PATTERN.findall(data)
-    if not blocks or len(blocks) > MAX_CERTIFICATES or CERTIFICATE_PATTERN.sub(b"", data).strip():
+    blocks, has_other_content = _split_pem_certificates(data)
+    if not blocks or len(blocks) > MAX_CERTIFICATES or has_other_content:
         raise CABundleError("ca_bundle_invalid", "Upload only PEM certificates, without private keys or other content (maximum 64 certificates).")
     certificates = []
     canonical = []
@@ -175,6 +199,7 @@ class CABundleRegistry:
                     try:
                         self._blob_container.create_container()
                     except ResourceExistsError:
+                        # The container already exists; its private access level is verified below.
                         pass
                 properties = self._blob_container.get_container_properties()
                 if "public_access" not in properties or properties["public_access"] is not None:
@@ -481,6 +506,7 @@ class CABundleRegistry:
             try:
                 self._blob().get_blob_client(blob_name).delete_blob(delete_snapshots="include")
             except ResourceNotFoundError:
+                # An earlier delete attempt already removed this revision.
                 pass
         self.metadata.delete_item(item=bundle_id, partition_key=bundle_id)
         self.log("deleted", bundle_id=bundle_id, revision=expected_revision, actor_id=actor_id)

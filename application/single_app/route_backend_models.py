@@ -729,9 +729,8 @@ def register_route_backend_models(bp):
             endpoint = normalize_model_endpoint_routing({
                 "id": endpoint_id or "preview",
                 "routing_schema_version": data.get("routing_schema_version"),
-                "routing_path_order": (
-                    data.get("routing_path_order") or "connection_first"
-                ),
+                # Unset orders resolve exactly as a saved connection does at runtime.
+                "routing_path_order": data.get("routing_path_order"),
                 "provider": data.get("provider"),
                 "profile": data.get("profile") or "",
                 "connection": data.get("connection"),
@@ -829,10 +828,6 @@ def register_route_backend_models(bp):
             return_type=SecretReturnType.VALUE,
         )
         endpoint = normalize_model_endpoint_routing(endpoint)
-        model = next(
-            candidate for candidate in endpoint["models"]
-            if str(candidate.get("id") or "").strip() == model_id
-        )
         routes = validate_model_endpoint_routing(
             endpoint,
             settings,
@@ -889,6 +884,9 @@ def register_route_backend_models(bp):
                 return handle_explicit_model_test(
                     data, scope, group_id=group_id
                 )
+            if scope == "group" and group_id is None:
+                # The saved-endpoint lookup and payload resolution below must target one active group.
+                group_id = require_active_group(get_current_user_id())
             endpoint_id = str(data.get("endpoint_id") or data.get("id") or "").strip()
             if endpoint_id:
                 saved_endpoint = resolve_endpoint_by_id(
@@ -1798,8 +1796,10 @@ def register_route_backend_models(bp):
         user_id = get_current_user_id()
         try:
             ensure_governance_access("governance_user_endpoints", user_id)
-        except PermissionError as exc:
-            return jsonify({"error": str(exc)}), 403
+        except PermissionError:
+            return build_safe_error_response(
+                "Governance policy blocks access for feature 'governance_user_endpoints'.", 403,
+            )
 
         _state, existing, revision = _load_personal_endpoint_state(user_id)
         if not _find_personal_endpoint(existing, endpoint_id):

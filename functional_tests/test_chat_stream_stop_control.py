@@ -2,7 +2,7 @@
 # test_chat_stream_stop_control.py
 """
 Functional test for chat stream stop control.
-Version: 0.261.472
+Version: 0.261.485
 Implemented in: 0.241.097
 Durable submission/terminal authority corrected in: 0.261.430
 
@@ -47,7 +47,6 @@ def test_chat_stream_stop_control_wiring() -> None:
     """Validate backend, collaboration, frontend, docs, and version wiring."""
     print("Testing chat stream stop control wiring...")
 
-    config_content = read_text("application/single_app/config.py")
     route_content = read_text("application/single_app/route_backend_chats.py")
     collaboration_content = read_text("application/single_app/route_backend_collaboration.py")
     streaming_content = read_text("application/single_app/static/js/chat/chat-streaming.js")

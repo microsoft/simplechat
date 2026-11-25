@@ -108,7 +108,7 @@ EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 CHAT_STREAM_EXECUTOR_MAX_WORKERS = max(8, int(os.getenv('SIMPLECHAT_CHAT_STREAM_WORKERS', '32') or '32'))
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.484"
+VERSION = "0.261.485"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -679,14 +679,15 @@ def _create_container_if_not_exists_with_conflict_recovery(*args, **kwargs):
             raise
 
         container = cosmos_database.get_container_client(container_id)
-        for attempt in range(8):
+        for attempt in range(7):
             try:
                 container.read()
                 return container
             except exceptions.CosmosResourceNotFoundError:
-                if attempt == 7:
-                    raise
                 time.sleep(min(0.1 * (2 ** attempt), 2.0))
+        # The final read surfaces a container that is still missing.
+        container.read()
+        return container
     except exceptions.CosmosHttpResponseError as exc:
         if (
             cosmos_authentication_type != "managed_identity"

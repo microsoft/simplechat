@@ -27,6 +27,7 @@ from model_endpoint_ca_bundles import ManagedCABundle
 
 
 CUSTOM_ENDPOINT_AUTH_TYPES = DEFAULT_CUSTOM_AUTH_TYPES
+CUSTOM_HEADER_AUTH_PLACEHOLDER = "custom-header-auth"
 OAUTH2_EXPIRY_SKEW_SECONDS = 60
 OAUTH2_DEFAULT_EXPIRY_SECONDS = 3600
 OAUTH2_REQUEST_TIMEOUT_SECONDS = 30
@@ -214,15 +215,19 @@ def resolve_custom_endpoint_credentials(
             headers = build_api_key_headers(
                 auth, default_api_key_header, default_api_key_prefix
             )
-            return str(auth.get("api_key") or "").strip(), headers
+            if header_name.lower() == "authorization":
+                return str(auth.get("api_key") or "").strip(), headers
+            # Otherwise the SDK would also send the real key as an Authorization bearer token.
+            return CUSTOM_HEADER_AUTH_PLACEHOLDER, {"Authorization": "", **headers}
         if not str(auth.get("api_key") or "").strip():
             raise ModelEndpointValidationError(
                 "Selected Custom endpoint is missing an API key."
             )
         return str(auth["api_key"]).strip(), {}
     if auth_type == AUTH_TYPE_BEARER:
-        build_bearer_headers(auth)
-        return str(auth["bearer_token"]).strip(), {}
+        # Validate first; Custom Anthropic sends only these explicit headers.
+        headers = build_bearer_headers(auth)
+        return str(auth["bearer_token"]).strip(), headers
     if auth_type == AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS:
         token = fetch_oauth2_client_credentials_token(
             auth, allow_private=allow_private, allow_insecure=allow_insecure,

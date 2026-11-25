@@ -1,7 +1,7 @@
 # test_workflow_authoring_sdk_boundaries.py
 """
 SDK-shaped runtime coverage for storage owners in the workflow authoring modules.
-Version: 0.261.430
+Version: 0.261.485
 Implemented in: 0.261.332
 Personal workflow owner-runtime coverage added in: 0.261.335
 Workflow assistant/citation write coverage added in: 0.261.362
@@ -12,7 +12,6 @@ their modules. External I/O is blocked; real owners use the existing SDK-default
 conditional Cosmos double. This is representative, not exhaustive coverage.
 """
 
-import ast
 import importlib
 import sys
 import uuid
@@ -23,7 +22,6 @@ from types import SimpleNamespace
 import pytest
 from azure.core.exceptions import AzureError
 from azure.cosmos._cosmos_responses import CosmosDict
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'application' / 'single_app'))

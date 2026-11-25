@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos cache fallback behavior.
-Version: 0.261.472
+Version: 0.261.485
 Implemented in: 0.261.055
 Per-event replay round-trip reduction implemented in: 0.261.467
 Cosmos discovery pointer coverage implemented in: 0.261.468
 Cosmos single-write content coverage implemented in: 0.261.469
 Replay index format coverage implemented in: 0.261.472
+Single-line fallback warning coverage implemented in: 0.261.485
 
 This test ensures Redis failures in the app cache layer fall back to
 Cosmos-backed cache/source reads instead of failing callers.
@@ -681,13 +682,18 @@ def test_cosmos_discovery_does_not_choose_stale_local_submission():
     assert missing is None
 
 
-def test_cosmos_discovery_does_not_report_a_read_outage_as_no_stream():
+def test_cosmos_discovery_does_not_report_a_read_outage_as_no_stream(caplog):
     container = FakeCosmosContainer()
     cache = _load_cache_module()
     cache.configure_app_cache({"enable_redis_cache": False}, dependencies=_dependencies(cache, container, RaisingRedis))
+    caplog.set_level("WARNING")
     with patch.object(container, "read_item", side_effect=ServiceResponseError("Read unavailable")):
         with pytest.raises(cache.StreamDiscoveryUnavailable):
             cache.get_cosmos_stream_discovery("owner:conversation")
+        with pytest.raises(cache.StreamDiscoveryUnavailable):
+            cache.get_cosmos_stream_discovery("owner:conversation\r\n[ASC] forged record")
+    forged = [record.getMessage() for record in caplog.records if "forged record" in record.getMessage()]
+    assert forged and not any("\r" in message or "\n" in message for message in forged)
 
 
 def test_cosmos_discovery_initialization_retries_and_reports_unconfirmed_writes():

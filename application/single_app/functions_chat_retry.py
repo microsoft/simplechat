@@ -17,7 +17,6 @@ from azure.cosmos.exceptions import (
 from collaboration_models import is_shared_conversation_backing
 from cosmos_document_utils import normalize_cosmos_document
 from functions_assist_submissions import normalize_submission_id
-from functions_chat_message_metadata import patch_message_metadata
 from functions_message_deletion import is_soft_deleted_message
 from functions_orchestration_planning import PLANNING_METADATA
 
@@ -938,6 +937,7 @@ class ChatAttemptStore:
                 try:
                     self.messages.create_item(body=question)
                 except CosmosResourceExistsError:
+                    # A concurrent attempt created the question first; the next read uses it.
                     pass
                 continue
             attempt = _mapping(_mapping(current.get('metadata')).get('response_attempt'))

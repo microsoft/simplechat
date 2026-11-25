@@ -1,9 +1,10 @@
 # test_model_endpoint_ca_bundles.py
 """
 Certificate registry and reference-fencing regressions.
-Version: 0.261.483
+Version: 0.261.485
 Implemented in: 0.261.052
 Cosmos SDK point-response coverage updated in: 0.261.483
+Linear PEM block scanning coverage implemented in: 0.261.485
 
 Uses real PEM parsing and registry logic with external Blob/Cosmos I/O doubles.
 No application bootstrap, deployment environment, credentials, or network access.
@@ -205,6 +206,21 @@ def test_only_bounded_ca_certificates_are_accepted(certificates, kind):
     }
     with pytest.raises(CABundleError):
         validate_ca_certificates(values[kind])
+
+
+def test_whitespace_separated_bundle_is_accepted_and_unterminated_markers_fail_fast(certificates):
+    canonical, details = validate_ca_certificates(
+        b" \r\n" + certificates["first"] + b"\n\n\t" + certificates["second"] + b"\r\n",
+    )
+    assert canonical == certificates["first"] + certificates["second"]
+    assert [detail["subject"] for detail in details] == ["CN=First root", "CN=Replacement root"]
+    marker = b"-----BEGIN CERTIFICATE-----"
+    crafted = marker * (MAX_CA_BYTES // len(marker))
+    started = datetime.now(timezone.utc)
+    with pytest.raises(CABundleError):
+        validate_ca_certificates(crafted)
+    # The former lazy regular expression needed minutes for this upload.
+    assert datetime.now(timezone.utc) - started < timedelta(seconds=5)
 
 
 def test_public_container_and_tampered_certificate_fail_closed(registry, certificates):

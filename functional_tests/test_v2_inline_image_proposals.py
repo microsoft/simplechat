@@ -2,7 +2,7 @@
 """
 Functional test for V2 inline image generation proposals.
 
-Version: 0.261.045
+Version: 0.261.485
 Implemented in: 0.261.029
 
 A model can propose a generated image inside an ordinary reply by emitting a fenced
@@ -455,11 +455,15 @@ def test_no_third_party_browser_assets_were_added():
     )
     dependencies = set(package_json.get("dependencies", {}))
     expected = {
+        # Added by other features: workflow Flow inspection and V2 Theme Cards.
+        "@xyflow/react",
         "clsx",
         "hast-util-to-text",
         "highlight.js",
+        "jsqr",
         "lowlight",
         "lucide-react",
+        "qrcode-generator",
         "react",
         "react-dom",
         "react-markdown",

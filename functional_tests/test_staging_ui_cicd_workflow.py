@@ -1,8 +1,9 @@
 # test_staging_ui_cicd_workflow.py
 """Functional tests for authenticated validation of an existing staging deployment.
 
-Version: 0.261.402
+Version: 0.261.485
 Implemented in: 0.241.014; validation-only workflow in 0.261.399; isolated validation in 0.261.400; pinned onboarding in 0.261.401
+Cosmos contract job bound updated in: 0.261.485
 
 The workflow must not provision or deploy resources. The standalone, explicitly
 invoked deployment bootstrap remains separate and retains its existing contract.
@@ -228,7 +229,7 @@ def test_cosmos_contract_job_keeps_complete_guarded_selection_and_bounded_runtim
     source = read_repo_file(".github", "workflows", "cosmos-response-contract-check.yml")
     contracts = yaml.load(source, Loader=yaml.BaseLoader)
     job = contracts["jobs"]["cosmos-contracts"]
-    assert job["timeout-minutes"] == "30"
+    assert job["timeout-minutes"] == "60"
     commands = [step["run"] for step in job["steps"] if "run" in step]
     assert commands[-1] == "python scripts/check_cosmos_response_boundaries.py --run-contracts"
     assert not any("-k " in command or "--maxfail" in command for command in commands)

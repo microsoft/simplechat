@@ -18,7 +18,7 @@ from collaboration_models import (
 from config import *
 from functions_appinsights import log_event
 from functions_chat_content_checks import CHECK_METADATA, attach_chat_check, check_chat_content, strip_private_chat_checks
-from functions_chat_content_review import patch_chat_message_metadata, persist_chat_reply, record_blocked_chat_attempt
+from functions_chat_content_review import patch_chat_message_metadata, record_blocked_chat_attempt
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_assist_submissions import SubmissionIdError
 from functions_chat_model_catalog import build_chat_model_catalog

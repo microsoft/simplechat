@@ -2387,7 +2387,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         def close_created(future):
             try:
                 created = future.result()
-            except BaseException:
+            except (Exception, asyncio.CancelledError):
                 return
             _close_sync_model_stream(created)
 
@@ -2413,7 +2413,8 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
                     def close_after_read(future, owned_stream=stream):
                         try:
                             future.result()
-                        except BaseException:
+                        except (Exception, asyncio.CancelledError):
+                            # The abandoned read's outcome is irrelevant; the stream is closed either way.
                             pass
                         _close_sync_model_stream(owned_stream)
 

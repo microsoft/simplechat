@@ -97,7 +97,11 @@ def is_anthropic_model(deployment_name) -> bool:
 def endpoint_uses_openai_style_protocol(endpoint) -> bool:
     endpoint_value = normalize_endpoint_text(endpoint).lower()
     path = get_endpoint_path(endpoint_value)
-    return "/openai/v1" in path or "/api/projects/" in path or "services.ai.azure.com" in endpoint_value
+    try:
+        hostname = urlparse(endpoint_value).hostname or ""
+    except ValueError:
+        hostname = ""
+    return "/openai/v1" in path or "/api/projects/" in path or hostname.endswith(".services.ai.azure.com")
 
 
 def infer_model_endpoint_protocol(provider, endpoint, deployment_name="", api_type="") -> str:

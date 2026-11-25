@@ -2,13 +2,14 @@
 #!/usr/bin/env python3
 """
 Functional test for user and group model endpoint scope enforcement.
-Version: 0.261.052
+Version: 0.261.485
 Implemented in: 0.239.187
 
 Schema-v2 preview authorization and no-I/O coverage added in: 0.261.042
 Schema-v2 live model-test coverage added in: 0.261.044
 Vision actor and canonical transport-policy coverage added in: 0.261.045
 Saved credential-scope fallback coverage added in: 0.261.046
+Preview path-order default matches runtime resolution since: 0.261.485
 
 This test ensures non-admin model fetch and test routes require the
 custom-endpoint feature gates while still allowing pre-save fetch/test
@@ -76,9 +77,16 @@ def test_routing_preview_authorization_and_no_dispatch():
         assert body["resolved"]["operation_url"] == "https://gateway.example/team/shared/v1/messages"
         assert body["resolved"]["method"] == "POST"
         assert "must-not-echo" not in response.get_data(as_text=True)
-        lookup.assert_called_with("actor", scope, "saved")
+        lookup.assert_called_with("actor", scope, "saved", group_id=None)
         governance.assert_any_call(f"governance_{scope}_endpoints", "actor")
     forbidden.assert_not_called()
+    # Without an order a preview matches a saved connection's runtime URL; an explicit order still applies.
+    explicit_order = copy.deepcopy(payload)
+    explicit_order["routing_path_order"] = "connection_first"
+    with app.test_request_context(json=explicit_order):
+        response, status = namespace["handle_test_model_connection"]("user")
+    assert status == 200
+    assert response.get_json()["resolved"]["operation_url"] == "https://gateway.example/shared/team/v1/messages"
     for field, value in (("api_path", "../escape"), ("api_type", "responses"), ("url_mode", "inherit")):
         invalid = copy.deepcopy(payload)
         invalid["model"][field] = value

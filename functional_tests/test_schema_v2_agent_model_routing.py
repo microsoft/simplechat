@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for schema-v2 agent model routing.
-Version: 0.261.061
+Version: 0.261.485
 Implemented in: 0.261.058; streaming compatibility added in: 0.261.061
 
 This test ensures local Semantic Kernel agents retain their authorized
@@ -41,8 +41,10 @@ from functions_model_endpoint_urls import (  # noqa: E402
     routing_schema_version,
 )
 from agent_logging_chat_completion import LoggingChatCompletionAgent  # noqa: E402
+from functions_ai_connections import require_model_capability  # noqa: E402
 from model_endpoint_clients import (  # noqa: E402
     bind_model_endpoint_request_policy,
+    resolve_model_inference_endpoint,
     sanitize_custom_async_openai_client,
 )
 
@@ -101,7 +103,9 @@ def test_schema_v2_agent_binding_retains_resolved_route() -> None:
         "get_model_endpoint_api_type": get_model_endpoint_api_type,
         "resolve_model_endpoint_route": resolve_model_endpoint_route,
         "routing_schema_version": routing_schema_version,
-        "project_model_budget_metadata": lambda value: copy.deepcopy(value),
+        "project_model_budget_metadata": copy.deepcopy,
+        "require_model_capability": require_model_capability,
+        "resolve_model_inference_endpoint": resolve_model_inference_endpoint,
     }
     exec(
         compile(ast.Module(body=[binding_function], type_ignores=[]), str(LOADER_FILE), "exec"),

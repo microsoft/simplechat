@@ -1,6 +1,6 @@
 """
 Offline regressions for format-aware CSV tabular selectors and retry bounds.
-Version: 0.261.429
+Version: 0.261.485
 Implemented in: 0.261.429
 
 The test extracts the production method bodies so CSV behavior is exercised
@@ -63,7 +63,8 @@ def _plugin_harness():
         "pandas": pandas,
         "Optional": Optional,
         "logging": __import__("logging"),
-        "read_tabular_csv": lambda source, **kwargs: pandas.read_csv(source, **kwargs),
+        "sys": __import__("sys"),
+        "read_tabular_csv": pandas.read_csv,
         "log_event": lambda *args, **kwargs: None,
     }
     exec(compile(ast.fix_missing_locations(module), str(PLUGIN), "exec"), namespace)

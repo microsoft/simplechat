@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for Custom model endpoint authentication schemes.
-Version: 0.261.057
+Version: 0.261.485
 Implemented in: 0.261.020
+Custom header keys no longer duplicated as bearer tokens in: 0.261.485
 Endpoint API-key editor and explicit-header regressions added in: 0.261.054
 Shared editor control integration verified in: 0.261.057
 
@@ -167,39 +168,34 @@ def test_api_key_header_is_configurable():
 def test_bearer_and_api_key_credentials_resolve():
     """Bearer tokens and API keys must resolve to the right SDK inputs."""
     print("Testing credential resolution...")
-    try:
-        credential, headers = resolve_custom_endpoint_credentials(
-            {"type": "bearer", "bearer_token": "tok-123"}
-        )
-        assert credential == "tok-123" and headers == {}
+    credential, headers = resolve_custom_endpoint_credentials(
+        {"type": "bearer", "bearer_token": "tok-123"}
+    )
+    # Explicit so clients that send only configured headers (Custom Anthropic) still authenticate.
+    assert credential == "tok-123" and headers == {"Authorization": "Bearer tok-123"}
 
-        # An Authorization-header key rides on the SDK's own credential argument.
-        credential, headers = resolve_custom_endpoint_credentials(
-            {"type": "api_key", "api_key": "sk-abc"},
-            default_api_key_header="Authorization",
-            default_api_key_prefix="Bearer",
-        )
-        assert credential == "sk-abc" and headers == {}
+    # An Authorization-header key rides on the SDK's own credential argument.
+    credential, headers = resolve_custom_endpoint_credentials(
+        {"type": "api_key", "api_key": "sk-abc"},
+        default_api_key_header="Authorization",
+        default_api_key_prefix="Bearer",
+    )
+    assert credential == "sk-abc" and headers == {}
 
-        # A non-Authorization header must be sent explicitly.
-        credential, headers = resolve_custom_endpoint_credentials(
-            {"type": "api_key", "api_key": "sk-ant"},
-            default_api_key_header="x-api-key",
-        )
-        assert credential == "sk-ant"
-        assert headers == {"x-api-key": "sk-ant"}
+    # A non-Authorization header carries the key alone; the SDK credential is a
+    # placeholder and Authorization is cleared so the key is never duplicated.
+    credential, headers = resolve_custom_endpoint_credentials(
+        {"type": "api_key", "api_key": "sk-ant"},
+        default_api_key_header="x-api-key",
+    )
+    assert credential != "sk-ant"
+    assert headers == {"Authorization": "", "x-api-key": "sk-ant"}
 
-        assert normalize_custom_endpoint_auth_type("key") == "api_key"
-        assert normalize_custom_endpoint_auth_type("managed_identity") == ""
+    assert normalize_custom_endpoint_auth_type("key") == "api_key"
+    assert normalize_custom_endpoint_auth_type("managed_identity") == ""
 
-        print("Credential resolution passed")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return False
+    print("Credential resolution passed")
+    return True
 
 
 def test_endpoint_api_key_override_is_shared_across_api_types():

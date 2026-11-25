@@ -17,7 +17,6 @@ from datetime import datetime, timedelta
 from typing import Callable, Literal
 from uuid import uuid4
 
-from azure.core import MatchConditions
 from azure.core.exceptions import AzureError, ServiceRequestError, ServiceResponseError
 from azure.cosmos import ContainerProxy
 from redis import Redis
@@ -131,6 +130,11 @@ bump_governance_cache_version = None
 app_cache_is_using_redis = False
 _app_cache_lock = threading.Lock()
 _stream_replay_writer = threading.local()
+
+
+def _single_line(value) -> str:
+    """Escape line breaks so request-derived cache keys cannot forge log records."""
+    return str(value).replace("\r", "\\r").replace("\n", "\\n")
 
 
 def create_redis_managed_identity_client(redis_url, settings=None, **redis_kwargs):
@@ -323,7 +327,9 @@ def _set_cosmos_cache_entry(cache_key, payload, ttl_seconds=None, log_event_func
         })
         return True
     except Exception as ex:
-        _logger.warning("[ASC] Cosmos cache fallback write failed for %s: %s", cache_key, ex)
+        _logger.warning(
+            "[ASC] Cosmos cache fallback write failed for %s: %s", _single_line(cache_key), _single_line(ex),
+        )
         if callable(log_event_func):
             log_event_func(
                 "[ASC] Cosmos cache fallback write failed.",
@@ -352,7 +358,9 @@ def _read_cosmos_cache_document(
     except Exception as ex:
         status_code = getattr(ex, 'status_code', None)
         if status_code != 404:
-            _logger.warning("[ASC] Cosmos cache fallback read failed for %s: %s", cache_key, ex)
+            _logger.warning(
+                "[ASC] Cosmos cache fallback read failed for %s: %s", _single_line(cache_key), _single_line(ex),
+            )
             if callable(log_event_func):
                 log_event_func(
                     "[ASC] Cosmos cache fallback read failed.",
@@ -377,7 +385,9 @@ def _delete_cosmos_cache_entry(cache_key, log_event_func=None):
     except Exception as ex:
         status_code = getattr(ex, 'status_code', None)
         if status_code != 404:
-            _logger.warning("[ASC] Cosmos cache fallback delete failed for %s: %s", cache_key, ex)
+            _logger.warning(
+                "[ASC] Cosmos cache fallback delete failed for %s: %s", _single_line(cache_key), _single_line(ex),
+            )
             if callable(log_event_func):
                 log_event_func(
                     "[ASC] Cosmos cache fallback delete failed.",
@@ -559,7 +569,10 @@ def _initialize_stream_session_cache_fallback(cache_key, metadata, ttl_seconds=N
             })
         except AzureError as ex:
             if getattr(ex, 'status_code', None) != 409:
-                _logger.warning("[ASC] Cosmos stream event initialization failed for %s: %s", cache_key, ex)
+                _logger.warning(
+                    "[ASC] Cosmos stream event initialization failed for %s: %s",
+                    _single_line(cache_key), _single_line(ex),
+                )
                 if callable(log_event_func):
                     log_event_func(
                         "[ASC] Cosmos stream event initialization failed.",

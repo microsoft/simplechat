@@ -2,6 +2,49 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.485)**
+
+#### Bug Fixes
+
+*   **CA Bundle Uploads Are Validated in Linear Time**
+    *   A malformed upload made of repeated certificate headers no longer holds a worker for minutes. PEM blocks are scanned once, and the accepted bundle format is unchanged.
+    *   (Ref: `model_endpoint_ca_bundles.py`, `test_model_endpoint_ca_bundles.py`)
+*   **Legacy Foundry Protocol Detection Reads the Host**
+    *   Saved legacy connections are treated as Foundry OpenAI-compatible endpoints only when the host is a `*.services.ai.azure.com` resource, not when a lookalike host, path, or query contains that text.
+    *   (Ref: `functions_model_endpoint_urls.py`, `test_model_endpoint_protocol_inference.py`)
+*   **Classic Message Details Refresh After Saving**
+    *   An expanded metadata panel on a just-sent classic chat message now refreshes when the server confirms the message, as intended.
+    *   (Ref: `chat-streaming.js`, `test_message_metadata_loading_fix.py`)
+*   **Safer Error Responses and Fallback Logs**
+    *   Deleting a personal model connection without governance access returns the same stable message as the other personal connection routes. Cache fallback warnings keep request-derived identifiers on one log line.
+    *   (Ref: `route_backend_models.py`, `app_settings_cache.py`, `test_cosmos_wave1_cache_fallback.py`)
+*   **Pull Request Checks and CodeQL Findings**
+    *   The model catalog workflow lock includes the repository's coordinator agent, the Cosmos contract job has time for its full suite, and the offline test double supports the conditional updates used by stream replay without Redis.
+    *   Branch CodeQL findings were resolved where they reflected real issues, including duplicate dictionary keys, dead code, unused imports, and unexplained exception handling.
+    *   Functional tests whose harnesses predated current runtime seams were updated, including the Custom endpoint, image, MAI, admin endpoint persistence, schema-v2 routing, content screening, image chat route, MCP authorization, inbound MCP shell, and V2 inline image proposal suites.
+    *   (Ref: `refresh-model-catalog.lock.yml`, `cosmos-response-contract-check.yml`, `offline_bootstrap.py`, `cosmos_patch.py`, `app_stubs.py`, [CodeQL Alert and Contract Check Fix](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/CODEQL_ALERT_AND_CONTRACT_CHECK_FIX.md))
+*   **Custom Endpoint Credentials Use Only Their Configured Header**
+    *   Custom and Microsoft MAI connections that send an API key in a named header, such as `api-key` or `Ocp-Apim-Subscription-Key`, no longer also send that key as an `Authorization: Bearer` token, which could forward gateway subscription keys to backend services.
+    *   Custom Anthropic connections that use a bearer token send their `Authorization` header again. They previously sent no credential.
+    *   (Ref: `functions_model_endpoint_auth.py`, `test_custom_model_endpoint_auth.py`, `test_custom_model_endpoint_foundation.py`, `test_microsoft_mai_model_connections.py`)
+*   **Custom Image Connections Initialize Again**
+    *   Image generation and the admin image test no longer fail for every Custom provider connection with "The image connection could not be initialized." Paid image requests are still never retried automatically.
+    *   (Ref: `functions_image_generation.py`, `test_ai_connection_image_runtime.py`, `test_image_generation_sdk_http.py`)
+*   **Legacy Group Connection Tests Use One Active Group**
+    *   A legacy group connection test resolves the active group once, so the saved-connection lookup and request validation always target the same group.
+    *   (Ref: `route_backend_models.py`, `test_model_endpoint_secret_reference_hardening.py`)
+*   **Routing Previews and Saves Keep the Runtime Path Order**
+    *   A routing preview for a connection without a stored path order now shows the same request URL the saved connection calls (model path first), instead of assuming connection path first.
+    *   Saving an existing explicit-routing connection without a stored path order in the classic admin page no longer switches it to connection path first. New connections still start with connection path first.
+    *   (Ref: `route_backend_models.py`, `admin_model_endpoints.js`, `test_model_endpoint_scope_gate_enforcement.py`)
+*   **Chat Table Formatting No Longer Stalls on Crafted Responses**
+    *   Unwrapping markdown tables from code blocks no longer backtracks exponentially, so a response with a few dozen pipe-only lines cannot freeze the chat tab. The same blocks are unwrapped as before.
+    *   (Ref: `chat-messages.js`, `test_classic_js_codeql_xss_redos_fixes.py`)
+*   **Classic Pages Render Untrusted Text as Text**
+    *   Read-aloud strips markup with an inert parser, export conversation IDs are escaped in attributes, inline export button labels are plain text, and Control Center toasts never interpret HTML.
+    *   The Control Center and workspace user searches no longer place search terms or directory names into markup or inline script.
+    *   (Ref: `chat-tts.js`, `chat-export.js`, `chat-messages.js`, `control-center.js`, `control_center.html`, `workspace-manager.js`, `test_classic_js_codeql_xss_redos_fixes.py`, `test_stored_xss_admin_rendering_fix.py`)
+
 ### **(v0.261.484)**
 
 #### Bug Fixes

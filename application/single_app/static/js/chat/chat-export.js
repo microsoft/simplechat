@@ -190,14 +190,15 @@ function _renderSelectionStep(container) {
     const count = exportConversationIds.length;
     let listHtml = '';
     exportConversationIds.forEach(id => {
+        const safeId = _escapeHtml(id);
         const title = _escapeHtml(exportConversationTitles[id] || 'Untitled');
         listHtml += `
-            <div class="d-flex align-items-center justify-content-between py-2 px-3 border-bottom export-conversation-item" data-id="${id}">
+            <div class="d-flex align-items-center justify-content-between py-2 px-3 border-bottom export-conversation-item" data-id="${safeId}">
                 <div class="d-flex align-items-center">
                     <i class="bi bi-chat-dots me-2 text-primary"></i>
                     <span>${title}</span>
                 </div>
-                <button class="btn btn-sm btn-outline-danger export-remove-btn" data-id="${id}" title="Remove from export">
+                <button class="btn btn-sm btn-outline-danger export-remove-btn" data-id="${safeId}" title="Remove from export">
                     <i class="bi bi-x-lg"></i>
                 </button>
             </div>`;
@@ -644,9 +645,13 @@ async function buildExportVisualAssets(statusDiv) {
 }
 
 function _escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    // Quotes are escaped too, so the result is also safe inside attribute values.
+    return String(text ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function _getDefaultSummaryModel() {
