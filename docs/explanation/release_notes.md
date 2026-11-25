@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.484)**
+
+#### Bug Fixes
+
+*   **V2 Follow-Up File Paging**
+    *   Users can move past a follow-up question while a file is still uploading or processing. Upload transfers are marked as interrupted and retryable when that question is left, while processing checks continue across page changes and remounts.
+    *   Review remains blocked until every answer is complete, failed uploads are resolved, and the current processing state is ready. Stale upload completions cannot revive a question that was removed, superseded, or discarded.
+    *   (Ref: `ElicitationCard.tsx`, `ComposerEditor.tsx`, `test_v2_chat_context_selection.py`)
+
 ### **(v0.261.483)**
 
 #### New Features

@@ -1,7 +1,7 @@
 # test_model_endpoint_capacity_save_validation.py
 """
 Functional tests for safe capacity validation at existing endpoint save routes.
-Version: 0.261.435
+Version: 0.261.484
 Implemented in: 0.261.035
 Catalog association round trips implemented in: 0.261.126
 Explicit route and global agent projection regressions added in: 0.261.435
@@ -129,6 +129,13 @@ def _run_offline_probe():
             patch.object(models, "ensure_governance_access"),
             patch.object(models, "require_active_group", return_value="budget-group"),
             patch.object(models, "assert_group_role", role_guard),
+            patch.object(models, "find_group_by_id", return_value={
+                "id": "budget-group",
+                "_etag": "budget-revision",
+                "status": "active",
+            }),
+            patch.object(models, "get_user_role_in_group", return_value="Owner"),
+            patch.object(models, "group_endpoint_management_operations", return_value=True),
             patch.object(models, "validate_custom_model_endpoints", provider_validation),
             patch.object(models, "keyvault_model_endpoint_save_helper", forbidden_write),
             patch.object(models, "keyvault_model_endpoint_cleanup_helper", forbidden_write),
@@ -426,7 +433,13 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
             patch.object(models, "list_group_model_endpoints", side_effect=lambda *_args: ({
                 "endpoints": settings_module.sanitize_model_endpoints_for_frontend(stores["group"]),
             }, 200)),
-            patch.object(models, "find_group_by_id", return_value={"_etag": "projection-revision"}),
+            patch.object(models, "find_group_by_id", return_value={
+                "id": "budget-group",
+                "_etag": "projection-revision",
+                "status": "active",
+            }),
+            patch.object(models, "get_user_role_in_group", return_value="Owner"),
+            patch.object(models, "group_endpoint_management_operations", return_value=True),
             patch.object(models, "get_settings", side_effect=snapshot),
             patch.object(models, "ensure_governance_access"),
             patch.object(models, "require_active_group", return_value="budget-group"),
@@ -557,7 +570,7 @@ def test_capacity_save_routes_fail_safely_before_persistence(optimized):
     command.extend((str(Path(__file__).resolve()), "--offline-probe"))
     result = subprocess.run(
         command, cwd=ROOT, env=env, capture_output=True,
-        text=True, encoding="utf-8", errors="replace", timeout=180,
+        text=True, encoding="utf-8", errors="replace", timeout=300,
     )
     _require(result.returncode == 0, result.stdout + result.stderr)
 

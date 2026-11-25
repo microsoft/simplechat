@@ -47,7 +47,7 @@ Implemented in version: **0.261.449** (`application/single_app/config.py`).
 Use the interface controls to stage a modern rollout, keep a classic deployment,
 or let people choose. The restriction applies to administrators as well as users.
 The default only applies when both interfaces are allowed and an account has not
-made its own choice. See [Interface selection]({{ '/explanation/features/UI_INTERFACE_SELECTION/' | relative_url }}).
+made its own choice. See [Interface selection](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/UI_INTERFACE_SELECTION.md).
 
 The Appearance section belongs to the Branding tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
 

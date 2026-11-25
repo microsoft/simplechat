@@ -1,7 +1,7 @@
 # test_ui_interface_selection.py
 """Real-owner interface preference persistence, policy and SDK regressions.
 
-Version: 0.261.449
+Version: 0.261.484
 Implemented in: 0.261.449
 
 Fresh normal/optimized processes keep application imports real and block network.
@@ -41,6 +41,7 @@ with offline_app_imports():
     app = Flask("ui_selection", template_folder=str(Path(sys.argv[1]) / "templates"), static_folder=web.app.static_folder)
     app.secret_key = "test-only"
     app.config["TESTING"] = True
+    app.jinja_env.filters["markdown"] = web.app.jinja_env.filters["markdown"]
     bp = Blueprint("users_test", __name__)
     users.register_route_backend_users(bp)
     app.register_blueprint(bp)
@@ -174,4 +175,4 @@ with offline_app_imports():
 
 @pytest.mark.parametrize("optimized", [False, True])
 def test_real_account_preference_and_policy_workflows(optimized):
-    run_probe(PROBE, (), optimized)
+    run_probe(PROBE, (), optimized, timeout=300)

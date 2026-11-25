@@ -4,7 +4,7 @@ title: "Create workspace chat links"
 description: "Share an exact model or agent, one workspace, and selected documents with people who already have access."
 section: "Guides"
 audience: user
-version: "0.261.483"
+version: "0.261.484"
 ---
 
 ## What this does

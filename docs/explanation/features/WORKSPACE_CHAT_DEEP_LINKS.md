@@ -1,6 +1,6 @@
 # Workspace chat deep links
 
-**Current version: 0.261.483**
+**Current version: 0.261.484**
 
 **Implemented in version: 0.261.473**
 

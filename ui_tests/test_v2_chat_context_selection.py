@@ -1,7 +1,7 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.474
+Version: 0.261.484
 Implemented in: 0.261.094
 Single orchestration contract updated in: 0.261.181 (the React V2 branch's 0.261.139)
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
@@ -10,6 +10,7 @@ awaiting publication: 0.261.183
 The workspace Chat action starts a brand-new conversation instead of reusing the open one: 0.261.226
 Workspace chat deep-link launch and creation: 0.261.473
 Whole-workspace launch and reasoning roundtrip: 0.261.474
+Shared-editor upload lifecycle stabilization: 0.261.484
 
 The real Composer, DocumentExplorer, stores, router, and request builders run in the
 existing Playwright harness. The shared connection fixture supports a configured Azure
@@ -1551,7 +1552,7 @@ def test_shared_editor_paging_marks_interrupted_transfer_actionable_and_retries(
     assert "Retry" in interrupted["error"]
     assert page.evaluate("() => window.deferredEditorRequest.signal.aborted") is True
     page.evaluate("() => window.deferredEditorRequest.release()")
-    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_disabled()
+    expect(card.get_by_role("button", name="Review answers", exact=True)).to_be_disabled()
     assert read_inline_lifecycle_draft(page)["editors"]["files"]["uploads"][0]["state"] == "failed"
     card.get_by_role("button", name="Back", exact=True).click()
     expect(card.get_by_role("alert").filter(has_text="transfer was interrupted")).to_be_visible()
@@ -1565,7 +1566,7 @@ def test_shared_editor_paging_marks_interrupted_transfer_actionable_and_retries(
     assert retried["reference"]["scope"]["id"] == CONVERSATION_ID
     card.get_by_role("button", name="Next", exact=True).click()
     expect(card.get_by_role("textbox", name="Details", exact=True)).to_have_value("Keep the second answer.")
-    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_enabled()
+    expect(card.get_by_role("button", name="Review answers", exact=True)).to_be_enabled()
 
 
 def test_shared_editor_retained_processing_and_prompt_values_survive_remount(context_page):
@@ -1634,7 +1635,7 @@ def test_shared_editor_retained_processing_and_prompt_values_survive_remount(con
         CONVERSATION_ID,
     )
     expect(card.get_by_role("textbox", name="Details", exact=True)).to_have_value("The independent second answer.")
-    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_enabled()
+    expect(card.get_by_role("button", name="Review answers", exact=True)).to_be_enabled()
     card.get_by_role("button", name="Back", exact=True).click()
     expect(card.get_by_text("Ready", exact=True)).to_be_visible()
     card.get_by_role("button", name="Edit Lifecycle prompt for this message", exact=True).click()
@@ -1648,7 +1649,7 @@ def test_shared_editor_retained_processing_and_prompt_values_survive_remount(con
     assert resumed["editors"]["details"]["attachedPrompt"] is None
     assert len(uploads) == 1, "Remounting must check the existing file, not upload it a second time."
     card.get_by_role("button", name="Next", exact=True).click()
-    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_enabled()
+    expect(card.get_by_role("button", name="Review answers", exact=True)).to_be_enabled()
 
 
 @pytest.mark.parametrize("retirement", ["discard", "supersede", "remove"])
