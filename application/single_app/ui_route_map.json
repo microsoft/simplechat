@@ -403,7 +403,7 @@
       "methods": ["POST"],
       "status": "standalone",
       "v2": null,
-      "notes": "Shared form target of the legacy and modern standalone interstitials. It records acceptance made before sign-in, so it stays server-side in both interfaces; V2 posts to /api/v2/terms-of-use/accept."
+      "notes": "Shared form target of the classic and modern standalone interstitials. It records acceptance made before sign-in, so it stays server-side in both interfaces; V2 posts to /api/v2/terms-of-use/accept."
     },
     {
       "key": "terms-of-use-decline",
@@ -411,7 +411,7 @@
       "methods": ["POST"],
       "status": "standalone",
       "v2": null,
-      "notes": "Shared form target of the legacy and modern standalone interstitials. It ends the session and redirects to the configured decline URL, with or without a session, so it stays server-side; V2 posts to /api/v2/terms-of-use/decline."
+      "notes": "Shared form target of the classic and modern standalone interstitials. It ends the session and redirects to the configured decline URL, with or without a session, so it stays server-side; V2 posts to /api/v2/terms-of-use/decline."
     },
     {
       "key": "access-restricted",

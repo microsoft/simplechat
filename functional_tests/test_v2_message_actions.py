@@ -229,7 +229,9 @@ def test_plan_replay_uses_the_message_action_row():
     assert 'aria-label="Message actions"' in actions
     assert "aria-expanded={expanded}" in actions
     assert "aria-controls={controls}" in actions
-    assert "planReplay={canRepeatPlan ?" in messages
+    # Built once in actionProps, shared by the hover row and the touch action sheet.
+    assert "planReplay: canRepeatPlan ?" in messages
+    assert "<MessageActions {...actionProps} />" in messages
     assert messages.index("<PlanReplaySaveCard") > messages.index("<InlinePendingActions anchor={message.id}")
     assert "key={replayRunKey}" in messages
     assert "expanded={replayExpanded}" in messages

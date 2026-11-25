@@ -227,6 +227,38 @@ def test_exhaustion_blocks_rendering_and_reports_a_safe_failure(harness):
     assert len(harness.model_calls) == 6
 
 
+def test_a_failed_answer_check_is_run_again_inside_the_same_run(harness):
+    harness.settings["enable_chat_orchestration_completeness_check"] = True
+    harness.settings["enable_chat_orchestration_reactive_loop"] = True
+    harness.create([compose_step()], replies=[
+        "Evaluation", report("missing"), "Evaluation first", report("missing"), "Evaluation final", report("missing"),
+        # The recovery: the retained answer is checked again with a new allowance of corrections.
+        report("missing"), "Evaluation, 15 days, due 2027-02-15", report("satisfied"),
+    ], final_response=input_binding("prepare", "answer"))
+    harness.prepare().execute()
+    saved = harness.read()
+    assert saved["status"] == "completed", saved.get("failure")
+    assert saved.get("attempt_index", 1) == 1 and not saved.get("retry_of_run_id")
+    # The answer was written once; everything after it is checking and correcting.
+    assert len(harness.model_calls) == 9
+    assert stored_steps(harness)[0]["status"] == "completed"
+
+
+def test_an_answer_that_still_fails_its_second_check_ends_the_run_once(harness):
+    harness.settings["enable_chat_orchestration_completeness_check"] = True
+    harness.settings["enable_chat_orchestration_reactive_loop"] = True
+    harness.create([compose_step()], replies=[
+        "Evaluation", report("missing"), "Evaluation first", report("missing"), "Evaluation final", report("missing"),
+        report("missing"), "Evaluation again", report("missing"), "Evaluation last", report("missing"),
+    ], final_response=input_binding("prepare", "answer"))
+    harness.prepare().execute()
+    saved = harness.read()
+    assert saved["status"] == "failed"
+    assert stored_steps(harness)[0]["failure"]["code"] == "completeness_incomplete"
+    # The same failure after its recovery is a stall: no third check.
+    assert len(harness.model_calls) == 11
+
+
 def test_truncated_correction_does_not_replace_the_retained_candidate(harness):
     harness.settings["enable_chat_orchestration_completeness_check"] = True
     harness.settings["chat_orchestration_completeness_max_corrections"] = 1
@@ -868,7 +900,7 @@ def test_compose_completeness_receives_saved_memory_and_conversation_history(har
     checker_payload = json.loads(checker_call["messages"][1]["content"])
     assert "saved_memory" in checker_payload["evidence"]
     assert "conversation_history" in checker_payload["evidence"]
-    assert "Current saved Instruction Memory and Fact Memory supersede" in checker_payload["contract"]["generation_policy"]
+    assert "the saved memory is current: use it" in checker_payload["contract"]["generation_policy"]
 
 
 def test_scoped_memory_candidates_do_not_leak_into_unmatched_conversations():

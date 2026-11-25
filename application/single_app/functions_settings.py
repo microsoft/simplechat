@@ -1684,6 +1684,10 @@ def get_settings(use_cosmos=False, include_source=False):
         # the settings document should not have to guess which is which.
         'enable_chat_orchestration': False,
         'enable_chat_orchestration_completeness_check': True,
+        # Off by default: a failed step is retried through a typed recovery instead of
+        # failing the run. Bounded by chat_orchestration_max_recovery_rounds.
+        'enable_chat_orchestration_reactive_loop': False,
+        'chat_orchestration_max_recovery_rounds': 2,
         'chat_orchestration_completeness_max_corrections': 2,
         'enable_chat_orchestration_actions': False,
         'chat_orchestration_default_approval_mode': 'manual',

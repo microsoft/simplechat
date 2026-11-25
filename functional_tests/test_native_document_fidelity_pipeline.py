@@ -1,8 +1,9 @@
 # test_native_document_fidelity_pipeline.py
 """Source-backed native evidence, paging, canonical capture and claim contracts.
 
-Version: 0.261.424
+Version: 0.261.478
 Implemented in: 0.261.424
+Continuation bound to the document, its version and its bytes, not the record revision: 0.261.478
 Real parsers and capture/paging/claim code run offline against synthetic sources.
 """
 
@@ -71,9 +72,16 @@ def test_source_bound_pages_continue_and_refuse_changed_identity(native_source, 
             else:
                 values.append(record)
         if cursor is None and page["has_more"]:
+            # A changed uploaded version or other bytes end the paging. A write to the record
+            # that leaves both as they were (a new storage revision) does not.
             with pytest.raises(ValueError, match="different source"):
-                inspect_native_document({**document, "_etag": "etag-2"}, data, path.suffix,
+                inspect_native_document({**document, "version": 2}, data, path.suffix,
                                         cursor=page["next_cursor"], max_bytes=2048)
+            with pytest.raises(ValueError, match="different source"):
+                inspect_native_document(document, data + b" ", path.suffix,
+                                        cursor=page["next_cursor"], max_bytes=2048)
+            inspect_native_document({**document, "_etag": "etag-2"}, data, path.suffix,
+                                    cursor=page["next_cursor"], page_size=2, max_bytes=2048)
         cursor = page["next_cursor"]
         if not cursor:
             break

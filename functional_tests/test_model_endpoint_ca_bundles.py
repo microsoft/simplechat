@@ -1,8 +1,9 @@
 # test_model_endpoint_ca_bundles.py
 """
 Certificate registry and reference-fencing regressions.
-Version: 0.261.052
+Version: 0.261.483
 Implemented in: 0.261.052
+Cosmos SDK point-response coverage updated in: 0.261.483
 
 Uses real PEM parsing and registry logic with external Blob/Cosmos I/O doubles.
 No application bootstrap, deployment environment, credentials, or network access.
@@ -16,6 +17,7 @@ import sys
 
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.cosmos.exceptions import CosmosAccessConditionFailedError, CosmosResourceNotFoundError
+from azure.cosmos._cosmos_responses import CosmosDict
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -42,7 +44,7 @@ class Container:
         self.read_options.append(kwargs)
         if item not in self.items:
             raise CosmosResourceNotFoundError(status_code=404)
-        result = deepcopy(self.items[item])
+        result = CosmosDict(deepcopy(self.items[item]), response_headers={})
         if kwargs.get("response_hook"):
             kwargs["response_hook"]({"x-ms-session-token": f"session-{result['_etag']}"}, result)
         return result
@@ -56,7 +58,7 @@ class Container:
         self.revision += 1
         document = {**deepcopy(body), "_etag": str(self.revision)}
         self.items[body["id"]] = document
-        return deepcopy(document)
+        return CosmosDict(deepcopy(document), response_headers={})
 
     def replace_item(self, item, body, etag=None, **kwargs):
         callback, self.before_replace = self.before_replace, None

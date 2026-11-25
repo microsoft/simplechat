@@ -1,7 +1,7 @@
 # test_orchestration_available_information.py
 """Normal answers and narrative files from accepted findings with honest information gaps.
 
-Version: 0.261.446
+Version: 0.261.477
 Implemented in: 0.261.399; 0.261.418; 0.261.446
 
 Real contracts, preparation, lineage, execution and file publication run offline.
@@ -810,8 +810,10 @@ def test_actual_partial_analysis_creates_a_qualified_narrative_file(harness, nar
         prompt = harness.model_calls[-1]["messages"][-1]["content"]
         if "<DocumentSlice>\n" in prompt:
             response = json.loads(narrative_io["reply"]())
+            # A finding the validator refuses (its passage is not in the source). From 0.261.477 a
+            # gap the model states no longer makes an analysis partial, so that is not used here.
             response["findings"][0].update(
-                status="unresolved", issues=["The requested conclusion is not established."],
+                evidence=[{"chunk_sequence": 1, "quote": "This passage is absent from the source."}],
                 values={"finding": "NEVER_CANONICAL_UNSUPPORTED"},
             )
             return json.dumps(response)
@@ -866,7 +868,8 @@ def test_saved_complete_only_failure_can_continue_without_reanalyzing(harness, n
 
     def partial_reply():
         response = json.loads(narrative_io["reply"]())
-        response["findings"][0]["issues"] = ["The remaining conclusion is not established."]
+        # Refused by the validator; a stated gap no longer makes an analysis partial (0.261.477).
+        response["findings"][0]["evidence"] = [{"chunk_sequence": 1, "quote": "This passage is absent from the source."}]
         return json.dumps(response)
 
     harness.replies = [partial_reply] * 10
@@ -980,7 +983,8 @@ def test_native_report_with_unknowns_is_checked_without_rewriting_or_faking_reco
             response = json.loads(narrative_io["reply"]())
             unknown = response["findings"] if all_unknown else response["findings"][:1]
             for finding in unknown:
-                finding.update(status="unresolved", issues=["The requested conclusion is not established."])
+                # Refused by the validator; a stated gap no longer makes an analysis partial.
+                finding.update(evidence=[{"chunk_sequence": 1, "quote": "This passage is absent from the source."}])
             return json.dumps(response)
         candidate = json.loads(prompt)["candidate"]
         return assessment(candidate)

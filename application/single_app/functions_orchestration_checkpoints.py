@@ -23,6 +23,7 @@ from datetime import datetime
 from azure.core import MatchConditions
 from azure.cosmos import exceptions
 
+from functions_control_center_dashboard import CONTROL_CENTER_ACTION_TYPE
 from functions_orchestration_invocation_capture import OrchestrationInvocationControlError
 from functions_orchestration_schema import build_failure, step_input_specs
 from functions_orchestration_registry import build_planner_capability_projection, get_capability
@@ -56,6 +57,10 @@ INPUT_FIELDS = (
     'active_group_ids', 'active_group_id', 'active_public_workspace_ids',
     'gpt_model', 'public_workspace_selection',
 )
+
+
+# Must equal functions_orchestration_native_results.LOWERING_MAX_CALLS.
+LOWERING_STATE_MAX_CALLS = 3
 
 
 class CheckpointError(OrchestrationInvocationControlError):
@@ -137,6 +142,32 @@ def _execution_settings_fingerprint(settings):
     return fingerprint(configuration_settings(settings) if isinstance(settings, dict) else settings)
 
 
+def _memory_fingerprint(memory):
+    """What saved memory said, not when it was read.
+
+    A recall citation records the time of the read, and each recalled fact a similarity scored
+    against a query embedding generated for that read. Neither is memory content, and both
+    differ between two reads of unchanged memory, so with them in the fingerprint no run that
+    had recalled anything could be resumed or retried. Memory with no citations fingerprints
+    exactly as before.
+    """
+    if not isinstance(memory, dict) or not memory.get('citations'):
+        return fingerprint(memory or {})
+    citations = []
+    for citation in memory['citations']:
+        if isinstance(citation, dict):
+            citation = {key: value for key, value in citation.items() if key != 'timestamp'}
+            result = citation.get('function_result')
+            if isinstance(result, dict) and isinstance(result.get('facts'), list):
+                citation['function_result'] = {**result, 'facts': [
+                    {key: value for key, value in fact.items() if key != 'similarity'}
+                    if isinstance(fact, dict) else fact
+                    for fact in result['facts']
+                ]}
+        citations.append(citation)
+    return fingerprint({**memory, 'citations': citations})
+
+
 def _manifest_address(step_id, *, waiting=False, input_only=False):
     if waiting and input_only:
         raise CheckpointError('checkpoint_invalid')
@@ -197,24 +228,70 @@ def context_state(context):
     return state
 
 
-def context_binding(context, plan, settings):
-    """Hash runtime bindings; never persist identity, credentials or memory prompts."""
+def role_gated_action(action):
+    """Whether the action catalog lists this action only for a caller holding an app role.
+
+    The same test the catalog applies before it checks the caller's roles
+    (``_is_control_center_action`` in functions_action_catalog.py).
+    """
+    action_type = action.get('type') if isinstance(action, dict) else None
+    return isinstance(action_type, str) and action_type.strip().lower() == CONTROL_CENTER_ACTION_TYPE
+
+
+def bound_action_catalog(context):
+    """The actions a run is bound to: those whose listing does not depend on a role claim.
+
+    A run that waits is resumed by a background worker, which holds no role claims and so is
+    never offered a role-gated action. Binding to those entries refused every such resume for a
+    caller who holds the role, whatever the plan used. The gate itself is unchanged: a plan
+    step naming an action its context does not list is rejected when the plan is validated
+    for execution, before any step runs.
+    """
+    return [
+        action for action in (getattr(context, 'action_catalog', None) or [])
+        if not role_gated_action(action)
+    ]
+
+
+def _context_binding_payload(context, plan, settings):
     model = getattr(context, 'model_context', None) or {}
     inputs = {key: getattr(context, key, None) for key in INPUT_FIELDS}
     if getattr(context, 'analysis_result_contexts', None):
         inputs['analysis_result_contexts'] = context.analysis_result_contexts
-    payload = {
+    return {
         'plan': effective_plan(plan),
         'inputs': inputs,
         'model': {key: model.get(key) for key in ('model_id', 'endpoint_id', 'provider', 'model_deployment')},
-        'memory_digest': fingerprint(getattr(context, 'memory_context', {}) or {}),
+        'memory_digest': _memory_fingerprint(getattr(context, 'memory_context', None)),
         'agent_catalog_digest': fingerprint(getattr(context, 'agent_catalog', []) or []),
-        'action_catalog_digest': fingerprint(getattr(context, 'action_catalog', []) or []),
+        'action_catalog_digest': fingerprint(bound_action_catalog(context)),
         'settings_digest': _execution_settings_fingerprint(settings),
         'plan_contract_version': 2,
         'final_response': plan.get('final_response'),
     }
-    return fingerprint(payload)
+
+
+def context_binding(context, plan, settings):
+    """Hash runtime bindings; never persist identity, credentials or memory prompts."""
+    return fingerprint(_context_binding_payload(context, plan, settings))
+
+
+def context_binding_parts(context, plan, settings):
+    """A short hash of each part of the binding, so a changed binding can name its part.
+
+    The binding is one hash; when it differs nothing says what differed. These are hashes of
+    the same values the binding covers, one per part and one per request input. No content.
+    """
+    payload = _context_binding_payload(context, plan, settings)
+    parts = {
+        f'binding_part_{name}': value for name, value in payload.items()
+        if name not in ('inputs', 'plan_contract_version')
+    }
+    parts.update({f'binding_input_{name}': value for name, value in payload['inputs'].items()})
+    return {
+        name: (value if name.endswith('_digest') else fingerprint(value))[:12]
+        for name, value in parts.items()
+    }
 
 
 def _legacy_tabular_capability_inputs(schema):
@@ -351,7 +428,7 @@ def step_input_fingerprint(step, context, binding, *, settings=None):
         'inputs': references,
         'request': {key: getattr(context, key, None) for key in INPUT_FIELDS},
         'model': {key: model.get(key) for key in ('model_id', 'endpoint_id', 'provider', 'model_deployment')},
-        'memory_digest': fingerprint(getattr(context, 'memory_context', {}) or {}),
+        'memory_digest': _memory_fingerprint(getattr(context, 'memory_context', None)),
         'settings_digest': _execution_settings_fingerprint(settings or {}),
         'capability': {key: capability_binding.get(key) for key in (
             'id', 'plan_contract_version', 'result_contract_version', 'role', 'adapter', 'inputs',
@@ -512,11 +589,14 @@ def restore_context(context, payload):
 class CheckpointStore:
     def __init__(
         self, container, *, run_id, user_id, conversation_id, turn_id, authorize,
-        token=None, claim_id=None, plan_contract_version=2,
+        token=None, claim_id=None, plan_contract_version=2, prior_run_id=None,
     ):
         if type(plan_contract_version) is not int or plan_contract_version != 2:
             raise CheckpointError('checkpoint_invalid')
         self.container = container
+        # The attempt this run retries, when it is one. Read-only, and only for what the next
+        # attempt of the same turn is told about its predecessor.
+        self.prior_run_id = prior_run_id if type(prior_run_id) is str and prior_run_id else None
         self.identity = {
             'run_id': run_id, 'user_id': user_id, 'conversation_id': conversation_id,
             'turn_id': turn_id, 'schema_version': CHECKPOINT_VERSION,
@@ -657,7 +737,7 @@ class CheckpointStore:
             type(step_id) is not str or not step_id
             or type(state) is not dict or type(binding) is not str
             or not isinstance(state.get('calls_used'), int)
-            or not 0 <= state['calls_used'] <= 2
+            or not 0 <= state['calls_used'] <= LOWERING_STATE_MAX_CALLS
             or state.get('version') != 'tabular-program-lowering-v1'
             or state.get('phase') not in {
                 'context_checked', 'call_reserved', 'program_saved',
@@ -695,6 +775,44 @@ class CheckpointStore:
         self._validate_lowering_state(document['state'])
         return deepcopy(document['state'])
 
+    def load_prior_attempt_lowering(self, step_id):
+        """The previous attempt's last program for this step and the finding it ended on.
+
+        Returns ``{'program', 'last_failure'}`` or None. The record must belong to the same
+        user, conversation and turn. It is never state for this run: its binding and inputs
+        are the previous attempt's, so the caller may only show it to the author.
+        """
+        if self.prior_run_id is None or type(step_id) is not str or not step_id:
+            return None
+        self._authorized()
+        try:
+            document = self.container.read_item(
+                item=f'lowering:{fingerprint(step_id)}', partition_key=self.prior_run_id,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        except Exception as exc:
+            raise CheckpointError(self._storage_error_code) from exc
+        identity = {**self.identity, 'run_id': self.prior_run_id}
+        if (
+            not isinstance(document, dict)
+            or any(document.get(key) != value for key, value in identity.items())
+            or document.get('record_type') != 'lowering_state'
+            or document.get('step_id') != step_id
+            or type(document.get('state')) is not dict
+        ):
+            return None
+        state = document['state']
+        try:
+            json_bytes(state)
+            self._validate_lowering_state(state)
+        except CheckpointError:
+            return None
+        if state['phase'] != 'failure_saved' or state.get('completion_confirmed') is not True:
+            return None
+        failure = {key: deepcopy(value) for key, value in state['last_failure'].items() if key != 'program'}
+        return {'program': deepcopy(state['program']), 'last_failure': failure}
+
     def _validate_lowering_state(self, state):
         if (
             type(state) is not dict
@@ -706,7 +824,7 @@ class CheckpointStore:
             }
             or type(state.get('calls_used')) is not int
             or isinstance(state.get('calls_used'), bool)
-            or not 0 <= state['calls_used'] <= 2
+            or not 0 <= state['calls_used'] <= LOWERING_STATE_MAX_CALLS
             or set(state) - {
                 'version', 'phase', 'calls_used', 'completion_contract_version',
                 'program', 'program_sha256', 'completion_confirmed', 'last_failure',

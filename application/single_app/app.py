@@ -40,6 +40,8 @@ from functions_mcp_server_config import is_mcp_ui_enabled
 from functions_rate_limit import build_rate_limit_error_payload
 from functions_ui_pages import V2_HOME_PATH, has_app_user_role, is_modern_ui_available, render_page
 from functions_ui_redirect import has_classic_escape, redirect_classic_page_to_modern_ui
+from functions_ui_redirect import has_modern_request, with_modern_request
+from functions_ui_pages import is_v2_bundle_ready
 from functions_appinsights import *
 from functions_activity_logging import *
 from functions_session_store import install_merging_session_interface
@@ -1322,7 +1324,7 @@ public_app_bp = Blueprint('public_app', __name__)
 @public_app_bp.route('/')
 @swagger_route(security=get_auth_security())
 def index():
-    from functions_ui_mode import allows_classic_escape
+    from functions_ui_mode import allows_classic_escape, allows_modern_request
 
     if ENABLE_AUTO_LOGIN_ON_INDEX and "user" not in session:
         return redirect(url_for('frontend_authentication.login'))
@@ -1347,8 +1349,11 @@ def index():
         # the bundle was built: /v2 answers 503 without it, so the classic page stays. The
         # classic to V2 redirect hook asks the same question and normally answers first, so
         # this only matters when that hook did not run; it honours ui=classic ("Open this page
-        # in classic") exactly as the hook does.
+        # in classic") and ui=modern ("Switch to modern UI") exactly as the hook does.
         classic_escape = has_classic_escape(request.query_string) and allows_classic_escape(settings)
+        modern_request = has_modern_request(request.query_string) and allows_modern_request(settings)
+        if modern_request and is_v2_bundle_ready():
+            return redirect(with_modern_request(V2_HOME_PATH))
         if not classic_escape and is_modern_ui_available(settings):
             return redirect(V2_HOME_PATH)
         return render_template('index.html', **page_context)

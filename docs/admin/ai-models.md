@@ -345,7 +345,7 @@ fingerprints/expiry/history/references, replace certificates under a stable ID,
 and delete unused bundles with server-side reference checks. The private Blob
 container and Cosmos metadata are shared across workers; Enhanced Citations
 need not be enabled. Legacy filesystem paths continue to work. See
-[shared CA bundle operations]({{ '/explanation/features/CUSTOM_ENDPOINT_CA_BUNDLES/' | relative_url }}).
+[shared CA bundle operations](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/CUSTOM_ENDPOINT_CA_BUNDLES.md).
 
 For GenAI.mil, choose **Custom profile -> GenAI.mil**, enter the scoped key, and
 use **Fetch Models** or manual model entry. Only documented text Chat
@@ -353,7 +353,7 @@ Completions fields are sent. Tools, vision, structured output, Messages, and
 Responses remain unsupported. Stored keys are not silently reused after an API
 origin change. Local implementation does not establish live acceptance or data
 authorization. See the
-[GenAI.mil profile contract]({{ '/explanation/features/GENAI_MIL_MODEL_PROFILE/' | relative_url }}).
+[GenAI.mil profile contract](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/GENAI_MIL_MODEL_PROFILE.md).
 
 Server-side validation also rejects invalid overrides before saving the submitted
 endpoint configuration or credentials. Personal/group saves return HTTP 400 with

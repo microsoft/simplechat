@@ -51,6 +51,9 @@ import zipfile
 from xml.etree import ElementTree
 
 from functions_ooxml_package_guard import UnreadablePackageError, first_unsafe_xml_part
+from functions_tabular_transformations import (
+    TABULAR_VALUE_KINDS, tabular_number_readings, tabular_value_kind,
+)
 from functions_temp_files import scratch_file_dir
 
 TABULAR_MERGE_REPORT_VERSION = "tabular-merge-report-v1"
@@ -878,6 +881,49 @@ def read_tabular_source_records(
         reader.close()
 
 
+TABULAR_COLUMN_TEXT_VALUES_MAX = 50
+TABULAR_COLUMN_TEXT_VALUE_MAX_LENGTH = 120
+TABULAR_COLUMN_TEXT_VALUES_MAX_BYTES = 24 * 1024
+
+
+def _column_values(value_kinds, two_readings, text_values, long_text):
+    """What each column's cells hold, and the text that sits among a column's numbers.
+
+    Counts for every column. For a column that holds numbers and also text, the distinct text
+    values and how often each occurs, so a calculation can name them. That list is bounded three
+    ways and each bound is reported instead of applied silently: at most
+    TABULAR_COLUMN_TEXT_VALUES_MAX distinct values per column, values no longer than
+    TABULAR_COLUMN_TEXT_VALUE_MAX_LENGTH characters, and TABULAR_COLUMN_TEXT_VALUES_MAX_BYTES
+    for one table.
+    """
+    described, remaining = [], TABULAR_COLUMN_TEXT_VALUES_MAX_BYTES
+    for column, kinds in value_kinds.items():
+        entry = {"column": column, **{kind: count for kind, count in kinds.items() if count}}
+        if two_readings[column]:
+            # Cells that write one number with a decimal point and another with a decimal comma.
+            entry["two_readings"] = two_readings[column]
+        numeric = kinds["number"] + kinds["numeric_text"] + kinds["comma_decimal_text"]
+        if numeric and kinds["text"]:
+            listed = text_values[column]
+            if long_text[column]:
+                entry["text_longer_than_listed"] = long_text[column]
+            if listed is None:
+                entry["text_values_not_listed"] = "more_distinct_values_than_listed"
+            elif listed:
+                values = [
+                    {"value": value, "count": count}
+                    for value, count in sorted(listed.items(), key=lambda item: (-item[1], item[0]))
+                ]
+                size = len(json.dumps(values, ensure_ascii=False).encode("utf-8"))
+                if size > remaining:
+                    entry["text_values_not_listed"] = "table_limit"
+                else:
+                    remaining -= size
+                    entry["text_values"] = values
+        described.append(entry)
+    return described
+
+
 def prepare_tabular_source_context(
     source, request, *, limits=None, cancel_requested=None,
 ):
@@ -919,6 +965,13 @@ def prepare_tabular_source_context(
         if not requested.issubset(set(columns)):
             raise TabularMergeError("column_not_found", "A requested calculation context column is unavailable.")
         values = {column: {} for column in context_columns}
+        # Counts only, for every column: their size does not grow with the number of rows.
+        value_kinds = {column: dict.fromkeys(TABULAR_VALUE_KINDS, 0) for column in columns}
+        two_readings = dict.fromkeys(columns, 0)
+        # The distinct text a column holds, kept only while it is a short list: None once a
+        # column has more distinct text values than can be listed.
+        text_values = {column: {} for column in columns}
+        long_text = dict.fromkeys(columns, 0)
         profile_names = [profile["name"] for profile in key_profiles]
         if len(profile_names) != len(set(profile_names)):
             raise TabularMergeError(
@@ -937,6 +990,22 @@ def prepare_tabular_source_context(
         for row_number, row in rows:
             _check_cancel(cancel_requested)
             row_count += 1
+            for column, kinds in value_kinds.items():
+                cell = row[column]
+                kind = tabular_value_kind(cell)
+                kinds[kind] += 1
+                if kind in ("numeric_text", "comma_decimal_text"):
+                    point, comma = tabular_number_readings(cell)
+                    two_readings[column] += int(point is not None and comma is not None and point != comma)
+                elif kind == "text":
+                    text = cell.strip()
+                    listed = text_values[column]
+                    if len(text) > TABULAR_COLUMN_TEXT_VALUE_MAX_LENGTH:
+                        long_text[column] += 1
+                    elif listed is not None:
+                        listed[text] = listed.get(text, 0) + 1
+                        if len(listed) > TABULAR_COLUMN_TEXT_VALUES_MAX:
+                            text_values[column] = None
             for column in context_columns:
                 cell = row[column]
                 key = json.dumps(cell, ensure_ascii=False, sort_keys=True, allow_nan=False)
@@ -1018,6 +1087,9 @@ def prepare_tabular_source_context(
                 for column in context_columns
             ],
             "key_profiles": profiles,
+            # What each column's cells hold, as the calculation reads them. numeric_text is
+            # text that writes a number; text is a cell no numeric operation can read.
+            "column_values": _column_values(value_kinds, two_readings, text_values, long_text),
         }
         if len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 96 * 1024:
             raise TabularMergeError(

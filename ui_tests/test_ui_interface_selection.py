@@ -72,7 +72,7 @@ def test_classic_switch_saves_before_navigating_and_handles_failure(page, width)
     fail[0] = False
     switch.focus()
     page.keyboard.press("Enter")
-    expect(page).to_have_url(f"{ORIGIN}/v2/workspace#documents-tab")
+    expect(page).to_have_url(f"{ORIGIN}/v2/workspace?ui=modern#documents-tab")
     assert saved == [{"settings": {"preferredUiMode": "modern"}}] * 2
 
 

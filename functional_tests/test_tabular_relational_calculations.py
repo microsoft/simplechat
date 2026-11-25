@@ -1,11 +1,12 @@
 # test_tabular_relational_calculations.py
 """
 Functional tests for complete multi-file calculations and per-row lineage.
-Version: 0.261.446
+Version: 0.261.478
 Implemented in: 0.261.437; 0.261.446
 Planner-visible grammar, column rules and content-free failure locations added in: 0.261.443
 Namespace-separated derived rejoins and evaluator diagnostics added in: 0.261.444
 Checked allocation and date-peer cumulative operations added in: 0.261.446
+Result columns that state whether the records hold an empty value added in: 0.261.478
 
 These offline cases use unrelated schemas, precise source values and the real
 CSV/Excel readers. They do not invoke a model or change source documents.
@@ -77,6 +78,44 @@ def run(spec, sources, *, limits=None, cancel_requested=None):
             cell_range=selected.get("cell_range"), table_id=selected.get("table_id"),
         )
     return calculate_relational_sources(spec, data, limits=limits, cancel_requested=cancel_requested)
+
+
+def test_result_columns_say_whether_an_output_field_holds_an_empty_value():
+    """0.261.478: an output field that does not declare ``nullable`` may evaluate to empty.
+
+    The column used to be declared non-nullable regardless, so the finished calculation was
+    refused when it was retained (``result_schema_invalid``) and its author was told nothing.
+    """
+    from functions_orchestration_result_contracts import RecordColumn, validate_record
+
+    def undeclared(name, source, value_type="string"):
+        return {"name": name, "type": value_type, "expression": {"source": source}}
+
+    spec = join_spec()
+    spec["steps"] = spec["steps"][:1]
+    spec["result"] = "matched"
+    spec["output"] = transform(
+        field("code", "sales.code"), undeclared("price", "catalog.price", "number"),
+        undeclared("sku", "catalog.sku"),
+    )
+    sources = {"sales": b"code,quantity\n007,3\n008,1\n", "catalog": b"sku,price\n007,0.10\n"}
+    result = run(spec, sources)
+    assert result["records"] == [
+        {"code": "007", "price": 0.1, "sku": "007"}, {"code": "008", "price": None, "sku": None},
+    ]
+    assert [(column["name"], column["nullable"]) for column in result["columns"]] == [
+        ("code", False), ("price", True), ("sku", True),
+    ]
+    columns = [RecordColumn.from_dict(column) for column in result["columns"]]
+    for record in result["records"]:
+        validate_record(record, columns)
+    # Every row matched: nothing is empty, so the same undeclared fields are not nullable.
+    matched = run(spec, {**sources, "sales": b"code,quantity\n007,3\n"})
+    assert [column["nullable"] for column in matched["columns"]] == [False, False, False]
+    # A field that declares it may not be empty is still stopped when it evaluates to empty.
+    spec["output"] = transform(field("code", "sales.code"), field("price", "catalog.price", value_type="number"))
+    with pytest.raises(TabularTransformationEvaluationError):
+        run(spec, sources)
 
 
 def test_keyed_calculation_preserves_zero_prefixed_ids_exact_money_and_lineage():
@@ -440,6 +479,28 @@ def test_v2_allocation_preserves_valid_high_precision_amount():
         "details": b"contract,detail_id,weight\nCA,D1,1\n",
     })
     assert result["records"] == [{"amount": amount}]
+
+
+def test_the_operations_determine_the_program_version():
+    from functions_tabular_relational import with_operation_version
+
+    first = join_spec()
+    program, authored = with_operation_version({**first, "version": "tabular-relate-v2"})
+    assert (program["version"], authored) == ("tabular-relate-v1", "tabular-relate-v2")
+    assert normalize_relational_spec(program)["version"] == "tabular-relate-v1"
+    second = join_spec()
+    second["steps"] = [{"id": "running", "op": "cumulative_sum"}]
+    assert with_operation_version(second)[0]["version"] == "tabular-relate-v2"
+    # A missing version is stated; the input is not changed in place.
+    missing = {key: value for key, value in first.items() if key != "version"}
+    assert with_operation_version(missing) == ({**missing, "version": "tabular-relate-v1"}, None)
+    assert "version" not in missing
+    # What is not a program with step objects is left for the normalizer to reject.
+    for value in (None, [], {"steps": "join"}, {"steps": ["join"]}):
+        assert with_operation_version(value) == (value, None)
+    # The normalizer itself still rejects a mismatch, so a direct program is not relaxed.
+    with pytest.raises(TabularRelationalError):
+        normalize_relational_spec({**first, "version": "tabular-relate-v2"})
 
 
 @pytest.mark.parametrize("operation", ["allocate", "cumulative_sum"])

@@ -64,7 +64,7 @@ navigation. **Match system** remains available in Settings.
 
 Implemented in version: **0.261.449** (`application/single_app/config.py`).
 
-**Switch to modern UI** or **Switch to legacy UI** saves your account's preferred
+**Switch to modern UI** or **Switch to classic UI** saves your account's preferred
 interface and opens the corresponding page, preserving the active conversation
 where supported. It is available only when administrators allow both interfaces.
 If saving fails, the page stays open and the menu explains the error.

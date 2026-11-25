@@ -53,6 +53,8 @@ def _build_stub_modules():
     # unavailable -- which is correct behaviour but makes the module untestable here.
     appinsights.debug_print = lambda *args, **kwargs: None
     appinsights.is_debug_enabled = lambda *args, **kwargs: False
+    # route_backend_orchestration imports it to describe an unexpected failure.
+    appinsights.exception_log_fields = lambda exc, **kwargs: {"error_type": type(exc).__name__}
 
     settings = types.ModuleType("functions_settings")
     settings.get_settings = lambda: {}

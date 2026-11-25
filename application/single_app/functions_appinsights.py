@@ -110,6 +110,9 @@ LOGGER_EXTERNAL_EVENT_MESSAGE = "[SIMPLE_CHAT_EXTERNAL_EVENT]"
 MAX_EXTERNAL_EVENT_STRING_LENGTH = 256
 LOGGER_SAFE_TEXT_MAX_LENGTH = 1024
 LOGGER_APPLICATION_VERSION_MAX_LENGTH = 64
+EXCEPTION_TYPE_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
+EXCEPTION_SITE_MAX_FRAMES = 6
+_APPLICATION_ROOT = os.path.dirname(os.path.abspath(__file__))
 # Diagnostic keys whose sanitized text may be retained; everything else stays a length.
 LOGGER_SAFE_TEXT_KEYS = frozenset({
     "attempt",
@@ -118,6 +121,7 @@ LOGGER_SAFE_TEXT_KEYS = frozenset({
     "diagnosticrunid",
     "endpointfingerprint",
     "error",
+    "errorsite",
     "errortype",
     "failurereasons",
     "failuresummary",
@@ -154,7 +158,26 @@ LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "argumentkeyword", "argumentpath", "argumentbranch", "expectedtype",
     "nativecheck", "nativerole", "nativecategory", "nativestepop", "nativetransformcode",
     "nativeleftcategory", "nativerightcategory",
+    # Planning shape diagnostics and the progress ledger: registry and server codes only.
+    "bindingproblem", "misplacedargument", "recovery", "progressoutcome",
+    # Whether a run's binding was saved or found changed, what a calculation's author was
+    # told, and a step's status when its outputs did not match the plan.
+    "bindingoutcome", "correctioncategory", "correctionorigin", "taskstatus",
+    # The named check behind a returned calculation, and why a document analysis is partial.
+    "correctioncheck", "validationstatus", "executionstatus", "presentationstatus", "coveragestatus",
+    # The check that stopped an action or a model call, a refused selection's code, the cause a
+    # calculation ended on, and where a model's input limit came from.
+    "failurerule", "executionrule", "errorcode", "calculationcause", "limitsource", "limitstatus",
 })
+# Comma-separated output names from a capability contract; any other text is dropped.
+LOGGER_WORKFLOW_CODE_LIST_KEYS = frozenset({
+    "declaredoutputs", "producedoutputs", "outputsnotproduced", "outputsofanotherkind",
+    "outputsnotallowed", "validationissuecodes", "validationchecksnotpassed",
+})
+LOGGER_WORKFLOW_CODE_LIST_RE = re.compile(r"(?:[a-z][a-z0-9_]{0,79}(?:,[a-z][a-z0-9_]{0,79}){0,31})?")
+# One short hash per part of a run's execution binding (binding_part_*, binding_input_*).
+LOGGER_BINDING_PART_KEY_PREFIXES = ("bindingpart", "bindinginput")
+LOGGER_BINDING_PART_RE = re.compile(r"[0-9a-f]{12}")
 
 
 def configure_diagnostic_context_provider(provider):
@@ -189,6 +212,27 @@ def _diagnostic_hashes(extra):
         value = context.get(key) or (extra or {}).get(key)
         if isinstance(value, str) and 0 < len(value) <= 128:
             fields[f"sc_{key}_hash"] = hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+    return fields
+
+
+def exception_log_fields(exc, *, frames=EXCEPTION_SITE_MAX_FRAMES):
+    """Identify an unexpected failure by class and application code location only.
+
+    The exception message, arguments and local values are never read: they can carry
+    request content. ``error_site`` lists the innermost application frames first as
+    ``file.py:function:line``, which is enough to find the failing statement.
+    """
+    site = []
+    traceback = getattr(exc, "__traceback__", None)
+    while traceback is not None:
+        code = traceback.tb_frame.f_code
+        path = os.path.abspath(code.co_filename)
+        if path.startswith(_APPLICATION_ROOT + os.sep):
+            site.append(f"{os.path.basename(path)}:{code.co_name}:{traceback.tb_lineno}")
+        traceback = traceback.tb_next
+    fields = {"error_type": type(exc).__name__}
+    if site:
+        fields["error_site"] = " < ".join(reversed(site[-max(1, int(frames)):]))
     return fields
 
 
@@ -396,8 +440,18 @@ def _build_logger_extra(
                 elif diagnostic_key in LOGGER_WORKFLOW_CODE_KEYS:
                     if re.fullmatch(r"[a-z][a-z0-9_]{0,79}", value):
                         logger_extra[normalized_key] = value
+                elif diagnostic_key in LOGGER_WORKFLOW_CODE_LIST_KEYS:
+                    if LOGGER_WORKFLOW_CODE_LIST_RE.fullmatch(value):
+                        logger_extra[normalized_key] = value
+                elif diagnostic_key.startswith(LOGGER_BINDING_PART_KEY_PREFIXES):
+                    if LOGGER_BINDING_PART_RE.fullmatch(value):
+                        logger_extra[normalized_key] = value
                 elif diagnostic_key == "applicationversion":
                     if _is_application_version(value):
+                        logger_extra[normalized_key] = value
+                elif diagnostic_key == "exceptiontype":
+                    # A class name identifies code, not content; anything else stays a length.
+                    if EXCEPTION_TYPE_NAME_RE.fullmatch(value):
                         logger_extra[normalized_key] = value
                 elif _is_safe_log_text_key(key):
                     logger_extra[normalized_key] = (

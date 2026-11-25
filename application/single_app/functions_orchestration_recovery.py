@@ -41,7 +41,7 @@ import functions_orchestration_runs as run_store
 from functions_appinsights import log_event, workflow_log_context
 from functions_orchestration_checkpoints import (
     CHECKPOINT_VERSION, DEPENDENCY_STATE_FIELDS, LIFECYCLE_ID, OPTIONAL_STATE_FIELDS, STATE_FIELDS,
-    CheckpointError, CheckpointStore, context_binding, context_state,
+    CheckpointError, CheckpointStore, bound_action_catalog, context_binding, context_binding_parts, context_state,
     effective_plan, fingerprint, orchestration_answer_message_id, publication_documents_match,
     restore_context, step_input_fingerprint,
 )
@@ -336,7 +336,7 @@ def checkpoint_store(record, authorize, *, token=None, claim_id=None):
         run_store.cosmos_orchestration_run_steps_container,
         run_id=record['id'], user_id=record['user_id'], conversation_id=record['conversation_id'],
         turn_id=record.get('turn_id') or record['plan'].get('turn_id'), authorize=authorize,
-        token=token, claim_id=claim_id,
+        token=token, claim_id=claim_id, prior_run_id=record.get('retry_of_run_id'),
     )
 
 
@@ -1385,6 +1385,12 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
         parent_binding if narrative_continuation and source_id == continuation_parent['id'] else binding
     )
     if source.get('execution_binding') != source_binding:
+        log_binding_parts(
+            source, context,
+            continuation_parent['plan'] if narrative_continuation and source_id == continuation_parent['id']
+            else record['plan'],
+            settings, 'changed',
+        )
         raise CheckpointError(
             'recovery_changed', rule='execution_binding_changed',
             stage='resume_binding',
@@ -1719,6 +1725,27 @@ def prepare_retry(run_id, user_id, data, *, authorize, validate, message_contain
     return _owned(child_id, user_id, conversation_id, authorize)
 
 
+def log_binding_parts(record, context, plan, settings, outcome):
+    """Record each part of a run's binding when it is saved and when it is found changed.
+
+    Comparing the two lines for one run names the part that changed.
+    """
+    actions = getattr(context, 'action_catalog', None) or []
+    log_event(
+        '[ORCHESTRATION_RUNS] Execution binding parts.',
+        extra={
+            **workflow_log_context(run_id=record.get('id'), conversation_id=record.get('conversation_id')),
+            'stage': 'execution_binding', 'binding_outcome': outcome,
+            **context_binding_parts(context, plan, settings),
+            # Counts only. Role-gated actions are outside the binding; their count shows
+            # whether this context was offered any.
+            'action_count': len(actions),
+            'role_gated_action_count': len(actions) - len(bound_action_catalog(context)),
+            'agent_count': len(getattr(context, 'agent_catalog', None) or []),
+        },
+    )
+
+
 class ExecutionCheckpoints:
     def __init__(self, record, context, settings, lease):
         self.record = record
@@ -1748,6 +1775,7 @@ class ExecutionCheckpoints:
         }
 
     def initialize(self):
+        log_binding_parts(self.record, self.context, self.record['plan'], self.settings, 'saved')
         self.lease.initialize_checkpoint_state({
             'checkpoint_version': CHECKPOINT_VERSION, 'execution_binding': self.binding,
             'execution_steps': deepcopy(self.records), 'attempt_index': self.record.get('attempt_index') or 1,

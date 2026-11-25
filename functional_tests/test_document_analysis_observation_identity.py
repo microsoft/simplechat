@@ -1,7 +1,7 @@
 # test_document_analysis_observation_identity.py
 """
 Evidence-bound observation identities and explicit Analyze semantics.
-Version: 0.261.398
+Version: 0.261.477
 Implemented in: 0.261.398
 
 Run the real source reader, window collector and finalizer with fictional
@@ -160,7 +160,9 @@ def test_unsupported_observation_is_not_promoted_by_a_shared_subject():
             runtime, documents, FixtureAnalysisClient(response_builder(unsupported_page=8)),
             analysis_options=OBSERVATIONS, window_size=8,
         )
-        assert result["analysis_validation"]["status"] == "partial"
+        # From 0.261.477 an observation the model did not conclude is a stated gap, not partial.
+        assert result["analysis_validation"]["status"] == "valid"
+        assert result["analysis_validation"]["stated_gap_count"] == 1
         assert result["analysis_validation"]["unresolved_candidate_count"] == 1
         records = result["authoritative_result"]["value"]
         assert len(records) == 5

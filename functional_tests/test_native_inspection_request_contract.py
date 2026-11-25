@@ -1,9 +1,10 @@
 # test_native_inspection_request_contract.py
 """Native inspection requests, bounded all-section paging and safe diagnostics.
 
-Version: 0.261.444
+Version: 0.261.478
 Implemented in: 0.261.425
 Focused PPTX slide inspection added in: 0.261.444
+Continuation across a record revision change added in: 0.261.478
 Real native readers and the existing private artifact store run offline. Missing
 data remains evidence; invalid requests and stale sources remain genuine errors.
 """
@@ -152,6 +153,31 @@ def test_all_continuations_remain_source_section_and_permission_bound(native_sou
         reader.page("all", cursor=page["next_cursor"])
 
 
+def test_a_pdf_continuation_survives_a_record_write_that_leaves_the_bytes_unchanged(native_source):
+    """0.261.478: a write to the document record between two pages does not end the paging.
+
+    Seen on 0.261.477: the fourth read of a run was refused because the record's revision had
+    changed four seconds after the cursor was issued, with the same source bytes.
+    """
+    data = native_source("SC-C04.pdf").read_bytes()
+    first = inspect_native_document({"id": "selected-source", "version": 1, "_etag": "revision-1"}, data, ".pdf", page_size=1)
+    cursor = first["page"]["next_cursor"]
+    assert cursor and "revision-1" not in base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+    second = inspect_native_document(
+        {"id": "selected-source", "version": 1, "_etag": "revision-2"}, data, ".pdf", cursor=cursor, page_size=1,
+    )
+    assert second["page"]["records"] != first["page"]["records"]
+    # Different bytes, a different uploaded version or another document still end it.
+    for document, source in (
+        ({"id": "selected-source", "version": 2, "_etag": "revision-1"}, data),
+        ({"id": "other-source", "version": 1, "_etag": "revision-1"}, data),
+        ({"id": "selected-source", "version": 1, "_etag": "revision-1"}, native_source("SC-C03.pdf").read_bytes()),
+    ):
+        with pytest.raises(NativeInspectionRequestError) as changed:
+            inspect_native_document(document, source, ".pdf", cursor=cursor, page_size=1)
+        assert changed.value.code == "native_cursor_source_changed"
+
+
 def change_cursor(token, **changes):
     value = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
     value.update(changes)
@@ -161,7 +187,10 @@ def change_cursor(token, **changes):
 
 
 @pytest.mark.parametrize("mutation,code,rule", [
-    ({"revision": "different-revision"}, "native_cursor_source_changed", "native_cursor_revision_changed"),
+    # The record's storage revision is no longer part of a cursor; one that carries it is not
+    # a cursor this reader issued.
+    ({"revision": "different-revision"}, "native_cursor_invalid", None),
+    ({"version": 2}, "native_cursor_source_changed", "native_cursor_version_changed"),
     ({"source_sha256": "0" * 64}, "native_cursor_source_changed", "native_cursor_source_sha256_changed"),
     ({"section": "objects"}, "native_cursor_source_changed", "native_cursor_section_changed"),
     ({"offset": 999999}, "native_cursor_out_of_range", None),

@@ -1,11 +1,12 @@
 # test_app_settings_store_consistency.py
 """
 Regression tests for shared settings and conditional writes.
-Version: 0.261.428
+Version: 0.261.483
 Implemented in: 0.261.025
 Multi-endpoint new-instance default coverage added in: 0.261.043
 Disabled Terms of Use persistence regression: 0.261.050 (#1615)
 Retired orchestration settings normalizer loaded in: 0.261.139
+Cosmos SDK point-response coverage updated in: 0.261.483
 
 Independent store objects represent workers. Fake services exercise ETag conflicts,
 interrupted publication and lease expiry without network access or wall-clock sleeps.
@@ -30,6 +31,7 @@ from azure.cosmos.exceptions import (
     CosmosResourceExistsError,
     CosmosResourceNotFoundError,
 )
+from azure.cosmos._cosmos_responses import CosmosDict
 from redis.exceptions import ConnectionError as RedisConnectionError
 from test_support.versioning import assert_app_version_at_least
 
@@ -90,9 +92,10 @@ class FakeCosmos:
         self.tokens = []
 
     def _response(self, response_hook=None):
+        document = CosmosDict(copy.deepcopy(self.document), response_headers={})
         if response_hook:
-            response_hook({"x-ms-session-token": f"token-{self.etag}"}, self.document)
-        return copy.deepcopy(self.document)
+            response_hook({"x-ms-session-token": f"token-{self.etag}"}, document)
+        return document
 
     def read_item(self, item, partition_key, *, response_hook=None, session_token=None):
         assert item == partition_key == "app_settings"

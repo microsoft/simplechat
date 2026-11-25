@@ -104,7 +104,9 @@ from content_screening.access import (
     assert_current_request_sources_available, guard_model_callable, strict_source_authority,
 )
 from content_screening.contracts import DocumentHeldError, ScreeningError
-from functions_appinsights import log_chat_execution_outcome, log_event, workflow_log_context
+from functions_appinsights import (
+    exception_log_fields, log_chat_execution_outcome, log_event, workflow_log_context,
+)
 from functions_orchestration_adapters import resolve_context_source_manifest
 from functions_orchestration_checkpoints import (
     CheckpointError, fingerprint, orchestration_answer_message_id, publication_documents_match,
@@ -302,7 +304,8 @@ def _log_failure(message, record, error, *, stage="execution"):
                 turn_id=record.get("turn_id"),
             ),
             "stage": getattr(diagnostic, "stage", None) or stage, "response_type": response_type,
-            "error_type": type(error).__name__, "execution_code": _failure(error)["code"],
+            # Class and application code location only, so a failure with no rule can be found.
+            **exception_log_fields(error), "execution_code": _failure(error)["code"],
             "validation_rule": getattr(diagnostic, "validation_rule", None),
             "producer_capability_id": getattr(diagnostic, "producer_capability_id", None),
             "authority_reason": (
@@ -417,7 +420,7 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
                 )
                 if transient_check:
                     raise CompletenessError("completeness_checker_unavailable") from exc
-                raise HarnessExecutionError("model_failed") from exc
+                raise HarnessExecutionError("model_failed", rule="request_failed", stage=stage) from exc
             raise
         usage = getattr(response, "usage", None)
         for field in _USAGE_FIELDS:
@@ -429,11 +432,11 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
         if not response or not response.choices:
             if stage == "completeness_check":
                 raise CompletenessError("completeness_report_invalid")
-            raise HarnessExecutionError("model_failed")
+            raise HarnessExecutionError("model_failed", rule="reply_empty", stage=stage)
         choice = response.choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
         if finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
-            raise HarnessExecutionError("model_failed")
+            raise HarnessExecutionError("model_failed", rule="reply_refused", stage=stage)
         if (metadata or {}).get("require_complete_generation") is True and finish_reason != "stop":
             raise HarnessExecutionError(
                 "model_failed", rule="generation_incomplete", stage=stage,
@@ -448,7 +451,7 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
         if not text.strip():
             if stage == "completeness_check":
                 raise CompletenessError("completeness_report_invalid")
-            raise HarnessExecutionError("model_failed")
+            raise HarnessExecutionError("model_failed", rule="reply_empty", stage=stage)
         return text
 
     invoke_prompt.model_metadata = model.model_metadata or behavior_name
@@ -542,6 +545,22 @@ def _partition_citations(citations):
     return documents, web, tools
 
 
+# Formats whose content is a list of records; the modern file card applies the same rule
+# (RECORD_FORMATS in orchestrationOutputs.ts).
+_RECORD_FORMATS = frozenset({"csv", "json", "xlsx", "xml", "yaml", "yml"})
+
+
+def _readable_size(size_bytes):
+    """Bytes as a person reads them, matching the file card: 0 B, 1006 B, 40.3 KB, 2 MB."""
+    size, units = float(size_bytes), ["B", "KB", "MB", "GB", "TB"]
+    while size >= 1024 and len(units) > 1:
+        size /= 1024
+        units.pop(0)
+    if units[0] == "B" or size >= 100:
+        return f"{round(size)} {units[0]}"
+    return f"{size:.1f}".rstrip("0").rstrip(".") + f" {units[0]}"
+
+
 def _delivery_summary(outputs, artifacts):
     """Describe only durable, public file facts; artifact cards provide the links."""
     delivered = {artifact["output_id"] for artifact in artifacts}
@@ -554,10 +573,15 @@ def _delivery_summary(outputs, artifacts):
         ):
             detail = "unavailable; current access could not be verified"
         elif state == "completed":
+            # The facts a person reads off a file: rows where the file is a list of records, and
+            # its size. A document reports zero records, and nobody counts characters or bytes.
             facts = []
-            for key, unit in (("row_count", "rows"), ("character_count", "characters"), ("size_bytes", "bytes")):
-                if type(output.get(key)) is int and output[key] >= 0:
-                    facts.append(f"{output[key]:,} {unit}")
+            rows, size = output.get("row_count"), output.get("size_bytes")
+            file_format = str(output.get("output_format") or output["file_name"].rpartition(".")[2])
+            if type(rows) is int and rows >= 0 and file_format.strip(". ").lower() in _RECORD_FORMATS:
+                facts.append(f"{rows:,} {'row' if rows == 1 else 'rows'}")
+            if type(size) is int and size >= 0:
+                facts.append(_readable_size(size))
             detail = "ready" + (f" ({', '.join(facts)})" if facts else "")
         elif state == "retry_scheduled":
             detail = "waiting for an automatic file retry"
@@ -1566,6 +1590,31 @@ class HarnessExecution:
             or (self.record.get("time_zone") if workflow_time_zone_configured(self.settings) else None),
         )
 
+    def _continuation_requires_session(self, current, has_execution_state):
+        """Whether the results this paused run holds can only be read with a signed-in session.
+
+        Every retained result is authorized again before the next step reads it and again before
+        the answer is published. One that names an external source is authorized against the
+        user's session, so the rest of this run cannot be done by work that has none. Without
+        restored results the saved answer stands. A result whose lineage cannot be read is
+        treated as needing a session: a signed-in continuation can do everything the scheduler
+        can, and the reverse is not true.
+        """
+        if not has_execution_state:
+            return current.get("continuation_requires_session") is True
+        references = [
+            reference for task in self.context.task_results.values()
+            if task.status in {"complete", "partial"} for reference in task.outputs
+        ]
+        references.extend(
+            reference for reference in (getattr(self.context, "result_aliases", None) or {}).values()
+            if type(reference) is ResultRef
+        )
+        try:
+            return self.services.results.lineage_names_external_source(references)
+        except (ResultContractError, ResultUnavailableError, PermissionError):
+            return True
+
     def _finalize(self, result, error, *, refreshes=0):
         # Recovery is an application-owned store dependency, not an import-time dependency.
         from functions_orchestration_recovery import public_execution_fields
@@ -1733,7 +1782,9 @@ class HarnessExecution:
         if status == "waiting":
             content.append(build_failure("result_not_ready")["message"])
         elif status in {"failed", "cancelled"} and not answer_qualified:
-            content.append(failure_explanation(failures, partial=outcome == "partial", cancelled=status == "cancelled"))
+            content.append(failure_explanation(
+                failures, partial=outcome == "partial", cancelled=status == "cancelled", answered=bool(prepared),
+            ))
         elif not content:
             # A plan saved before every gather step needed a reader can gather without answering.
             content.append(
@@ -1807,6 +1858,12 @@ class HarnessExecution:
         if not self._delivery_only:
             updates["harness_step_token_usage"] = _usage(
                 result.get("token_usage", self.context.token_usage if self.context is not None else {}),
+            )
+        if status == "waiting":
+            # Read by the scheduler, which has no session and leaves such a run to a signed-in
+            # continuation, and by the request that continues it.
+            updates["continuation_requires_session"] = self._continuation_requires_session(
+                current, has_execution_state,
             )
         if output_check.blocked:
             # The executor's provisional summary cannot retain text the checkpoint removed.

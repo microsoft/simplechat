@@ -1,7 +1,7 @@
 # test_orchestration_document_derivation_reliability.py
 """Source-grounded schema correction and producer-aware document generation recovery.
 
-Version: 0.261.316
+Version: 0.261.477
 Implemented in: 0.261.309
 
 Literal source annotations reach Word publication without correction as of 0.261.314.
@@ -69,11 +69,15 @@ def test_malformed_text_metadata_is_corrected_without_erasing_uncertainty(field,
     assert all(call['metadata']['json_output'] for call in client.calls)
     assert client.calls[1]['metadata']['analysis_response_correction']
     assert result['analysis_validation']['coverage']['completed_work_units'] == 1
-    assert result['analysis_validation']['status'] == ('partial' if field == 'issues' else 'valid')
+    # From 0.261.477 an issue the model states is a reported gap; the finding is still not a record.
+    assert result['analysis_validation']['status'] == 'valid'
+    assert result['analysis_validation']['stated_gap_count'] == (1 if field == 'issues' else 0)
     if field == 'caveats':
         assert result['authoritative_result']['value'][0]['caveats'] == [QUALIFICATION]
     elif field == 'issues':
-        assert result['authoritative_result']['value'] == []
+        # The supported finding is kept, with what the model could not settle beside it.
+        assert result['authoritative_result']['value'][0]['open_issues'] == [QUALIFICATION]
+        assert result['authoritative_result']['value'][0]['values'] == {'owner': 'Mira'}
         assert QUALIFICATION in json.dumps(result['analysis_diagnostics'])
     else:
         assert QUALIFICATION in result['analysis_reply']
@@ -167,7 +171,8 @@ def test_unknown_support_status_cannot_be_promoted_by_schema_correction(supporte
             runtime, documents, FixtureAnalysisClient(reply), max_retries_per_window=1,
         )
     assert len(client.calls) == 2
-    assert result['analysis_validation']['status'] == 'partial'
+    # An invalid status is refused; a corrected "unresolved" is the model's own stated gap.
+    assert result['analysis_validation']['status'] == ('partial' if supported else 'valid')
     assert result['authoritative_result']['value'] == []
     assert result['analysis_validation']['issues'][0]['code'] == (
         'invalid_status' if supported else 'unresolved_finding'
@@ -341,10 +346,13 @@ def test_repaired_findings_reach_actual_composition_and_durable_document(
 
 
 @pytest.mark.parametrize('malformed', [True, False])
-def test_recovery_revisits_malformed_producer_but_does_not_offer_pointless_uncertainty_retry(
+def test_recovery_revisits_malformed_producer_and_a_stated_gap_needs_no_retry(
     harness, narrative_io, malformed,
 ):
     def reply():
+        prompt = harness.model_calls[-1]['messages'][-1]['content']
+        if not malformed and '<DocumentSlice>' not in prompt:
+            return '# Document\n\nThe source gives contradictory values, so no value is reported.'
         payload = json.loads(narrative_io['reply']())
         if malformed:
             payload['findings'][0]['caveats'] = QUALIFICATION
@@ -360,6 +368,20 @@ def test_recovery_revisits_malformed_producer_but_does_not_offer_pointless_uncer
     execution = harness.prepare()
     frames = execution.execute()
     done = decoded_frames(frames)[-1]
+    if not malformed:
+        # From 0.261.477 a full read in which the model states a gap is a complete analysis:
+        # the run goes on to compose and publish, and the composing step is given the limitation.
+        assert done['status'] == 'completed', done
+        assert harness.blobs.file_uploads == 1
+        results = importlib.import_module('functions_document_analysis_results')
+        composed = [call for call in harness.model_calls if '<DocumentSlice>' not in str(call['messages'])]
+        given = str(composed[-1]['messages'])
+        assert results.STATED_GAP_LIMITATION in given
+        # The composing step reads findings, not the report, and is still given the gap itself:
+        # on the finding it belongs to and as a limitation of the input.
+        assert given.count('The source has contradictory requested values.') >= 2
+        assert 'Not settled by the sources (' in given and 'open_issues' in given
+        return
     assert done['status'] != 'completed'
     assert harness.blobs.file_uploads == 0
     projection = harness.recovery.recovery_projection(harness.read())
@@ -385,9 +407,6 @@ def test_recovery_revisits_malformed_producer_but_does_not_offer_pointless_uncer
         assert len(new_calls) == 3
         assert all('<ResponseShapeCorrection>' in str(call['messages']) for call in new_calls[:-1])
         assert harness.blobs.file_uploads == 1
-    else:
-        assert not projection['eligible'], projection
-        assert projection['reason_code'] == 'input_partial_not_recoverable'
 
 
 @pytest.mark.parametrize('annotation', [

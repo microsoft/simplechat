@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional regressions for picked-document planning and debug diagnostics.
-Version: 0.261.445
+Version: 0.261.481
 Implemented in: 0.261.413
 Server-owned Auto handoff integration: 0.261.415
 Shared draft-contract recovery integration: 0.261.419
 Two shared corrective proposals and local source wiring: 0.261.422
 Harness-boundary fixture alignment: 0.261.445
+A document ID outside the request's readable set returned to the planner: 0.261.481
 
 Real authenticated routes, source metadata, planner, validation and logger
 serialization run with external model/storage I/O isolated. Diagnostics must
@@ -564,12 +565,32 @@ def test_correction_preserves_explicit_reconciled_field_requirements(planning):
 
 
 def test_correction_cannot_widen_the_authorized_document_selection(planning):
+    # 0.261.481: the unavailable ID is returned to the planner, so the shared corrections are
+    # used; a planner that keeps naming it is still refused.
     with pytest.raises(planning.harness.planner.PlannerError):
-        run_plan(planning, [proposal(), proposal([LEFT, RIGHT])])
-    assert len(planning.harness.model_calls) == 2
+        run_plan(planning, [proposal(), proposal([LEFT, RIGHT]), proposal([LEFT, RIGHT])])
+    assert len(planning.harness.model_calls) == 3
     for call in planning.harness.model_calls:
         context = json.loads(call["messages"][1]["content"])
         assert context["user_selected"]["documents"] == [LEFT]
+
+
+def test_a_document_outside_the_readable_set_is_returned_to_the_planner(planning, caplog):
+    """0.261.481: the plan named an ID this request does not supply; the planner is told which."""
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(planning, [proposal([LEFT, RIGHT]), proposal([LEFT])])
+    assert kind == "plan" and len(planning.harness.model_calls) == 2
+    assert set(planning.harness.schema.plan_document_ids(plan)) == {LEFT}
+    correction = planning.harness.model_calls[1]["messages"][-1]["content"]
+    assert "not one of the documents available to this request" in correction
+    assert json.dumps({"argument": "document_ids", "document_ids_not_available": [RIGHT]}, sort_keys=True) in correction
+    asked = next(
+        record for record in caplog.records
+        if getattr(record, "sc_message", None) == "[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected plan."
+    )
+    assert asked.sc_validation_rule == "document_authorization_required"
+    # The IDs go to the planner only, never to the log.
+    assert RIGHT not in serialized_records(caplog.records)
 
 
 @pytest.mark.parametrize("retain_source,rule", [

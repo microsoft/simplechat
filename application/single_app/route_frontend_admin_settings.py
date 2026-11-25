@@ -510,6 +510,8 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
     return {
         'enable_chat_orchestration': form_data.get('enable_chat_orchestration') == 'on',
         'enable_chat_orchestration_completeness_check': form_data.get('enable_chat_orchestration_completeness_check') == 'on',
+        'enable_chat_orchestration_reactive_loop': form_data.get('enable_chat_orchestration_reactive_loop') == 'on',
+        'chat_orchestration_max_recovery_rounds': _clamped('chat_orchestration_max_recovery_rounds', 2, 0, 5),
         'chat_orchestration_completeness_max_corrections': _clamped(
             'chat_orchestration_completeness_max_corrections', 2, 0, 5,
         ),

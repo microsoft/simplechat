@@ -282,8 +282,8 @@ The merge must not be promoted while any of the following is open:
 
 ### A0. Preserve the Reviewed Merge and Build State
 
-Priority: **P0**  
-Status: **.430 deployed by admin; reviewed commits and rollback evidence remain**  
+Priority: **P0**
+Status: **.430 deployed by admin; reviewed commits and rollback evidence remain**
 Dependencies: None
 
 The merge and source pin are themselves part of the safety contract. Do not
@@ -320,9 +320,9 @@ of fixing a post-merge issue.
 
 ### A1. Centralize Chat Model Eligibility
 
-Priority: **P1**  
-Status: **Staging verified for the configured global chat menus; broader scope gates remain**  
-Tracking: `microsoft/simplechat#1928`  
+Priority: **P1**
+Status: **Staging verified for the configured global chat menus; broader scope gates remain**
+Tracking: `microsoft/simplechat#1928`
 Dependencies: None
 
 #### Confirmed Root Cause
@@ -397,8 +397,8 @@ source of truth for global, personal, and group scopes.
 
 ### A2. Preserve V2 Partial Content on Stop
 
-Priority: **P0**  
-Status: **Personal Stop/reload and early Stop live verified; immediate Retry and collaborative acceptance remain open**  
+Priority: **P0**
+Status: **Personal Stop/reload and early Stop live verified; immediate Retry and collaborative acceptance remain open**
 Dependencies: Stable server cancellation behavior
 
 #### Confirmed Root Cause
@@ -477,8 +477,8 @@ every completion-race outcome.
 
 ### A3. Propagate Verified Workflow Token Limits
 
-Priority: **P0**  
-Status: **Live routing and verified-capacity gates passed; completeness remains separately tracked**  
+Priority: **P0**
+Status: **Live routing and verified-capacity gates passed; completeness remains separately tracked**
 Dependencies: Administratively verified model limits
 
 #### Confirmed Root Cause
@@ -559,8 +559,8 @@ fallback behavior, not proof that the APIM route is wrong.
 
 ### A4. Make Workflow Provider Failures Durable and Safe
 
-Priority: **P0**  
-Status: **Claude core and legacy/structured failure diagnostics live verified**  
+Priority: **P0**
+Status: **Claude core and legacy/structured failure diagnostics live verified**
 Dependencies: None
 
 #### Confirmed Root Cause
@@ -640,8 +640,8 @@ adequate substitute for classifying definitive provider failures.
 
 ### A5. Make Tabular Tools Format-Aware and Bounded
 
-Priority: **P0**  
-Status: **Staging verified for the three-row CSV; schema and error-budget gates remain**  
+Priority: **P0**
+Status: **Staging verified for the three-row CSV; schema and error-budget gates remain**
 Dependencies: A4 safe failure taxonomy recommended
 
 #### Confirmed Root Cause
@@ -716,8 +716,8 @@ end, or that pathological live retries respect the hard invocation ceiling.
 
 ### A6. Complete Responses Tool-Execution Coverage
 
-Priority: **P1**  
-Status: **Live .436 Responses agent invocation and direct streaming verified; workflow review evidence remains open**  
+Priority: **P1**
+Status: **Live .436 Responses agent invocation and direct streaming verified; workflow review evidence remains open**
 Dependencies: A2 cancellation fix recommended
 
 #### Finding
@@ -1009,8 +1009,8 @@ outside both opt-in wrappers.
 
 ### B1. Add the V2 Notification Workbench
 
-Priority: **P1**  
-Status: **Not started**  
+Priority: **P1**
+Status: **Not started**
 Dependencies: Existing notification APIs
 
 #### Current Gap
@@ -1038,8 +1038,8 @@ notification panel and delegates some work to a classic destination.
 
 ### B2. Add Safe V2 Workspace Deletion
 
-Priority: **P1**  
-Status: **Blocked by deletion-policy decision**  
+Priority: **P1**
+Status: **Blocked by deletion-policy decision**
 Dependencies: Backend dependency and cascade/archive policy
 
 #### Required Decisions
@@ -1071,8 +1071,8 @@ Dependencies: Backend dependency and cascade/archive policy
 
 ### B3. Replace V2 Legacy-Document Handoffs
 
-Priority: **P1**  
-Status: **Not started**  
+Priority: **P1**
+Status: **Not started**
 Dependencies: Legacy-document retirement decision
 
 #### Current Gap
@@ -1100,8 +1100,8 @@ legacy document upgrade or migration.
 
 ### B4. Define V2 Retry Model/Agent Semantics
 
-Priority: **P1**  
-Status: **Not started**  
+Priority: **P1**
+Status: **Not started**
 Dependencies: A2 cancellation finalizer
 
 #### Current Gap
@@ -1132,8 +1132,8 @@ retry is not yet explicit.
 
 ### B5. Add V1 Links to Canonical V2 Editors
 
-Priority: **P2**  
-Status: **Not started**  
+Priority: **P2**
+Status: **Not started**
 Dependencies: Stable V2 route contracts
 
 #### Required Changes
@@ -1160,8 +1160,8 @@ Dependencies: Stable V2 route contracts
 
 ### B6. Port V2 Accessibility and Mobile Interaction Contracts to V1
 
-Priority: **P1**  
-Status: **Not started**  
+Priority: **P1**
+Status: **Not started**
 Dependencies: None
 
 #### Required Changes
@@ -1187,8 +1187,8 @@ Dependencies: None
 
 ### B7. Keep V2 Visual Editors Canonical
 
-Priority: **P2**  
-Status: **Not started**  
+Priority: **P2**
+Status: **Not started**
 Dependencies: Stable chart/diagram revision APIs
 
 V2 provides richer chart and diagram revision authoring; V1 can display the

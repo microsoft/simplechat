@@ -1,5 +1,7 @@
 # Workspace chat deep links
 
+**Current version: 0.261.483**
+
 **Implemented in version: 0.261.473**
 
 **Whole-workspace selection and reasoning persistence updated in version: 0.261.474**

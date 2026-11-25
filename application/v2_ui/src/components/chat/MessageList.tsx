@@ -47,6 +47,8 @@ import type { AgentCredentialRecovery, SavedAnalysisDescriptor } from '../../lib
 import { normalizeAgentCredentialEditUrl } from '../../lib/agentCredentialRecovery';
 import { AgentCredentialRecoveryNotice } from './AgentCredentialRecoveryNotice';
 import { IconButton, MessageActions } from './MessageActions';
+import { MessageActionSheet } from './MessageActionSheet';
+import { useLongPress } from '../../lib/useLongPress';
 import { isCheckingFailureNotice, OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { WorkflowProposalCards } from './WorkflowProposalCard';
@@ -201,6 +203,11 @@ function ImageMessage({ message }: { message: ChatMessage }) {
     const referencesAvailable = imageGenerationEnabled && referenceLimit > 0;
     const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
     const addComposerImageReference = useChatStore((state) => state.addComposerImageReference);
+    // Touch screens have no hover to reveal the action row, so holding the image opens the
+    // same actions in a sheet.
+    const [actionSheetOpen, setActionSheetOpen] = useState(false);
+    const closeActionSheet = useCallback(() => setActionSheetOpen(false), []);
+    const longPress = useLongPress(() => setActionSheetOpen(true));
     const revisions = useImageRevisions(
         message.id,
         String(message.prompt ?? ''),
@@ -261,7 +268,12 @@ function ImageMessage({ message }: { message: ChatMessage }) {
     };
 
     return (
-        <div id={`message-${message.id}`} className={clsx('group/message flex flex-col', userUpload && own && 'items-end')}>
+        <div id={`message-${message.id}`} {...longPress} className={clsx('group/message flex flex-col', userUpload && own && 'items-end')}>
+            {actionSheetOpen && (
+                <MessageActionSheet onClose={closeActionSheet}>
+                    <MessageActions message={message} onSheetDone={closeActionSheet} />
+                </MessageActionSheet>
+            )}
             <div className={clsx('flex', userUpload && own ? 'justify-end' : 'justify-start')}>
                 {/*
                   A button rather than a link: the image opens in a dialog, not a new
@@ -863,6 +875,11 @@ function MessageBubbleInner({
     // A stable list, so the image cards' shared scope is not rebuilt on every render.
     const generatedImages = useMemo(() => answerGeneratedImages(message), [message]);
     const maskingAllowed = canMask(message, currentUserId);
+    // Touch screens have no hover to reveal the action row, so holding the message opens the
+    // same actions in a sheet. The row itself is unchanged.
+    const [actionSheetOpen, setActionSheetOpen] = useState(false);
+    const closeActionSheet = useCallback(() => setActionSheetOpen(false), []);
+    const longPress = useLongPress(() => setActionSheetOpen(true), !editing);
 
     /**
      * Who wrote this, when that is a question worth answering.
@@ -937,6 +954,20 @@ function MessageBubbleInner({
         && !orchestrationHandedOffWorkflow(message.metadata?.orchestration);
     const replayRunKey = `${message.conversation_id}:${orchestration.run_id}`;
     const replayExpanded = canRepeatPlan && expandedReplayRun === replayRunKey;
+    // One set of props for the hover row and the touch sheet, so the two cannot drift apart.
+    const actionProps = {
+        message,
+        onEdit: isUser ? () => setEditing(true) : undefined,
+        inspector,
+        onInspect: inspectMessage,
+        alignRight,
+        planReplay: canRepeatPlan ? {
+            expanded: replayExpanded,
+            panelId: replayPanelId,
+            buttonRef: replayButtonRef,
+            onToggle: () => setExpandedReplayRun(replayExpanded ? null : replayRunKey),
+        } : undefined,
+    };
     useEffect(() => {
         setExpandedReplayRun(null);
     }, [canRepeatPlan, replayRunKey]);
@@ -1073,6 +1104,7 @@ function MessageBubbleInner({
     return (
         <div
             id={`message-${message.id}`}
+            {...(analysisUnavailable ? {} : longPress)}
             className={clsx(
                 'group/message flex flex-col transition-shadow',
                 alignRight && 'items-end',
@@ -1333,20 +1365,14 @@ function MessageBubbleInner({
                         onClick={() => inspectMessage(inspector === 'sources' ? null : 'sources')}>
                         <BookOpen size={15} />
                     </IconButton>
-                ) : <MessageActions
-                    message={message}
-                    onEdit={isUser ? () => setEditing(true) : undefined}
-                    inspector={inspector}
-                    onInspect={inspectMessage}
-                    alignRight={alignRight}
-                    planReplay={canRepeatPlan ? {
-                        expanded: replayExpanded,
-                        panelId: replayPanelId,
-                        buttonRef: replayButtonRef,
-                        onToggle: () => setExpandedReplayRun(replayExpanded ? null : replayRunKey),
-                    } : undefined}
-                />}
+                ) : <MessageActions {...actionProps} />}
             </div>
+
+            {actionSheetOpen && !analysisUnavailable && (
+                <MessageActionSheet onClose={closeActionSheet}>
+                    <MessageActions {...actionProps} onSheetDone={closeActionSheet} />
+                </MessageActionSheet>
+            )}
 
             {canRepeatPlan && orchestration.run_id && (
                 <PlanReplaySaveCard

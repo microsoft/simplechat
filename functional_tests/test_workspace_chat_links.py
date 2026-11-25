@@ -1,7 +1,7 @@
 # test_workspace_chat_links.py
 """
 Functional tests for workspace chat launch links.
-Version: 0.261.474
+Version: 0.261.483
 Implemented in: 0.261.473
 Whole-workspace and reasoning support: 0.261.474
 

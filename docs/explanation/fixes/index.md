@@ -6,6 +6,7 @@ order: 120
 category: Version History
 ---
 
+- [Admin Settings Chromium Driver Preload Fix](ADMIN_SETTINGS_CHROMIUM_DRIVER_PRELOAD_FIX.md)
 - [Retrieval, Narrative/XML Fidelity, System Prompt, and Inline Citation Restoration Fix](RETRIEVAL_CITATION_SYSTEM_PROMPT_RESTORATION_FIX.md)
 - [Safety Remediation Approval State Fix](SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md)
 - [Safety Remediation Actions Fix](SAFETY_REMEDIATION_ACTIONS_FIX.md)

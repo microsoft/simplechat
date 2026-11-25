@@ -126,58 +126,56 @@ def test_long_paste_is_reloaded_exactly_for_composition_not_used_as_a_preview(re
     assert saved['status'] == 'completed'
 
 
-def missing_source_resolution(message):
+def missing_source_question():
+    """The planner's own question when the content a request refers to is absent."""
     return json.dumps({
-        'relationship': 'clarification', 'resolved_message': message,
-        'message_ids': [], 'requires_retrieval': False,
-        'clarification': 'Which message or text should I use?',
+        'kind': 'elicitation', 'message': 'Which message or text should I use?',
+        'requested_schema': {
+            'type': 'object', 'properties': {'source': {'type': 'string'}}, 'required': ['source'],
+        },
     })
 
 
-def test_missing_target_clarifies_without_workspace_fallback(real_http_harness, modules, monkeypatch):
+def _is_resolver_call(runtime, call):
+    return call['messages'][0]['content'].startswith(runtime.harness.planner.RESOLUTION_SYSTEM_PROMPT)
+
+
+def test_missing_target_on_a_first_turn_is_asked_by_the_planner(real_http_harness):
     runtime = real_http_harness
     _replace_history(runtime.harness, [])
-    probe = Mock(side_effect=AssertionError('A missing source must not trigger workspace search.'))
-    monkeypatch.setattr(modules.route, 'resolve_candidate_documents', probe)
-    runtime.harness.replies = [missing_source_resolution('Please rewrite that answer.')]
+    runtime.harness.replies = [missing_source_question()]
     events = _plan(runtime, 'Please rewrite that answer.')
     assert not any(event.get('type') == 'orchestration_plan' for event in events), events
     assert any('Which message or text' in json.dumps(event) for event in events), events
+    # Nothing to resolve against, so the wording sends no request to the resolver.
     assert len(runtime.harness.model_calls) == 1
-    assert runtime.harness.model_calls[0]['max_tokens'] == 1200
-    probe.assert_not_called()
+    assert not _is_resolver_call(runtime, runtime.harness.model_calls[0])
 
 
 def test_history_disabled_does_not_restore_pasted_content(real_http_harness):
     runtime = real_http_harness
     _replace_history(runtime.harness, long_sources())
     runtime.harness.settings['conversation_history_limit'] = 0
-    runtime.harness.replies = [missing_source_resolution(REQUEST)]
+    runtime.harness.replies = [missing_source_question()]
     events = _plan(runtime, REQUEST)
     assert any('Which message or text' in json.dumps(event) for event in events), events
     assert len(runtime.harness.model_calls) == 1
-    payload = json.loads(runtime.harness.model_calls[0]['messages'][1]['content'])
-    assert payload['conversation'] == []
-    assert 'pasted source material' not in json.dumps(payload)
+    assert not _is_resolver_call(runtime, runtime.harness.model_calls[0])
+    assert 'pasted source material' not in json.dumps(runtime.harness.model_calls[0]['messages'])
 
 
-def test_resolver_new_topic_transformation_cannot_search_all_workspaces(real_http_harness, modules, monkeypatch):
+def test_the_resolvers_retrieval_decision_is_not_overridden_by_wording(real_http_harness):
     runtime = real_http_harness
     _replace_history(runtime.harness, long_sources())
-    probe = Mock(side_effect=AssertionError('A transformation must not trigger workspace search.'))
-    monkeypatch.setattr(modules.route, 'resolve_candidate_documents', probe)
     resolution = json.loads(_new_topic(REQUEST))
     resolution['requires_retrieval'] = True
-    runtime.harness.replies = [
-        json.dumps(resolution), _search_then_answer_plan(REQUEST), _compose_only_plan(),
-    ]
+    runtime.harness.replies = [json.dumps(resolution), _search_then_answer_plan(REQUEST)]
     plan = _planned(runtime, REQUEST)
-    assert [step['capability_id'] for step in plan['steps']] == ['compose']
+    assert [step['capability_id'] for step in plan['steps']] == ['document_search', 'compose']
     payload = json.loads(runtime.harness.model_calls[1]['messages'][1]['content'])
-    assert payload['source_policy'] == 'conversation_only'
-    assert payload['request_resolution']['requires_retrieval'] is False
-    assert len(runtime.harness.model_calls) == 3
-    probe.assert_not_called()
+    assert payload['source_policy'] == 'retrieval_allowed'
+    assert payload['request_resolution']['requires_retrieval'] is True
+    assert len(runtime.harness.model_calls) == 2
 
 
 def test_no_retrieval_resolution_repairs_inconsistent_workspace_audit_plan(real_http_harness):
@@ -209,15 +207,16 @@ def test_repeated_inconsistent_plan_fails_instead_of_broadening_scope(real_http_
     assert len(runtime.harness.model_calls) == 4
 
 
-def test_explicit_workspace_retrieval_overrides_no_retrieval_resolution(real_http_harness):
+def test_retrieval_wording_does_not_reverse_a_no_retrieval_resolution(real_http_harness):
     runtime = real_http_harness
     _replace_history(runtime.harness)
     request = 'Search workspace documents for current policies.'
-    runtime.harness.replies = [_new_topic(request), _search_then_answer_plan(request)]
+    runtime.harness.replies = [_new_topic(request), _compose_only_plan()]
     plan = _planned(runtime, request)
-    assert [step['capability_id'] for step in plan['steps']] == ['document_search', 'compose']
+    assert [step['capability_id'] for step in plan['steps']] == ['compose']
     payload = json.loads(runtime.harness.model_calls[-1]['messages'][1]['content'])
-    assert payload['source_policy'] == 'retrieval_allowed'
+    assert payload['source_policy'] == 'conversation_only'
+    assert 'document_search' not in payload['capability_availability']['available']
     assert payload['request_resolution']['message_ids'] == []
 
 

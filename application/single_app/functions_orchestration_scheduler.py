@@ -481,6 +481,15 @@ class _Tick:
             ):
                 self.result["runs"].append({**selector, "action": "deferred", "state": "waiting_outputs"})
                 return
+            if (
+                record["status"] == "waiting" and execution_work and terminal is None
+                and record.get("continuation_requires_session") is True
+            ):
+                # Its retained results are authorized against the user's session, which this
+                # scheduler does not have: claiming it could only fail it. The request that
+                # started it continues it. Its deadline is still enforced here (terminal).
+                self.result["runs"].append({**selector, "action": "deferred", "state": "session_required"})
+                return
             publication_only = record["status"] in {"completed", "failed", "cancelled"}
             mode = "execute" if execution_work and terminal is None and not publication_only else "delivery"
             owned = self.claim(selector, mode)

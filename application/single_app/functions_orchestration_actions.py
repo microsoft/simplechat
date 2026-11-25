@@ -18,6 +18,7 @@ import hashlib
 import inspect
 import json
 import logging
+import re
 import uuid
 from contextlib import ExitStack, nullcontext
 from copy import deepcopy
@@ -102,9 +103,13 @@ CHART_STEP_INSTRUCTIONS = (
 class ActionExecutionError(RuntimeError):
     """A user-safe failure of the selected action."""
 
-    def __init__(self, message="", *, failure_code=None, diagnostics=None):
+    def __init__(self, message="", *, failure_code=None, diagnostics=None, rule=None):
         super().__init__(message)
         self.orchestration_failure_code = failure_code
+        # Which check stopped the action, as a closed token for the log. Never shown or sent.
+        self.orchestration_rule = (
+            rule if type(rule) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", rule) else None
+        )
         # Counts only, never a function name, argument or result.
         self.orchestration_diagnostics = {
             key: value for key, value in (diagnostics or {}).items()
@@ -689,10 +694,14 @@ async def invoke_action(
                     for source in document_sources
                 )
             ):
-                raise ActionExecutionError('The document action source binding is unavailable.')
+                raise ActionExecutionError(
+                    'The document action source binding is unavailable.', rule='document_binding_unavailable',
+                )
             bound_ids = [source['document_id'] for source in document_sources]
             if len(set(bound_ids)) != len(bound_ids):
-                raise ActionExecutionError('The document action source binding is ambiguous.')
+                raise ActionExecutionError(
+                    'The document action source binding is ambiguous.', rule='document_binding_ambiguous',
+                )
             document_source_check()
             document_profiles = {
                 source['document_id']: _document_read_profile(
@@ -800,6 +809,8 @@ async def invoke_action(
                     'native_metadata_present': isinstance(value.get('accessibility_metadata'), dict),
                     'citation_present': isinstance(value.get('citation'), str) and bool(value['citation']),
                     'error_type': type(error).__name__ if error is not None else None,
+                    **({'failure_rule': error.orchestration_rule}
+                       if getattr(error, 'orchestration_rule', None) else {}),
                     **({
                         'validation_code': value['error_code'],
                         'validation_rule': value.get('validation_rule'),
@@ -844,7 +855,9 @@ async def invoke_action(
                         user_roles=list(identity.roles),
                     )
                     if fresh != manifest:
-                        raise ActionExecutionError('The selected action changed during execution.')
+                        raise ActionExecutionError(
+                            'The selected action changed during execution.', rule='action_changed',
+                        )
                     if invocation_capture is not None:
                         capture_manifest(fresh, current)
                     if bound_ids:
@@ -853,11 +866,22 @@ async def invoke_action(
                         if function == 'search_documents':
                             requested = _split_list(invocation.arguments.get('document_ids'))
                             if set(requested) - set(bound_ids):
-                                raise ActionExecutionError('The action requested an unselected document.')
+                                raise ActionExecutionError(
+                                    'The action requested an unselected document.',
+                                    rule='search_document_unselected',
+                                )
                             invocation.arguments['document_ids'] = ','.join(requested or bound_ids)
                         elif function in DOCUMENT_SOURCE_READ_FUNCTIONS:
                             if invocation.arguments.get('document_id') not in bound_ids:
-                                raise ActionExecutionError('The action requested an unselected document.')
+                                raise ActionExecutionError(
+                                    'The action requested an unselected document.',
+                                    rule=(
+                                        'read_document_unselected'
+                                        if isinstance(invocation.arguments.get('document_id'), str)
+                                        and invocation.arguments['document_id']
+                                        else 'read_document_missing'
+                                    ),
+                                )
                             profile = document_profiles[invocation.arguments['document_id']]
                             if function not in profile['read_functions']:
                                 raise ActionExecutionError(
@@ -889,7 +913,10 @@ async def invoke_action(
                                     )
                                     return
                         else:
-                            raise ActionExecutionError('This function does not support the document source binding.')
+                            raise ActionExecutionError(
+                                'This function does not support the document source binding.',
+                                rule='function_not_document_reader',
+                            )
                     calls += 1
                     for reader in getattr(context, 'integration_input_readers', {}).values():
                         reader.recheck()
@@ -920,12 +947,21 @@ async def invoke_action(
                     log_event(
                         '[ORCHESTRATION_ADAPTERS] Action function failed.',
                         level=logging.ERROR,
-                        extra={'action_ref': action_ref, 'error_type': type(exc).__name__},
+                        extra={
+                            **workflow_log_context(
+                                conversation_id=getattr(context, 'conversation_id', None),
+                                turn_id=getattr(context, 'turn_id', None), run_id=getattr(context, 'run_id', None),
+                            ),
+                            'action_ref': action_ref, 'error_type': type(exc).__name__,
+                            'function_call_index': call_index,
+                        },
                     )
                     journal = current_operation_journal()
                     failure = (
                         journal.failure if journal is not None and journal.failure is not None
-                        else ActionExecutionError('An action function could not complete.')
+                        else ActionExecutionError(
+                            'An action function could not complete.', rule='action_function_raised',
+                        )
                     )
                     if failure is exc:
                         raise

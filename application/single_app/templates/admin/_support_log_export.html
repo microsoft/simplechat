@@ -2,18 +2,28 @@
     <h5 id="support-log-export-heading"><i class="bi bi-file-earmark-zip me-2" aria-hidden="true"></i>Support Log Export</h5>
     <p class="text-muted">Collect retained diagnostics for a support case. Nothing is sent to the development team automatically. These actions run separately from Save Settings.</p>
     <div class="alert alert-danger d-none" id="support-export-error" role="alert"></div>
-    <details class="mb-4">
+    <details class="mb-4" id="support-export-setup">
         <summary class="fw-semibold">Source and storage setup</summary>
-        <div class="row g-3 mt-1">
-            <div class="col-md-6"><label class="form-label" for="support-export-cloud">Azure cloud</label>
-                <select class="form-select" id="support-export-cloud"><option value="public">Azure Commercial</option><option value="usgovernment">Azure US Government</option></select></div>
-            <div class="col-12"><label class="form-label" for="support-export-app-resource">Application Insights resource ID</label><input class="form-control" id="support-export-app-resource" /></div>
-            <div class="col-12"><label class="form-label" for="support-export-site-resource">App Service resource ID (optional console source)</label><input class="form-control" id="support-export-site-resource" /></div>
-        </div>
-        <p class="small text-muted mt-2">Queries use Azure Monitor resource context. Give the application identity read access to these resources; the connected workspace must allow resource permissions. An ingestion connection string does not grant query access.</p>
+        <p class="small text-muted mt-2 mb-2">SimpleChat finds these sources from the deployment it is running in. Nothing needs to be entered unless a source is missing or you need to query a different resource.</p>
+        <dl class="row small mb-2" id="support-export-resolved">
+            <dt class="col-sm-3">Azure cloud</dt><dd class="col-sm-9"><span class="text-break" id="support-export-resolved-cloud">Checking...</span><span class="d-block text-muted" id="support-export-origin-cloud"></span></dd>
+            <dt class="col-sm-3">Application Insights</dt><dd class="col-sm-9"><span class="text-break" id="support-export-resolved-app">Checking...</span><span class="d-block text-muted" id="support-export-origin-app"></span></dd>
+            <dt class="col-sm-3">App Service</dt><dd class="col-sm-9"><span class="text-break" id="support-export-resolved-site">Checking...</span><span class="d-block text-muted" id="support-export-origin-site"></span></dd>
+        </dl>
+        <p class="small text-muted">Queries use Azure Monitor resource context. Give the application identity read access to these resources (for example Monitoring Reader); the connected workspace must allow resource permissions.</p>
+        <details class="mb-3" id="support-export-overrides">
+            <summary class="small">Override detected values</summary>
+            <div class="row g-3 mt-1">
+                <div class="col-md-6 d-none" id="support-export-cloud-field"><label class="form-label" for="support-export-cloud">Azure cloud</label>
+                    <select class="form-select" id="support-export-cloud"><option value="public">Azure Commercial</option><option value="usgovernment">Azure US Government</option></select></div>
+                <div class="col-12"><label class="form-label" for="support-export-app-resource">Application Insights resource ID</label><input class="form-control" id="support-export-app-resource" aria-describedby="support-export-override-help" /></div>
+                <div class="col-12"><label class="form-label" for="support-export-site-resource">App Service resource ID</label><input class="form-control" id="support-export-site-resource" aria-describedby="support-export-override-help" /></div>
+            </div>
+            <p class="small text-muted mt-2" id="support-export-override-help">Leave a field blank to use the detected value.</p>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="support-export-save-config">Save overrides</button>
+        </details>
         <p class="small" id="support-export-storage-status" role="status">Checking private export storage...</p>
         <div class="d-flex flex-wrap gap-2">
-            <button type="button" class="btn btn-outline-primary" id="support-export-save-config">Save export configuration</button>
             <button type="button" class="btn btn-outline-primary" id="support-export-initialize">Initialize private export storage</button>
             <button type="button" class="btn btn-outline-primary" id="support-export-test">Test source access</button>
         </div>

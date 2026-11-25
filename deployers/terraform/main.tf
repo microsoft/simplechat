@@ -437,6 +437,20 @@ locals {
     msgraph_pending_actions            = { partition_key_path = "/user_id", default_ttl = -1 }
     thoughts                           = { partition_key_path = "/user_id", default_ttl = null }
     archive_thoughts                   = { partition_key_path = "/user_id", default_ttl = null }
+    conversation_handoffs              = { partition_key_path = "/destination_conversation_id", default_ttl = null }
+    support_exports                    = { partition_key_path = "/partition_key", default_ttl = -1 }
+    orchestration_runs                 = { partition_key_path = "/conversation_id", default_ttl = null }
+    orchestration_run_steps            = { partition_key_path = "/run_id", default_ttl = null }
+    document_access_index              = { partition_key_path = "/scope_key", default_ttl = null }
+    content_screening                  = { partition_key_path = "/partition_key", default_ttl = null }
+    key_vault_secret_reminders         = { partition_key_path = "/scope_key", default_ttl = null }
+    bitbucket_connections              = { partition_key_path = "/user_id", default_ttl = -1 }
+    action_credential_state            = { partition_key_path = "/user_id", default_ttl = -1 }
+    m365_connections                   = { partition_key_path = "/user_id", default_ttl = -1 }
+    m365_execution_runs                = { partition_key_path = "/user_id", default_ttl = -1 }
+    custom_pages                       = { partition_key_path = "/id", default_ttl = null }
+    governance_policies                = { partition_key_path = "/id", default_ttl = null }
+    governance_item_policies           = { partition_key_path = "/id", default_ttl = null }
   }
 
   # Tags for resources
@@ -704,6 +718,9 @@ resource "azurerm_linux_web_app" "app" {
     "WEBSITE_PULL_IMAGE_OVER_VNET"                    = var.param_enable_private_networking ? "true" : "false"
     "AZURE_COSMOS_AUTHENTICATION_TYPE"                = "key"
     "AZURE_COSMOS_ENDPOINT"                           = format(local.cosmos_db_url_template, azurerm_cosmosdb_account.cosmos.name)
+    "AZURE_COSMOS_ACCOUNT_NAME"                       = azurerm_cosmosdb_account.cosmos.name
+    "AZURE_SUBSCRIPTION_ID"                           = var.param_subscription_id
+    "AZURE_RESOURCE_GROUP"                            = azurerm_resource_group.rg.name
     "AZURE_COSMOS_KEY"                                = azurerm_cosmosdb_account.cosmos.primary_key
     "TENANT_ID"                                       = var.param_tenant_id
     "CLIENT_ID"                                       = azuread_application.app_registration.client_id
@@ -721,6 +738,7 @@ resource "azurerm_linux_web_app" "app" {
     "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"        = azuread_application_password.app_registration_secret.value
     "APPINSIGHTS_INSTRUMENTATIONKEY"                  = azurerm_application_insights.ai.instrumentation_key
     "APPLICATIONINSIGHTS_CONNECTION_STRING"           = azurerm_application_insights.ai.connection_string
+    "APPLICATIONINSIGHTS_RESOURCE_ID"                 = azurerm_application_insights.ai.id
     "APPINSIGHTS_PROFILERFEATURE_VERSION"             = "1.0.0"
     "APPINSIGHTS_SNAPSHOTFEATURE_VERSION"             = "1.0.0"
     "APPLICATIONINSIGHTS_CONFIGURATION_CONTENT"       = ""

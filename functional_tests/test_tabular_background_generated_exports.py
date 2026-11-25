@@ -2,10 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.261.428
+Version: 0.261.483
 Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; plural artifact-set completion rendering in: 0.250.176; valid XML stream serialization in: 0.261.023
 
 Schema-v2 execution owner binding implemented in: 0.261.046
+Cosmos SDK point-response coverage updated in: 0.261.483
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -23,6 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 import pytest
+from azure.cosmos._cosmos_responses import CosmosDict
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape as escape_xml_text
 
@@ -69,7 +71,7 @@ def test_background_model_context_cannot_impersonate_another_owner(context_field
     module = parse_python(EXPORT_MODULE)
     conversation_node = get_function(module, '_authorize_tabular_export_run_conversation')
     node = get_function(module, '_authorize_tabular_export_run_execution')
-    store = Mock(return_value={'user_id': 'owner'})
+    store = Mock(return_value=CosmosDict({'user_id': 'owner'}, response_headers={}))
     namespace = {'cosmos_conversations_container': SimpleNamespace(read_item=store)}
     exec(compile(
         ast.Module(body=[conversation_node, node], type_ignores=[]),
@@ -91,7 +93,11 @@ def test_background_model_context_binds_verified_owner_without_mutating_snapshot
     module = parse_python(EXPORT_MODULE)
     conversation_node = get_function(module, '_authorize_tabular_export_run_conversation')
     node = get_function(module, '_authorize_tabular_export_run_execution')
-    namespace = {'cosmos_conversations_container': SimpleNamespace(read_item=lambda **_kwargs: {'user_id': 'owner'})}
+    namespace = {
+        'cosmos_conversations_container': SimpleNamespace(
+            read_item=lambda **_kwargs: CosmosDict({'user_id': 'owner'}, response_headers={}),
+        ),
+    }
     exec(compile(
         ast.Module(body=[conversation_node, node], type_ignores=[]),
         str(EXPORT_MODULE),

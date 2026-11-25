@@ -122,9 +122,9 @@
                     <div class="mb-3">
                         <label for="ui_mode_policy" class="form-label">Available interfaces</label>
                         <select id="ui_mode_policy" name="ui_mode_policy" class="form-select" aria-describedby="ui-policy-help">
-                            <option value="both" {% if settings.get('ui_mode_policy', 'both') == 'both' %}selected{% endif %}>Legacy and modern</option>
+                            <option value="both" {% if settings.get('ui_mode_policy', 'both') == 'both' %}selected{% endif %}>Classic and modern</option>
                             <option value="modern" {% if settings.get('ui_mode_policy') == 'modern' %}selected{% endif %}>Modern only</option>
-                            <option value="classic" {% if settings.get('ui_mode_policy') == 'classic' %}selected{% endif %}>Legacy only</option>
+                            <option value="classic" {% if settings.get('ui_mode_policy') == 'classic' %}selected{% endif %}>Classic only</option>
                         </select>
                         <p id="ui-policy-help" class="form-text">Applies to everyone, including admins. When both are available, users can switch from their account menu.</p>
                     </div>
@@ -132,9 +132,9 @@
                         <label for="ui_default_mode" class="form-label">Default interface</label>
                         <select id="ui_default_mode" name="ui_default_mode" class="form-select" aria-describedby="ui-default-help">
                             <option value="modern" {% if settings.get('ui_default_mode', 'modern') == 'modern' %}selected{% endif %}>Modern</option>
-                            <option value="classic" {% if settings.get('ui_default_mode') == 'classic' %}selected{% endif %}>Legacy</option>
+                            <option value="classic" {% if settings.get('ui_default_mode') == 'classic' %}selected{% endif %}>Classic</option>
                         </select>
-                        <p id="ui-default-help" class="form-text">Used when both interfaces are available and the user has not chosen one. A missing modern bundle temporarily falls back to legacy.</p>
+                        <p id="ui-default-help" class="form-text">Used when both interfaces are available and the user has not chosen one. A missing modern bundle temporarily falls back to classic.</p>
                     </div>
 
                     <div class="mb-3">

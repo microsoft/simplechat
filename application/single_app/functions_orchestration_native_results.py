@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import sys
 import hashlib
 
 from jsonschema import Draft202012Validator
@@ -41,6 +42,8 @@ from functions_orchestration_results import MAX_VALUE_BYTES, NamedOutput, Orches
 
 
 NATIVE_WAIT_KIND = "native_tabular_compute"
+# One authoring call and up to two corrections of an authoring fault, counted durably.
+LOWERING_MAX_CALLS = 3
 _MESSAGES = {
     "native_binding_required": "The native computation bridge is not configured.",
     "native_runtime_invalid": "The native computation has no valid owning runtime.",
@@ -74,6 +77,22 @@ _MESSAGES = {
 }
 # Service codes meaning the approved source no longer matches what would be read.
 _SOURCE_CHANGED_CODES = frozenset({"native_compute_source_identity_mismatch"})
+
+
+class _NoHarnessExecutionError(Exception):
+    """Stands in for the harness error class while its module is not loaded; never raised."""
+
+
+def _failure_rule(error):
+    """The closed rule a failure names. The harness error keeps it as ``validation_rule``."""
+    rule = getattr(error, "rule", None) or getattr(error, "validation_rule", None)
+    return rule if type(rule) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", rule) else None
+
+
+# An authoring call that returned no whole program: the reply was cut off, or it was empty.
+# Nothing was authored, so the call is spent and the author is asked again while calls remain.
+# A refused reply and a request the provider failed are not asked again here.
+_REPLY_INCOMPLETE_RULES = frozenset({"generation_incomplete", "reply_empty"})
 
 
 class NativeOrchestrationBridgeError(ValueError):
@@ -589,6 +608,7 @@ def _failure(step, exc, stage, context=None):
             "native_code": code, "stage": stage,
             "error_type": type(exc).__name__, "failure_code": failure_code,
             "execution_code": service_code or code,
+            **({"execution_rule": _failure_rule(exc)} if _failure_rule(exc) else {}),
             **native_error_diagnostics(exc),
         },
         level=logging.WARNING,
@@ -599,8 +619,7 @@ def _failure(step, exc, stage, context=None):
     )
     result["failure"].update({"native_code": code, "retryable": code == "native_storage_unavailable"})
     calculation_cause = None
-    if getattr(exc, "rule", None) in {"generation_incomplete", "lowering_call_limit",
-                                       "lowering_call_uncertain"}:
+    if _failure_rule(exc) in {"lowering_call_limit", "lowering_call_uncertain", *_REPLY_INCOMPLETE_RULES}:
         calculation_cause = "generation_incomplete"
     elif service_code == "relational_match_ambiguous":
         calculation_cause = "relationship_grain_invalid"
@@ -610,6 +629,10 @@ def _failure(step, exc, stage, context=None):
         calculation_cause = "calculation_program_invalid"
     if calculation_cause is not None:
         result["failure"]["calculation_cause"] = calculation_cause
+        if calculation_cause != "generation_incomplete" and _safe_program_correction(exc) is not None:
+            # The attempt stopped on a finding that is returned to the author, so it stopped
+            # because the authoring calls ran out, not because the author had nothing to act on.
+            result["failure"]["calculation_revisable"] = True
         result["summary"] = build_failure(calculation_cause)["message"]
         result["error"] = result["summary"]
     return result
@@ -925,23 +948,41 @@ def _prepared_program_prompt(question, context_value, schema, *, correction=None
         "selection, new sources, SQL, Python, tools, or an external action. Keep every declared "
         "source, preserve exact identifiers and signed decimal values, and declare complete records, "
         "lineage and coverage through the relational result/output contract. Classify the complete "
-        "relevant population before filtering: retain explicit unknown and excluded dispositions, "
-        "including prior-period, status and horizon exclusions, instead of turning an excluded "
-        "record into a missing chain or dropping it."
+        "relevant population before filtering: retain explicit unknown and excluded dispositions "
+        "instead of turning an excluded record into a missing one or dropping it."
     )
     if correction is not None:
         instructions += (
             f" Correct the prior authored program. The closed validation category is "
             f"{correction.get('category')}, check {correction.get('check')}, "
-            f"step index {correction.get('step_index')}. Do not change the approved sources, "
+            f"step index {correction.get('step_index')}. When a rejection object is supplied, it "
+            "states what was wrong; use it. Do not change the approved sources, "
             "question, horizon, output fields, token budget or requested effects."
         )
+        if correction.get("reply_incomplete") is True:
+            instructions += (
+                " The reply after that finding ended before it held a whole program, so nothing "
+                "was read from it. Return the whole corrected program."
+            )
+        if correction.get("prior_attempt") is True:
+            instructions += (
+                " The rejected program and its finding are from the previous attempt at this "
+                "same calculation."
+            )
     payload = {
         "instructions": instructions, "question": question,
         "program_schema": schema, "complete_preparation": context_value,
     }
     if isinstance((correction or {}).get("program"), dict):
         payload["rejected_program"] = deepcopy(correction["program"])
+    rejection = {
+        key: deepcopy(correction[key]) for key in ("location", "feedback")
+        if isinstance((correction or {}).get(key), dict)
+    }
+    if rejection:
+        # What was wrong, in the terms the authoring model already has: its own program and the
+        # prepared headers. Never logged; the telemetry path reads the closed detail only.
+        payload["rejection"] = rejection
     return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
@@ -962,29 +1003,181 @@ def _prepared_state(store, step_id, binding, fingerprint):
         raise
 
 
-def _safe_program_correction(error):
+def _evaluation_correction(error):
+    """A well-formed program that could not evaluate a row of the real data.
+
+    The finding is the evaluator's own: which step and operand, the kind of value it expected
+    and the kind it found. It carries no cell value. The author already holds its program and
+    the kinds each column holds, so this is enough to revise the step.
+    """
+    from functions_tabular_relational import safe_native_detail
+
+    detail = safe_native_detail(getattr(error, "detail", None))
+    correction = {
+        "category": error.code, "check": detail.get("check") or "step_evaluation",
+        "step_index": detail.get("step_index", 0), "origin": "evaluation",
+    }
+    location = {key: value for key, value in detail.items() if key not in ("check", "step_index")}
+    if location:
+        correction["location"] = location
+    return correction
+
+
+def _saved_correction_admissible(correction):
+    """Whether a correction read back from saved state is one this code would have saved."""
     from functions_tabular_relational import TabularRelationalError
 
+    if correction.get("origin") == "evaluation":
+        return (
+            isinstance(correction.get("category"), str)
+            and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", correction["category"]) is not None
+        )
+    return _safe_program_correction(TabularRelationalError(
+        correction["category"], detail={
+            key: correction[key] for key in ("check", "step_index") if key in correction
+        },
+    )) is not None
+
+
+# Faults in how the program is written or in which column it reads, each for one named check.
+# Two tables sharing a column name, datasets that are not the planned documents in their
+# planned order, and an effective-date column whose cell is not a date are corrected by
+# changing the program.
+#
+# A join whose matches contradict the cardinality its author declared is returned too (from
+# 0.261.477). The declaration is the author's statement about the data and the finding is the
+# data's answer: which side repeats. It was held back because the easy correction is to
+# declare the looser cardinality. Holding it back did not prevent that program: an author that
+# declares the looser cardinality first is never stopped. It only ended the run for an author
+# that declared the stricter one, without telling it what the data holds.
+#
+# Overlapping effective intervals and an invalid allocation or cumulative value are not
+# listed: those are statements about the reference data itself, not about the program.
+# A key column whose cell is empty or is not a text or number value is returned as well (from
+# 0.261.478): the author named that column as the key, and the finding says which role and row.
+# The column a cumulative sum is ordered by is the same kind of choice (from 0.261.481): the
+# author named it as the date to order on, like the effective-date column, and a cell in it
+# that is not a date is corrected by ordering on another column or filtering first.
+_RETURNED_PROGRAM_CHECKS = {
+    "relational_key_invalid": frozenset({"event_key", "detail_key", "cumulative_partition"}),
+    "relational_columns_ambiguous": frozenset({"join_columns_ambiguous", "allocate_columns_ambiguous"}),
+    "relational_selection_invalid": frozenset({"document_ids_mismatch"}),
+    "relational_date_invalid": frozenset({"effective_value", "cumulative_order"}),
+    "relational_match_ambiguous": frozenset({"right_cardinality", "right_match_cardinality", "left_reuse"}),
+}
+
+
+def _prior_attempt_correction(context, store, step):
+    """The last program of the previous attempt and what it was told, for a new attempt.
+
+    A next attempt authors the program again. Without this it starts from nothing and can spend
+    its calls finding what the previous attempt had already been told. The program is model
+    input only: it is shown to the author as rejected and is never run. Nothing is carried when
+    the previous attempt left no confirmed program with a finding this code would return.
+    """
+    from functions_orchestration_checkpoints import CheckpointError
+
+    try:
+        prior = store.load_prior_attempt_lowering(step["step_id"])
+    except CheckpointError:
+        return None
+    if not isinstance(prior, dict):
+        return None
+    correction = deepcopy(prior["last_failure"])
+    correction["program"] = deepcopy(prior["program"])
+    try:
+        if not _saved_correction_admissible(correction):
+            return None
+    except Exception:
+        return None
+    correction["prior_attempt"] = True
+    log_event(
+        "[ORCHESTRATION_NATIVE] Calculation program carried from the previous attempt.",
+        extra={
+            **workflow_log_context(
+                run_id=getattr(context, "run_id", None),
+                conversation_id=getattr(context, "conversation_id", None),
+                step_id=step["step_id"],
+            ),
+            "stage": "tabular_program_lowering",
+            "correction_category": correction["category"],
+            "correction_check": correction.get("check"),
+            "correction_origin": correction.get("origin") or "validation",
+        },
+    )
+    return correction
+
+
+def _log_program_returned(context, step, correction, state, *, given=None):
+    """Record a finding going back to the author: where it is, and whether it is the same again.
+
+    ``given`` is the finding the author held when it wrote this program. The same finding at
+    the same place means the revision did not change what was wrong.
+    """
+    from functions_tabular_relational import NATIVE_DIAGNOSTIC_KEYS, safe_native_detail
+
+    place = safe_native_detail({
+        "step_index": correction.get("step_index"), **(correction.get("location") or {}),
+    })
+    same = ("category", "check", "step_index", "location")
+    log_event(
+        "[ORCHESTRATION_NATIVE] Calculation program returned to its author.",
+        extra={
+            **workflow_log_context(
+                run_id=getattr(context, "run_id", None),
+                conversation_id=getattr(context, "conversation_id", None),
+                step_id=step["step_id"],
+            ),
+            "stage": "tabular_program_lowering",
+            "correction_category": correction["category"],
+            "correction_check": correction.get("check"),
+            "correction_origin": correction.get("origin") or "validation",
+            "calls_used": state["calls_used"],
+            "calls_limit": LOWERING_MAX_CALLS,
+            **{NATIVE_DIAGNOSTIC_KEYS[key]: value for key, value in place.items() if key != "check"},
+            "correction_repeated": isinstance(given, dict) and all(
+                given.get(key) == correction.get(key) for key in same
+            ),
+        },
+    )
+
+
+def _safe_program_correction(error):
+    from functions_tabular_relational import TabularRelationalError
+    from functions_tabular_transformations import TabularTransformationEvaluationError
+
+    if isinstance(error, TabularTransformationEvaluationError):
+        return _evaluation_correction(error)
     if not isinstance(error, TabularRelationalError):
         return None
     category = error.code
-    if category not in {
+    detail = error.detail or {}
+    if category in _RETURNED_PROGRAM_CHECKS:
+        # Returned only for the named check: the same code also covers faults that stay refused.
+        if detail.get("check") not in _RETURNED_PROGRAM_CHECKS[category]:
+            return None
+    elif category not in {
         "relational_column_missing", "relational_spec_invalid",
         "relational_expression_invalid", "relational_source_unused",
     }:
         return None
-    detail = error.detail or {}
     if (
         detail.get("check") in {"json_parse", "json_object"}
         or category == "relational_column_missing"
         and detail.get("check") != "column_missing"
     ):
         return None
-    return {
+    correction = {
         "category": category,
         "check": detail.get("check") or "closed_validation",
         "step_index": detail.get("step_index", 0),
     }
+    location = {key: value for key, value in detail.items() if key not in ("check", "step_index")}
+    if location:
+        correction["location"] = location
+    if isinstance(getattr(error, "feedback", None), dict):
+        correction["feedback"] = deepcopy(error.feedback)
+    return correction
 
 
 def _approved_preparation_request_digest(context, request, *, question=None):
@@ -1066,15 +1259,16 @@ def _source_with_content_fence(source, expected_digest):
 def _execute_prepared_relational(
     step, context, service, producer, manifest, snapshots, binding, settings, cancel_requested,
 ):
-    """Lower one prepared calculation, with a durable two-call ceiling and no tools."""
+    """Lower one prepared calculation, with a durable call ceiling and no tools."""
     from functions_orchestration_checkpoints import CheckpointError, CheckpointStore
     from functions_orchestration_merge import build_tabular_merge_sources, tabular_merge_limits
     from functions_orchestration_result_runtime import read_complete_input, resolve_step_inputs
     from functions_tabular_merge import TabularMergeSource, read_tabular_source_records
     from functions_tabular_relational import (
         TabularRelationalError, calculate_relational_sources, check_relational_columns,
-        normalize_relational_spec, relational_spec_schema,
+        normalize_relational_spec, relational_spec_schema, with_operation_version,
     )
+    from functions_tabular_transformations import TabularTransformationEvaluationError
 
     invoke = getattr(context, "invoke_prompt", None)
     store = getattr(context, "completeness_store", None)
@@ -1263,18 +1457,15 @@ def _execute_prepared_relational(
                 )
             correction = deepcopy(state["last_failure"])
             correction["program"] = deepcopy(state["program"])
-            if _safe_program_correction(TabularRelationalError(
-                correction["category"], detail={
-                    key: correction[key] for key in ("check", "step_index")
-                    if key in correction
-                },
-            )) is None:
+            if not _saved_correction_admissible(correction):
                 raise TabularRelationalError(
                     correction["category"], detail={
                         key: correction[key] for key in ("check", "step_index")
                         if key in correction
                     },
                 )
+        elif state["phase"] == "context_checked" and state["calls_used"] == 0:
+            correction = _prior_attempt_correction(context, store, step)
         while True:
             if state["phase"] == "call_reserved":
                 raise NativeOrchestrationBridgeError(
@@ -1286,7 +1477,7 @@ def _execute_prepared_relational(
             ):
                 program = deepcopy(state["program"])
             else:
-                if state["calls_used"] >= 2:
+                if state["calls_used"] >= LOWERING_MAX_CALLS:
                     raise NativeOrchestrationBridgeError(
                         "native_execution_failed", rule="lowering_call_limit",
                     )
@@ -1305,7 +1496,7 @@ def _execute_prepared_relational(
 
                 def reserve_response_format_retry():
                     nonlocal state
-                    if state["calls_used"] >= 2:
+                    if state["calls_used"] >= LOWERING_MAX_CALLS:
                         raise NativeOrchestrationBridgeError(
                             "native_execution_failed", rule="lowering_call_limit",
                         )
@@ -1338,6 +1529,26 @@ def _execute_prepared_relational(
                     program = json.loads(response)
                     if not isinstance(program, dict):
                         raise TabularRelationalError("relational_spec_invalid", detail={"check": "json_object"})
+                    # This path admits both operation sets, so the version follows from the
+                    # operations and is stated here, not checked against what was written.
+                    program, authored_version = with_operation_version(program)
+                    if authored_version != program.get("version"):
+                        log_event(
+                            "[ORCHESTRATION_NATIVE] Calculation program version set from its operations.",
+                            level=logging.DEBUG,
+                            extra={
+                                **workflow_log_context(
+                                    run_id=getattr(context, "run_id", None),
+                                    conversation_id=getattr(context, "conversation_id", None),
+                                    step_id=step["step_id"],
+                                ),
+                                "stage": "tabular_program_lowering",
+                                "program_version": program.get("version"),
+                                "authored_version_valid": authored_version in (
+                                    "tabular-relate-v1", "tabular-relate-v2",
+                                ),
+                            },
+                        )
                     program = normalize_relational_spec(program, arguments["document_ids"])
                     check_relational_columns(program, source_headers)
                     state = store.save_lowering_state(
@@ -1350,29 +1561,41 @@ def _execute_prepared_relational(
                         }, binding=checkpoint_binding, input_fingerprint=fingerprint,
                     )
                 except Exception as exc:
-                    from functions_orchestration_execution import HarnessExecutionError
+                    # Read the already-loaded class instead of importing here: an import that
+                    # fails inside this handler would replace the authoring fault being handled.
+                    # No instance can exist unless that module is loaded.
+                    HarnessExecutionError = getattr(
+                        sys.modules.get("functions_orchestration_execution"), "HarnessExecutionError", None,
+                    ) or _NoHarnessExecutionError
 
                     if not isinstance(exc, (json.JSONDecodeError, TabularRelationalError, HarnessExecutionError)):
                         raise
-                    if isinstance(exc, HarnessExecutionError) and (
-                        getattr(exc, "rule", None) != "generation_incomplete"
-                    ):
+                    reply_rule = _failure_rule(exc) if isinstance(exc, HarnessExecutionError) else None
+                    if isinstance(exc, HarnessExecutionError) and reply_rule not in _REPLY_INCOMPLETE_RULES:
                         raise
                     if isinstance(exc, json.JSONDecodeError):
                         exc = TabularRelationalError(
                             "relational_spec_invalid", detail={"check": "json_parse"},
                         )
                     elif isinstance(exc, HarnessExecutionError):
-                        correction = {
+                        incomplete = {
                             "category": "generation_incomplete",
-                            "check": "complete_generation", "step_index": 0,
+                            "check": "complete_generation" if reply_rule == "generation_incomplete" else reply_rule,
+                            "step_index": 0,
                         }
+                        _log_program_returned(context, step, incomplete, state)
+                        # A finding the author was already given still stands: this reply held
+                        # no program, so it changed nothing about the last one.
+                        correction = (
+                            {**correction, "reply_incomplete": True}
+                            if isinstance((correction or {}).get("program"), dict) else incomplete
+                        )
                         failed = deepcopy(state)
                         failed.pop("program", None)
                         failed.pop("program_sha256", None)
                         failed.update({
                             "phase": "failure_saved",
-                            "last_failure": correction,
+                            "last_failure": incomplete,
                             "completion_confirmed": False,
                             "token_usage": deepcopy(
                                 getattr(context, "prompt_token_usage", {}) or {}
@@ -1382,11 +1605,14 @@ def _execute_prepared_relational(
                             step["step_id"], failed,
                             binding=checkpoint_binding, input_fingerprint=fingerprint,
                         )
-                        if state["calls_used"] >= 2:
+                        if state["calls_used"] >= LOWERING_MAX_CALLS:
                             raise
                         continue
                     candidate = program if isinstance(locals().get("program"), dict) else None
+                    given = correction
                     correction = _safe_program_correction(exc) if candidate is not None else None
+                    if correction is not None:
+                        _log_program_returned(context, step, correction, state, given=given)
                     failed = deepcopy(state)
                     if correction is None:
                         failed.pop("program", None)
@@ -1407,7 +1633,7 @@ def _execute_prepared_relational(
                         step["step_id"], failed,
                         binding=checkpoint_binding, input_fingerprint=fingerprint,
                     )
-                    if correction is None or state["calls_used"] >= 2:
+                    if correction is None or state["calls_used"] >= LOWERING_MAX_CALLS:
                         raise
                     continue
             state = store.save_lowering_state(
@@ -1418,10 +1644,12 @@ def _execute_prepared_relational(
                 calculated = calculate_relational_sources(
                     program, datasets, limits=limits, cancel_requested=cancel_requested,
                 )
-            except TabularRelationalError as exc:
+            except (TabularRelationalError, TabularTransformationEvaluationError) as exc:
+                given = correction
                 correction = _safe_program_correction(exc)
                 if correction is not None:
                     correction["program"] = deepcopy(program)
+                    _log_program_returned(context, step, correction, state, given=given)
                 failed = deepcopy(state)
                 if correction is None:
                     failed.pop("program", None)
@@ -1438,7 +1666,7 @@ def _execute_prepared_relational(
                     step["step_id"], failed,
                     binding=checkpoint_binding, input_fingerprint=fingerprint,
                 )
-                if correction is None or state["calls_used"] >= 2:
+                if correction is None or state["calls_used"] >= LOWERING_MAX_CALLS:
                     raise
                 continue
             break

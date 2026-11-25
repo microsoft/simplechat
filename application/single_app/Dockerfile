@@ -179,6 +179,13 @@ RUN set -eux; \
             ;; \
     esac
 
+# Generate an executable with a Linux shebang, including in Windows build contexts.
+COPY docker-customization/simplechat_playwright_node.py /build-assets/
+RUN mkdir -p /playwright-launcher \
+    && { printf '%s\n' '#!/usr/bin/python3 -I'; cat /build-assets/simplechat_playwright_node.py; } \
+        > /playwright-launcher/simplechat-playwright-node \
+    && chmod 0755 /playwright-launcher/simplechat-playwright-node
+
 FROM mcr.microsoft.com/azurelinux/distroless/python:3.12.16-1-azl3.0.20261028@sha256:10bcfa3c563fd05f9b11495551bd36bfe919b4a2f32b68388e1c393bbeea64ac
 
 ARG UID
@@ -199,6 +206,7 @@ COPY --from=builder /etc/group /etc/group
 COPY --from=builder /usr/lib/python3.12 /usr/lib/python3.12
 COPY --from=builder /odbc-runtime/ /
 COPY --from=builder /playwright-runtime/ /
+COPY --from=builder /playwright-launcher/simplechat-playwright-node /usr/local/bin/simplechat-playwright-node
 COPY --from=builder /audio-runtime/ /
 
 USER ${UID}:${GID}
@@ -215,6 +223,7 @@ ENV HOME=/home/nonroot \
     PYTHONUNBUFFERED=1 \
     LD_LIBRARY_PATH=/usr/lib64:/opt/microsoft/msodbcsql18/lib64 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PLAYWRIGHT_NODEJS_PATH=/usr/local/bin/simplechat-playwright-node \
     SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt \
     SSL_CERT_DIR=/etc/ssl/certs \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-bundle.crt

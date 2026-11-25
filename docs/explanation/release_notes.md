@@ -2,6 +2,56 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.483)**
+
+#### New Features
+
+*   **Workspace Chat Deep Links**
+    *   Users can share a compact `/l/<reference>` address that prepares a new private chat with the current agent or model, one personal, group, or public workspace, and either the whole workspace or an explicit document selection.
+    *   Model links preserve the selected reasoning effort, creators choose 7, 30, 90, or 365 days or **Never expires**, and links never grant access. Creation, launch resolution, and the first send all recheck the clicker's current permissions.
+    *   Creators can revoke their links, while full Control Center administrators can list and revoke links across the deployment in Classic or V2.
+    *   (Ref: `functions_chat_links.py`, `route_chat_links.py`, `ChatLinkDialog.tsx`, [Create workspace chat links](https://microsoft.github.io/simplechat/guides/create-workspace-chat-links/), [Workspace chat deep links](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/WORKSPACE_CHAT_DEEP_LINKS.md))
+
+### **(v0.261.481)**
+
+#### User Interface Enhancements
+
+*   **Generated File Cards Show an Icon, the File Name and a Download Button**
+    *   In the modern chat, each file a plan produces is now one compact row: a file-type icon (Word, PDF, PowerPoint, Excel, CSV and the text formats each have their own), the file name, a line of details, and a **Download** button at the end of the row. The green **Completed** badge is gone, since the Download button already says the file is ready; files that are still rendering, failed or cancelled keep their badge.
+    *   The details line fits the file type. Spreadsheets and data files show rows and size; Word, PDF, PowerPoint, Markdown and text files show size only, so a finished Word document no longer says "0 rows". The Generated list in the documents drawer follows the same rule.
+    *   The reply text above the card reads `ready (40.3 KB)` or `ready (50 rows, 1006 B)` in place of `ready (0 rows, 18,898 characters, 41,274 bytes)`.
+    *   (Ref: `GeneratedFileIcon.tsx`, `OrchestrationOutputs.tsx`, `GeneratedArtifactCard.tsx`, `orchestrationOutputs.ts`, `conversationGeneratedFiles.ts`, `functions_orchestration_execution.py`, `test_v2_generated_file_card_details_logic.mjs`, `V2_GENERATED_FILE_CARD.md`)
+
+### **(v0.261.479)**
+
+#### User Interface Enhancements
+
+*   **Classic and Modern Use the Same Names and the Same Address Variable**
+    *   The server-rendered interface is now called **Classic** everywhere a person chooses an interface, matching the `ui=classic` address variable. Admin Settings offers **Classic and modern**, **Modern only** and **Classic only**, the default interface lists **Classic**, and the modern account menu says **Switch to classic UI**. Stored values are unchanged, so no setting or preference needs to be saved again.
+    *   Modern now has the matching variable. Adding `ui=modern` to a classic address opens its modern page for that visit, whatever the saved preference, the same way `ui=classic` keeps a page classic. **Switch to modern UI** lands on an address that carries `ui=modern`.
+    *   Administrator policy still decides: **Classic only** ignores `ui=modern`, as **Modern only** already ignores `ui=classic`. A missing modern bundle, a signed-out visitor or an account without an application role stays on the classic page.
+    *   (Ref: `functions_ui_redirect.py`, `functions_ui_mode.py`, `app.py`, `ui-switch.js`, `admin_settings_fields.py`, `branding.html`, `Sidebar.tsx`, `test_ui_modern_url_variable.py`, `UI_INTERFACE_SELECTION.md`)
+
+### **(v0.261.476)**
+
+#### User Interface Enhancements
+
+*   **Press and Hold a Message for Its Actions on Touch Screens**
+    *   In the V2 chat, a message's actions only appear when the pointer hovers over it, which never happens on a phone or tablet. Pressing and holding a message or generated image for about half a second now opens those actions in a bottom sheet: labelled buttons for Copy, Retry, Read aloud, feedback, sources, Fork and the rest, with the overflow menu's entries listed beneath.
+    *   The sheet uses the same actions and handlers as the hover row, which is unchanged on desktop. Mouse input, scrolling, links, buttons and code blocks behave as before. Tap outside, press Escape, or swipe the sheet down to close it.
+    *   (Ref: `useLongPress.ts`, `MessageActionSheet.tsx`, `MessageActions.tsx`, `MessageList.tsx`, `test_v2_chat_message_touch_sheet.py`, `V2_CHAT_MESSAGE_TOUCH_SHEET.md`)
+
+### **(v0.261.475)**
+
+#### Bug Fixes
+
+*   **Missing Cosmos Containers Are Created Under Managed Identity**
+    *   With managed identity, Cosmos DB refuses to create containers through its data-plane endpoint, so a release that added a container failed to start after `azd deploy` unless `azd provision` had created it first. When that refusal happens, the app now creates the missing container through Azure Resource Manager with the same partition key, TTL and indexing policy, using the Contributor role the deployers already give its identity.
+    *   The app finds the Cosmos account's subscription and resource group from `AZURE_SUBSCRIPTION_ID` and `AZURE_RESOURCE_GROUP`, which the Terraform and Azure CLI deployers now set as Bicep already did. When they are absent, as on an older deployment updated only with `azd deploy`, it uses its own App Service subscription and resource group, so nobody has to supply them.
+    *   The Bicep and Terraform deployers now declare all 75 containers the app uses. Bicep was missing 11 (`conversation_handoffs`, `support_exports`, `orchestration_runs`, `orchestration_run_steps`, `document_access_index`, `content_screening`, `key_vault_secret_reminders`, `bitbucket_connections`, `action_credential_state`, `m365_connections`, `m365_execution_runs`), and Terraform was also missing `custom_pages`, `governance_policies` and `governance_item_policies` (deployers version 1.0.41).
+    *   New `deployers/Grant-CosmosContainerCreatePermission.ps1` lets an admin grant the identity a narrow custom role (container read and write only) for deployments where it does not have Contributor on the Cosmos account. It supports `-WhatIf` and `-UseBuiltInRole`.
+    *   (Ref: `functions_cosmos_container_provisioning.py`, `config.py`, `cosmosDb.bicep`, `main.json`, `terraform/main.tf`, `deploy-simplechat.ps1`, `Grant-CosmosContainerCreatePermission.ps1`, `test_cosmos_container_arm_provisioning.py`, `COSMOS_CONTAINER_CREATION_MANAGED_IDENTITY_FIX.md`)
+
 ### **(v0.261.474)**
 
 #### Bug Fixes
@@ -9,7 +59,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Whole-Workspace Chat Links and Reasoning**
     *   Workspace chat links can now bind one whole personal, group, or public workspace in addition to explicit document selections.
     *   Model reasoning effort is stored, shown in link previews, restored in Classic and V2, and checked again on the first send. Agent links continue to use the agent's own configured reasoning.
-    *   (Ref: `functions_chat_links.py`, `chat-links.js`, `Composer.tsx`, [Create workspace chat links](../guides/create-workspace-chat-links.md))
+    *   (Ref: `functions_chat_links.py`, `chat-links.js`, `Composer.tsx`, [Create workspace chat links](https://microsoft.github.io/simplechat/guides/create-workspace-chat-links/))
+
+*   **Model Catalog Updates Now Ship With Their Publisher Keys**
+    *   Admin Settings > Model Catalog no longer warns on every deployment that the publisher verification key is not configured. The production and development publisher public keys are bundled with SimpleChat, so a deployment receives them through an ordinary upgrade; administrators have nothing to install.
+    *   When the official catalog is signed with a newer publisher key, or needs a newer application version, **Check for updates** shows **Upgrade SimpleChat to get catalog updates** instead of a generic verification failure. Uploading such a package gives the same explanation, and the installed catalog keeps working meanwhile. Releases without a bundled key can now run the check and are told to upgrade.
+    *   V2 no longer draws a second, unlabelled switch for `enable_model_catalog_online_updates`; **Allow online catalog update checks** is the only control.
+    *   Publishers whose Key Vault cannot be reached from GitHub-hosted runners can sign with a `CATALOG_SIGNING_KEY` secret on the protected publishing environment. `scripts/publish_model_catalog.py` adds `generate-key` (local key pair, public half into the trust map, private half outside the repository) and `trust-key` (imports a Key Vault key's public half). The workflow refuses an environment that configures both a vault key and a secret, and checks that the secret matches the bundled public key before signing.
+    *   (Ref: `model_catalog_package.py`, `model_catalog_updates.py`, `scripts/publish_model_catalog.py`, `.github/workflows/publish-model-catalog.yml`, `model_catalog_trusted_keys.json`, `model_catalog_development_trusted_keys.json`, `admin_settings_fields.py`, `ModelCatalogUpdates.tsx`, `model_catalog_updates.js`, `MODEL_CATALOG_PUBLISHER_KEY_SETUP_FIX.md`, [#1967](https://github.com/microsoft/simplechat/pull/1967))
 
 ### **(v0.261.473)**
 
@@ -19,7 +76,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Users can create compact `/l/<reference>` URLs that prepare a new private chat with one current agent or model, one workspace, and explicitly selected documents.
     *   Creators choose 7, 30, 90, or 365 days, or **Never expires**; 90 days is the default. Links do not grant access and are reauthorized on creation, resolution, and first send.
     *   Creators can revoke links from the chat dialog, and full Control Center administrators can list and revoke active links across the deployment in Classic or V2.
-    *   (Ref: `functions_chat_links.py`, `route_chat_links.py`, `ChatLinkDialog.tsx`, [Create workspace chat links](../guides/create-workspace-chat-links.md), [Workspace chat deep links](features/WORKSPACE_CHAT_DEEP_LINKS.md))
+    *   (Ref: `functions_chat_links.py`, `route_chat_links.py`, `ChatLinkDialog.tsx`, [Create workspace chat links](https://microsoft.github.io/simplechat/guides/create-workspace-chat-links/), [Workspace chat deep links](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/WORKSPACE_CHAT_DEEP_LINKS.md))
+
+#### Bug Fixes
+
+*   **Support Log Export Finds Its Own Sources**
+    *   Support Log Export no longer asks admins to pick the Azure cloud or paste the Application Insights and App Service resource IDs. The cloud comes from `AZURE_ENVIRONMENT`, the App Service ID from App Service's own platform variables (deployment slots included), and the Application Insights ID from the new `APPLICATIONINSIGHTS_RESOURCE_ID` app setting or, when that is absent, an Azure Resource Graph lookup by the connection string's instrumentation key.
+    *   "Source and storage setup" shows each resolved value and where it came from. The input fields moved under "Override detected values", where a blank field means "use the detected value"; the cloud selector only appears when `AZURE_ENVIRONMENT` cannot name a supported cloud.
+    *   Saved resource IDs keep working as overrides. A previously defaulted Azure Commercial cloud no longer overrides a US Government deployment.
+    *   The Bicep, Terraform and Azure CLI deployers now set `APPLICATIONINSIGHTS_RESOURCE_ID` (deployers version 1.0.40).
+    *   (Ref: `support_export_discovery.py`, `support_export_contracts.py`, `support_export_service.py`, `functions_support_exports.py`, `SupportExportPanel.tsx`, `support-exports.js`, `test_admin_support_export_source_detection.py`, `SUPPORT_EXPORT_SOURCE_DETECTION_FIX.md`)
 
 ### **(v0.261.472)**
 
@@ -29,7 +95,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   In **Scale → Cosmos Maintenance**, admins can reduce replay write cost for new Cosmos-backed chat streams without batching. The setting defaults off and is inactive with Redis enabled.
     *   Simple Chat verifies the replay-only exclusion before enabling it. If the app can't apply the change, admins can copy the policy or exclusion entry and verify it after saving in Azure.
     *   Disabling changes only new streams. Both replay formats remain readable.
-    *   (Ref: [Cosmos Maintenance](../admin/scale.md#optimize-cosmos-replay-when-redis-is-off), [Replay-only index exclusion](features/COSMOS_REPLAY_INDEX_EXCLUSION.md))
+    *   (Ref: [Cosmos Maintenance](https://microsoft.github.io/simplechat/admin/scale/#optimize-cosmos-replay-when-redis-is-off), [Replay-only index exclusion](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/COSMOS_REPLAY_INDEX_EXCLUSION.md))
 
 ### **(v0.261.471)**
 
@@ -37,7 +103,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 *   **One Fewer Settings Read Per Chat Turn**
     *   The background stream reuses the configuration already loaded for the turn instead of fetching it again. Output screening and live source access checks still apply.
-    *   (Ref: `route_backend_chats.py`, `test_chat_content_streaming.py`, [Streaming replay round trips](fixes/STREAM_REPLAY_ROUND_TRIPS_FIX.md))
+    *   (Ref: `route_backend_chats.py`, `test_chat_content_streaming.py`, [Streaming replay round trips](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/STREAM_REPLAY_ROUND_TRIPS_FIX.md))
 
 ### **(v0.261.470)**
 
@@ -46,7 +112,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Message Actions on Touch and No-Hover Browsers**
     *   V2 message action bars stay visible when the browser does not support hovering, so actions such as unmasking and **More actions** can be reached without a mouse.
     *   Hover and keyboard focus still reveal actions in other browsers. Menus open only when selected, and action permissions are unchanged.
-    *   (Ref: `MessageList.tsx`, `test_v2_evidence_status.py`, [Chat controls](../reference/chat-controls.md))
+    *   (Ref: `MessageList.tsx`, `test_v2_evidence_status.py`, [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/))
 
 ### **(v0.261.465)**
 
