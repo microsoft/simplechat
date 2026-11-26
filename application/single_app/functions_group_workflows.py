@@ -295,18 +295,22 @@ def _build_model_endpoint_candidates(group_id, settings):
         for endpoint in group_endpoints:
             candidate = dict(endpoint)
             candidate['scope'] = 'group'
+            candidate['scope_id'] = group_id
             candidates.append(candidate)
 
     global_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []) or [])
     for endpoint in global_endpoints:
         candidate = dict(endpoint)
         candidate['scope'] = 'global'
+        candidate['scope_id'] = 'global'
         candidates.append(candidate)
 
     return candidates
 
 
-def _summarize_model_binding(candidates, endpoint_id, model_id):
+def _summarize_model_binding(
+    candidates, endpoint_id, model_id, scope_type='', scope_id=''
+):
     endpoint_id = str(endpoint_id or '').strip()
     model_id = str(model_id or '').strip()
     if not endpoint_id and not model_id:
@@ -314,9 +318,20 @@ def _summarize_model_binding(candidates, endpoint_id, model_id):
     if not endpoint_id or not model_id:
         raise ValueError('Select both an endpoint and model, or choose the default app model.')
 
-    endpoint_cfg = next((candidate for candidate in candidates if candidate.get('id') == endpoint_id), None)
-    if not endpoint_cfg:
+    matching_endpoints = [
+        candidate for candidate in candidates
+        if candidate.get('id') == endpoint_id
+        and (not scope_type or candidate.get('scope') == scope_type)
+        and (
+            not scope_id
+            or candidate.get('scope_id') == scope_id
+        )
+    ]
+    if len(matching_endpoints) > 1:
+        raise ValueError('The selected model endpoint scope is required.')
+    if not matching_endpoints:
         raise ValueError('The selected model endpoint is no longer available.')
+    endpoint_cfg = matching_endpoints[0]
     if not endpoint_cfg.get('enabled', True):
         raise ValueError('The selected model endpoint is disabled.')
 
@@ -339,6 +354,9 @@ def _summarize_model_binding(candidates, endpoint_id, model_id):
     )
     provider = str(endpoint_cfg.get('provider') or '').strip().lower()
     scope = str(endpoint_cfg.get('scope') or 'global').strip().lower()
+    scope_id = str(endpoint_cfg.get('scope_id') or '').strip()
+    if not scope_id:
+        scope_id = 'global' if scope == 'global' else ''
     scope_prefix = 'Group' if scope == 'group' else 'Global'
 
     return {
@@ -348,6 +366,8 @@ def _summarize_model_binding(candidates, endpoint_id, model_id):
         'model_id': model_id,
         'provider': provider,
         'scope': scope,
+        'scope_type': scope,
+        'scope_id': scope_id,
         'label': f'{scope_prefix}: {endpoint_name} / {model_name}',
     }
 
@@ -385,10 +405,17 @@ def normalize_group_workflow_task_runner(actor_user_id, group_id, requested_runn
 
     model_endpoint_id = _normalize_text(requested_runner.get('model_endpoint_id'), 'Task model endpoint')
     model_id = _normalize_text(requested_runner.get('model_id'), 'Task model')
+    requested_binding = (
+        requested_runner.get('model_binding_summary')
+        if isinstance(requested_runner.get('model_binding_summary'), dict)
+        else {}
+    )
     model_binding_summary = _summarize_model_binding(
         _build_model_endpoint_candidates(group_id, settings),
         model_endpoint_id,
         model_id,
+        str(requested_runner.get('model_scope_type') or requested_binding.get('scope_type') or requested_binding.get('scope') or '').strip(),
+        str(requested_runner.get('model_scope_id') or requested_binding.get('scope_id') or '').strip(),
     )
     if not model_binding_summary:
         raise ValueError('Select a model endpoint and model for the task override.')
@@ -396,6 +423,8 @@ def normalize_group_workflow_task_runner(actor_user_id, group_id, requested_runn
         'type': 'model',
         'model_endpoint_id': model_endpoint_id,
         'model_id': model_id,
+        'model_scope_type': model_binding_summary.get('scope_type') or '',
+        'model_scope_id': model_binding_summary.get('scope_id') or '',
         'model_provider': str(model_binding_summary.get('provider') or '').strip().lower(),
         'model_binding_summary': model_binding_summary,
     }
@@ -637,7 +666,13 @@ def build_group_workflow_document(group_id, workflow_data, actor_user_id, user_i
         model_endpoint_id = _normalize_text(workflow_data.get('model_endpoint_id'), 'Model endpoint')
         model_id = _normalize_text(workflow_data.get('model_id'), 'Model')
         if model_endpoint_id or model_id:
-            model_binding_summary = _summarize_model_binding(model_candidates, model_endpoint_id, model_id)
+            model_binding_summary = _summarize_model_binding(
+                model_candidates,
+                model_endpoint_id,
+                model_id,
+                str(workflow_data.get('model_scope_type') or '').strip(),
+                str(workflow_data.get('model_scope_id') or '').strip(),
+            )
             model_provider = str(model_binding_summary.get('provider') or '').strip().lower()
         else:
             model_binding_summary = _build_default_model_summary(settings)
@@ -687,6 +722,8 @@ def build_group_workflow_document(group_id, workflow_data, actor_user_id, user_i
         'selected_agent': selected_agent,
         'model_endpoint_id': model_endpoint_id,
         'model_id': model_id,
+        'model_scope_type': str((model_binding_summary or {}).get('scope_type') or '').strip(),
+        'model_scope_id': str((model_binding_summary or {}).get('scope_id') or '').strip(),
         'model_provider': model_provider,
         'model_binding_summary': model_binding_summary,
         'conversation_id': _normalize_group_workflow_conversation_id(

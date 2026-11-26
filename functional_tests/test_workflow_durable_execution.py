@@ -1,8 +1,9 @@
 # test_workflow_durable_execution.py
 """
 Functional tests for restart-safe workflow operation boundaries.
-Version: 0.261.111
+Version: 0.261.487
 Implemented in: 0.261.111
+Definitive provider-failure terminal coverage added in: 0.261.429
 
 The real execution controller and runtime journal use JSON-copying storage.
 Completed units are not invoked again; ambiguous external actions and approvals
@@ -18,6 +19,7 @@ from pathlib import Path
 import pytest
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExistsError, CosmosResourceNotFoundError
+from azure.cosmos._cosmos_responses import CosmosDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "single_app"))
 
@@ -25,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "si
 from functions_workflow_execution import (
     DurableWorkflowExecution, WorkflowSuspended, workflow_checkpoint_scope_guard, workflow_execution_scope,
 )
+from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
 from functions_workflow_runtime_store import WorkflowRuntimeConflict, WorkflowRuntimeLease, WorkflowRuntimeStore
 from test_workflow_result_contract import SerializedSections
 
@@ -34,6 +37,8 @@ RUN_ID = "durable-run"
 
 
 class RuntimeContainer:
+    partition_field = "run_id"
+
     def __init__(self):
         self.items = {}
         self.version = 0
@@ -47,7 +52,7 @@ class RuntimeContainer:
     def read_item(self, item, partition_key):
         if (partition_key, item) not in self.items:
             raise CosmosResourceNotFoundError(status_code=404)
-        return copy.deepcopy(self.items[(partition_key, item)])
+        return self._response(self.items[(partition_key, item)])
 
     def replace_item(self, item, body, etag=None, match_condition=None):
         key = (body["run_id"], item)
@@ -60,7 +65,10 @@ class RuntimeContainer:
     def _store(self, key, value):
         self.version += 1
         self.items[key] = {**copy.deepcopy(value), "_etag": str(self.version)}
-        return copy.deepcopy(self.items[key])
+        return self._response(self.items[key])
+
+    def _response(self, value):
+        return CosmosDict(copy.deepcopy(dict(value)), response_headers={})
 
     def execute_item_batch(self, batch_operations, partition_key):
         before = copy.deepcopy(self.items)
@@ -69,6 +77,9 @@ class RuntimeContainer:
             for operation in batch_operations:
                 name, arguments = operation[:2]
                 options = operation[2] if len(operation) > 2 else {}
+                body = arguments[1] if name == "replace" else arguments[0]
+                if body.get(self.partition_field) != partition_key:
+                    raise AssertionError("Cross-partition transaction.")
                 if name == "replace":
                     identifier, body = arguments
                     result = self.replace_item(
@@ -82,11 +93,27 @@ class RuntimeContainer:
                     result = self._store((partition_key, body["id"]), body)
                 else:
                     raise AssertionError(f"Unexpected batch operation {name}.")
-                results.append({"statusCode": 200, "resourceBody": result})
+                results.append({"statusCode": 200, "resourceBody": copy.deepcopy(dict(result))})
         except (CosmosHttpResponseError, AssertionError):
             self.items = before
             raise
         return results
+
+
+def test_runtime_container_uses_installed_sdk_points_and_plain_batch_bodies():
+    container = RuntimeContainer()
+    created = container.create_item({"id": "item", "run_id": "run"})
+    assert type(created) is CosmosDict
+    assert type(container.read_item("item", "run")) is CosmosDict
+    updated = container.replace_item("item", {**created, "state": "running"},
+                                     etag=created["_etag"], match_condition=MatchConditions.IfNotModified)
+    assert type(updated) is CosmosDict and updated["_etag"] != created["_etag"]
+    result = container.execute_item_batch([
+        ("replace", ("item", {**updated, "state": "completed"}), {"if_match_etag": updated["_etag"]}),
+    ], partition_key="run")
+    assert type(result[0]["resourceBody"]) is dict
+    with pytest.raises(AssertionError, match="Cross-partition"):
+        container.execute_item_batch([("create", ({"id": "wrong", "run_id": "other"},))], partition_key="run")
 
 
 class Clock:
@@ -124,24 +151,54 @@ def controller(store, lease, sections):
     )
 
 
+def test_definitive_provider_rejection_is_terminal(durable):
+    new_store, sections, _clock = durable
+    store = new_store()
+    with WorkflowRuntimeLease(store, owner_id="worker-provider") as lease:
+        execution = controller(store, lease, sections)
+
+        def rejected():
+            raise SanitizedModelEndpointError(
+                "Custom model request failed. (reference abc12345)",
+                correlation_reference="abc12345",
+                status_code=400,
+            )
+
+        with pytest.raises(SanitizedModelEndpointError):
+            execution.run_unit(
+                "task:provider",
+                rejected,
+                inputs={"prompt": "safe"},
+                replay_safe=False,
+            )
+
+    unit = store.read()["units"]["task:provider"]
+    assert unit["state"] == "failed"
+    assert unit["terminal_failure"] is True
+    assert unit["error_code"] == "model_provider_request_failed"
+    assert unit["correlation_reference"] == "abc12345"
+
+
 def test_completed_units_survive_recreated_controller_without_reinvocation(durable):
     new_store, sections, clock = durable
     calls = []
     store = new_store()
     with WorkflowRuntimeLease(store, owner_id="worker-one") as lease:
         execution = controller(store, lease, sections)
-        assert execution.run_unit(
+        extracted = execution.run_unit(
             "task:extract", lambda: calls.append("extract") or {"records": [{"id": 1}]},
             inputs={"prompt": "Extract all records."}, replay_safe=True,
-        ) == {"records": [{"id": 1}]}
+        )
+        assert extracted == {"records": [{"id": 1}]}
     clock.advance()
     store = new_store()
     with WorkflowRuntimeLease(store, owner_id="worker-two") as lease:
         execution = controller(store, lease, sections)
-        assert execution.run_unit(
+        replayed = execution.run_unit(
             "task:extract", lambda: pytest.fail("Completed task must not run again."),
             inputs={"prompt": "Extract all records."}, replay_safe=True,
-        ) == {"records": [{"id": 1}]}
+        )
+        assert replayed == {"records": [{"id": 1}]}
         execution.run_unit("task:synthesize", lambda: calls.append("synthesize") or {"reply": "One record."},
                            inputs={"producer": "extract"}, replay_safe=True)
     assert calls == ["extract", "synthesize"]

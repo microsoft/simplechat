@@ -91,7 +91,8 @@ def register_route_frontend_workspace(bp):
 
         personal_endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
         personal_model_endpoints = sanitize_model_endpoints_for_frontend(
-            filter_governed_model_endpoints(user_id, personal_endpoints, "governance_user_endpoints")
+            filter_governed_model_endpoints(user_id, personal_endpoints, "governance_user_endpoints"),
+            include_hidden_persona_text=True,
         )
         global_model_endpoints = sanitize_model_endpoints_for_frontend(
             filter_governed_model_endpoints(user_id, settings.get("model_endpoints", []), "governance_global_endpoints")

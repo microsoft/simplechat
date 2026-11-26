@@ -304,6 +304,34 @@ automatic index application: existing maintenance and apply settings still gover
 writes. Refreshing status never retries writes. When only some submissions fail, successful
 submissions remain in place; a retry adds only what is still missing.
 
+#### Optimize Cosmos replay when Redis is off
+
+Implemented in version: **0.261.472** (`application/single_app/config.py`).
+
+| Setting | When to use it | Default | Key |
+| --- | --- | --- | --- |
+| Optimize Cosmos replay when Redis is off | Reduce the write charge of long streamed replies on smaller deployments using Cosmos for replay. Text still saves one chunk at a time. | Off; inactive when Redis is enabled | `enable_cosmos_replay_index_exclusion` |
+
+Upgrade every worker that shares the settings container before enabling this
+option. **Enable replay exclusion** adds `/stream_replay_events/[]/?` to that
+container's existing `excludedPaths` and verifies it before switching new
+Cosmos streams. It never changes throughput, partitioning, or the indexes
+used by other fields. Automatic apply needs Azure management-plane permission
+to read and update that container; writing Cosmos items is not enough.
+
+If automatic apply is unavailable, open **Manual policy instructions**. Copy
+the merged policy only after refreshing it, or add the displayed entry to
+`excludedPaths` in **Azure portal → Data Explorer → settings → Scale & Settings
+→ Indexing Policy**. Keep every other rule. After saving in Azure, use
+**Verify policy**; it verifies and enables the setting without writing to
+Azure. If the app cannot read the policy, it shows only the entry to add.
+The app needs metadata read access to confirm the exclusion before using it.
+
+Disabling switches newly started streams back to indexed replay. Existing
+streams keep their format and can still reconnect. The policy exclusion
+remains in place; it can be removed in Azure once the affected replay windows
+have ended, if desired.
+
 Both switches below default to on and should stay on. Turning off the scheduler stops repair and backfill from converging at all. Turning off the startup pass only delays convergence to the next scheduled run, which is a reasonable trade when application start time matters more than picking up new index policies immediately after a deployment.
 
 #### Settings

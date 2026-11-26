@@ -33,6 +33,7 @@ export interface ImageModelCapabilityStatus extends ModelCapabilityStatus {
 export interface CapabilityModelChoice extends DefaultModelChoice {
     capability: ImageModelCapabilityStatus;
     embedding_policy?: EmbeddingPolicy;
+    embedding_request_url?: string;
 }
 
 export interface EmbeddingCompatibility {
@@ -206,7 +207,10 @@ export function toCapabilityModelsResponse(
                 reason: text(support.reason),
                 api: text(support.api),
             },
-            ...(capability === 'embeddings' ? { embedding_policy: toEmbeddingPolicy(choice.embedding_policy) } : {}),
+            ...(capability === 'embeddings' ? {
+                embedding_policy: toEmbeddingPolicy(choice.embedding_policy),
+                embedding_request_url: text(choice.embedding_request_url),
+            } : {}),
         });
     }
     const compatibility = record(source.compatibility);

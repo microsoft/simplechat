@@ -2,7 +2,7 @@
 # test_collaboration_multi_user_reload_and_stream_fix.py
 """
 Functional test for shared (multi-user) conversation reload and AI streaming.
-Version: 0.250.227
+Version: 0.261.484
 Implemented in: 0.250.224
 
 This test ensures that:
@@ -309,7 +309,14 @@ def test_collaboration_stream_errors_always_carry_conversation_kind():
         f"Expected every shared stream failure path to use the helper, found {helper_call_count}."
     )
 
-    assert "from collaboration_models import COLLABORATION_KIND" in route_source, (
+    collaboration_kind_imports = [
+        node
+        for node in module_ast.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "collaboration_models"
+        and any(alias.name == "COLLABORATION_KIND" for alias in node.names)
+    ]
+    assert collaboration_kind_imports, (
         "Expected COLLABORATION_KIND to be imported from collaboration_models."
     )
 

@@ -1,9 +1,10 @@
 # test_action_runtime_recovery.py
 """
 Actor-bound, pre-model action recovery and authorized reporting regressions.
-Version: 0.261.348
+Version: 0.261.486
 Implemented in: 0.261.347
 Request-time import lifecycle coverage added in: 0.261.348
+Streamed send-time pause and Continue coverage added in: 0.261.486
 
 Runs the real recovery service and conditional interaction storage owner with
 installed-SDK CosmosDict responses. No model, tool, or remote service is called.
@@ -592,3 +593,126 @@ with patch.dict(os.environ, {"TENANT_ID": "fixture-tenant"}), offline_app_import
 print("PASS: actual chat admission preserves the unsent turn without starting a model")
 '''
     run_probe(probe, (endpoint,), False)
+
+
+def test_stream_continue_after_a_send_time_pause_sends_the_question_once():
+    """Continue after a pause found at send time saves the question once and keeps the claimed decision."""
+    from test_orchestration_result_imports import run_probe
+
+    probe = r'''
+import json, os, sys
+from copy import deepcopy
+from unittest.mock import patch
+sys.path[:0] = sys.argv[1:3]
+from test_support.offline_bootstrap import offline_app_imports
+
+def check(value, message):
+    if not value:
+        raise AssertionError(message)
+
+def events_of(response):
+    return [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+
+def user_turns(container):
+    items = container.items.values() if isinstance(container.items, dict) else container.items
+    documents = [item[1] if isinstance(item, tuple) and len(item) == 2 else item for item in items]
+    return [document for document in documents if isinstance(document, dict) and document.get("role") == "user"]
+
+class KernelReached(Exception):
+    pass
+
+with patch.dict(os.environ, {"TENANT_ID": "fixture-tenant"}), offline_app_imports() as environment:
+    import app as web
+    import functions_action_catalog as catalog
+    import functions_action_credential_state as state
+    import functions_action_recovery as recovery
+    import functions_settings
+    import functions_authentication as authentication
+    import route_backend_chats as chats
+    import semantic_kernel_loader as loader
+    from action_runtime_contracts import ActionLoadRequired, action_binding_key
+    from functions_action_manifest import bind_action_origin
+    from test_action_personal_credentials import CredentialContainer
+    from flask import request, session
+
+    settings = {
+        **functions_settings.get_settings(), "enable_semantic_kernel": True,
+        "per_user_semantic_kernel": True, "allow_user_agents": True,
+        "allow_user_plugins": True, "enable_user_workspace": True,
+        "enable_content_safety": False, "enable_key_vault_secret_storage": False,
+        "azure_openai_gpt_authentication_type": "key",
+        "azure_openai_gpt_endpoint": "https://model.example.invalid",
+        "azure_openai_gpt_api_version": "2024-10-21", "azure_openai_gpt_key": "fixture-only-key",
+        "gpt_model": {"selected": [{"deploymentName": "fixture-model"}]},
+    }
+    agent = {"id": "fixture-agent", "name": "Fixture", "agent_type": "local",
+             "actions_to_load": ["unavailable"]}
+    action = bind_action_origin({
+        "id": "unavailable", "name": "FED-lookup", "type": "openapi",
+    }, "personal", "owner")
+    state.configure_action_credential_state(CredentialContainer("user_id"))
+    with web.app.test_request_context():
+        session["user"] = {"oid": "owner", "roles": ["User"]}
+        chats._create_personal_conversation("owner", "recovery-web-chat")
+    admitted_bodies = []
+    worker_decisions = []
+    preflighted = []
+
+    def load_unavailable_action(*_args, **_kwargs):
+        # Like the real loader: a claimed Continue excludes the action; otherwise it is unavailable.
+        admitted_bodies.append(deepcopy(request.get_json()))
+        if recovery.apply_action_recovery([deepcopy(action)]):
+            raise ActionLoadRequired([deepcopy(action)], [action_binding_key(action)])
+
+    def reach_kernel(*_args, **_kwargs):
+        # Kernel setup consults the same one-time decision from the stream worker.
+        worker_decisions.append(recovery.apply_action_recovery([deepcopy(action)]))
+        raise KernelReached()
+
+    with patch.object(functions_settings, "get_settings", return_value=settings), \
+         patch.object(chats, "get_settings", return_value=settings), \
+         patch.object(chats, "_resolve_canonical_chat_agent", side_effect=lambda *args: deepcopy(agent)), \
+         patch.object(authentication, "get_user_profile_image", return_value=None), \
+         patch.object(catalog, "resolve_action_manifest", side_effect=lambda *args: deepcopy(action)), \
+         patch.object(loader, "load_agent_core_plugins", return_value=None), \
+         patch.object(loader, "load_agent_specific_plugins", side_effect=load_unavailable_action), \
+         patch.object(chats, "workflow_m365_manifests", return_value=([deepcopy(action)], {})), \
+         patch.object(chats, "preflight_m365_manifests", side_effect=lambda manifests: preflighted.append(list(manifests))), \
+         patch.object(chats, "initialize_semantic_kernel", side_effect=reach_kernel):
+        client = web.app.test_client()
+        with client.session_transaction() as browser:
+            browser["user"] = {"oid": "owner", "roles": ["User"]}
+        headers = {"X-CSRFToken": client.get("/api/action-recovery/context").get_json()["csrf_token"]}
+        paused = client.post("/api/chat/stream", headers=headers, json={
+            "conversation_id": "recovery-web-chat", "message": "PRIVATE unsent question",
+            "agent_info": {"id": agent["id"], "name": agent["name"]},
+            "submission_id": "9b2f6d1e-4c3a-4e8b-a1d7-5f0e2c4b6a98", "action_recovery_nonce": "first-send",
+        })
+        check(paused.status_code == 200, "Stream admission failed.")
+        check([event.get("type") for event in events_of(paused)] == ["action_recovery_required"],
+              "The send-time pause was not the only event.")
+        check(not user_turns(chats.cosmos_messages_container), "The paused question was saved.")
+        # Recheck as both clients do: the same submission with a fresh nonce.
+        resumed = {**admitted_bodies[0], "action_recovery_nonce": "resumed-send"}
+        challenge = client.post("/api/chat/action-health", headers=headers, json={"request": resumed}).get_json()
+        check(challenge.get("type") == "action_recovery_required" and challenge.get("id"),
+              "The recheck did not offer recovery.")
+        continued = client.post("/api/chat/stream", headers=headers, json={
+            **resumed, "action_recovery": {"id": challenge["id"], "decision": "continue"},
+        })
+        events = events_of(continued)
+        trace = json.dumps(events)[-800:]
+        check(continued.status_code == 200, "Continue was rejected: " + trace)
+        check("submission_conflict" not in trace, "Continue reused a saved submission: " + trace)
+        check(any(event.get("type") == "user_message_persisted" for event in events),
+              "Continue did not save the question: " + trace)
+        check(len(user_turns(chats.cosmos_messages_container)) == 1, "The question was not saved exactly once.")
+        check(preflighted == [[]], "The stream worker lost the actions the user chose to continue without.")
+        check(worker_decisions == [[]], "The stream worker lost the claimed Continue decision: " + trace)
+        check(len(admitted_bodies) == 3, f"Action admission ran {len(admitted_bodies)} times, not once per request.")
+        decision = state.read("owner", challenge["id"], record_type="action_recovery")
+        check(decision["status"] == "continued", "Continue was not consumed.")
+    check(not environment.network_attempts, "Continue attempted external I/O.")
+print("PASS: a send-time pause leaves the question unsent and Continue sends it once")
+'''
+    run_probe(probe, (), False)

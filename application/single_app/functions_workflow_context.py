@@ -18,7 +18,15 @@ from functions_model_capabilities import (
     normalize_token_limit,
     resolve_model_token_budget,
 )
-from model_endpoint_clients import ModelEndpointBehavior
+from model_endpoint_clients import ModelEndpointBehavior, is_response_format_rejection, is_reasoning_parameter_rejection
+from functions_model_endpoint_diagnostics import (
+    MODEL_INVOCATION_ERRORS, SanitizedModelEndpointError, build_sanitized_model_endpoint_error,
+)
+from functions_model_endpoint_validation import ModelEndpointValidationError
+from functions_model_persona import (
+    bound_model_persona,
+    prepend_model_persona_messages,
+)
 from functions_workflow_execution import assert_workflow_execution_owned
 from functions_workflow_loop_runners import assert_workflow_loop_agent_type
 from functions_workflow_policy_errors import WorkflowContextBudgetError
@@ -27,6 +35,35 @@ from functions_workflow_policy_errors import WorkflowContextBudgetError
 # This is a disclosed compatibility policy, not an invented model capability.
 UNKNOWN_MODEL_INPUT_TOKENS = 8192
 _active_workflow = ContextVar("workflow_context_budget", default=None)
+
+
+def _has_prior_tool_effects(messages):
+    return any(
+        isinstance(message, Mapping) and (
+            message.get("role") in ("tool", "function")
+            or message.get("type") == "function_call_output"
+            or any(
+                isinstance(part, Mapping) and part.get("type") in ("tool_result", "function_call_output")
+                for part in (message.get("content") if isinstance(message.get("content"), list) else [])
+            )
+        )
+        for message in messages
+    )
+
+
+def _provider_failure(error, *, messages, protocol="", stage="request"):
+    if isinstance(error, SanitizedModelEndpointError):
+        if _has_prior_tool_effects(messages):
+            error.operation_effect_certainty = "possible"
+        return error
+    safe = build_sanitized_model_endpoint_error(
+        "The selected model request failed.", error,
+        protocol=protocol, request_stage=stage,
+        operation_effect_certainty="possible" if _has_prior_tool_effects(messages) else None,
+    )
+    safe.response_format_rejected = is_response_format_rejection(error)
+    safe.reasoning_parameter_rejected = is_reasoning_parameter_rejection(error)
+    return safe
 
 
 def _count_request_tokens(messages, tools, tokenizer, *, bounded_model=False):
@@ -143,9 +180,14 @@ def _check_request(messages, model, *, provider=None, tools=None, output_tokens=
     workflow = _active_workflow.get()
     if workflow is None:
         return
-    audit = calculate_workflow_context_budget(
-        messages, model, provider=provider, tools=tools, output_tokens=output_tokens,
-    )
+    try:
+        audit = calculate_workflow_context_budget(
+            messages, model, provider=provider, tools=tools, output_tokens=output_tokens,
+        )
+    except ModelTokenBudgetError as error:
+        if _has_prior_tool_effects(messages):
+            error.operation_effect_certainty = "possible"
+        raise
     previous = workflow.get("context_budget") or {}
     audit["request_count"] = int(previous.get("request_count") or 0) + 1
     audit["peak_input_tokens"] = max(int(previous.get("peak_input_tokens") or 0), audit["input_tokens"])
@@ -156,7 +198,10 @@ def _check_request(messages, model, *, provider=None, tools=None, output_tokens=
         audit["blocked_request"] = blocked_request
     workflow["context_budget"] = audit
     if blocked:
-        raise WorkflowContextBudgetError(audit)
+        error = WorkflowContextBudgetError(audit)
+        if _has_prior_tool_effects(messages):
+            error.operation_effect_certainty = "possible"
+        raise error
     return audit
 
 
@@ -203,8 +248,12 @@ class _BudgetedCompletions:
         requested_output = kwargs.get("max_completion_tokens")
         if requested_output is None:
             requested_output = kwargs.get("max_tokens")
-        audit = _check_request(
+        request_messages = prepend_model_persona_messages(
             kwargs.get("messages") or [],
+            bound_model_persona(self._delegate),
+        )
+        audit = _check_request(
+            request_messages,
             self._model,
             provider=self._provider,
             tools=kwargs.get("tools"),
@@ -212,7 +261,19 @@ class _BudgetedCompletions:
         )
         if audit and audit["output_reserve_tokens"] and not requested_output:
             kwargs[_response_parameter(audit, self._model, self._provider)] = audit["output_reserve_tokens"]
-        return self._delegate.create(**kwargs)
+        try:
+            return self._delegate.create(**kwargs)
+        except ModelEndpointValidationError as error:
+            if _has_prior_tool_effects(kwargs.get("messages") or []):
+                error.operation_effect_certainty = "possible"
+            raise
+        except (SanitizedModelEndpointError, *MODEL_INVOCATION_ERRORS) as error:
+            raise _provider_failure(
+                error, messages=kwargs.get("messages") or [],
+                protocol=getattr(self._model, "protocol", None) or (
+                    "azure_openai" if self._provider == "aoai" else "anthropic" if self._provider == "claude" else self._provider
+                ),
+            ) from None
 
 
 class _BudgetedChat:
@@ -278,7 +339,10 @@ class WorkflowBudgetChatCompletion(ChatCompletionClientBase):
         return self.delegate._reset_function_choice_settings(settings)
 
     def _check(self, chat_history, settings):
-        messages = self.delegate._prepare_chat_history_for_request(chat_history)
+        messages = prepend_model_persona_messages(
+            self.delegate._prepare_chat_history_for_request(chat_history),
+            bound_model_persona(self.delegate),
+        )
         requested_output = getattr(settings, "max_completion_tokens", None)
         if requested_output is None:
             requested_output = getattr(settings, "max_tokens", None)
@@ -304,17 +368,28 @@ class WorkflowBudgetChatCompletion(ChatCompletionClientBase):
             parameter = _response_parameter(audit, self.model_metadata, self.provider)
             if hasattr(settings, parameter):
                 setattr(settings, parameter, audit["output_reserve_tokens"])
+        return messages
 
     async def _inner_get_chat_message_contents(self, chat_history, settings):
-        self._check(chat_history, settings)
-        return await self.delegate._inner_get_chat_message_contents(chat_history, settings)
+        messages = self._check(chat_history, settings)
+        try:
+            return await self.delegate._inner_get_chat_message_contents(chat_history, settings)
+        except ModelEndpointValidationError as error:
+            if _has_prior_tool_effects(messages):
+                error.operation_effect_certainty = "possible"
+            raise
+        except (SanitizedModelEndpointError, *MODEL_INVOCATION_ERRORS) as error:
+            raise _provider_failure(error, messages=messages, protocol=self.provider) from None
 
     async def _inner_get_streaming_chat_message_contents(self, chat_history, settings, function_invoke_attempt=0):
-        self._check(chat_history, settings)
-        async for messages in self.delegate._inner_get_streaming_chat_message_contents(
-            chat_history, settings, function_invoke_attempt,
-        ):
-            yield messages
+        request_messages = self._check(chat_history, settings)
+        try:
+            async for messages in self.delegate._inner_get_streaming_chat_message_contents(
+                chat_history, settings, function_invoke_attempt,
+            ):
+                yield messages
+        except (SanitizedModelEndpointError, *MODEL_INVOCATION_ERRORS) as error:
+            raise _provider_failure(error, messages=request_messages, protocol=self.provider, stage="stream") from None
 
 
 class _WorkflowFunctionCallingBudget(WorkflowBudgetChatCompletion):

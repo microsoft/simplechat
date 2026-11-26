@@ -43,6 +43,7 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_model_endpoint_urls import resolve_model_endpoint_route, routing_schema_version
 from functions_model_capabilities import (
     ModelTokenBudgetError,
     project_model_budget_metadata,
@@ -103,6 +104,7 @@ from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE,
 from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE, SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS
 from functions_tableau_operations import TABLEAU_PLUGIN_TYPE
 from functions_yamcs_operations import YAMCS_PLUGIN_TYPE, YAMCS_SENSITIVE_ADDITIONAL_FIELDS
+from functions_microsoft_decision_operations import MICROSOFT_DECISION_PLUGIN_TYPE
 from functions_keyvault import (
     SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS,
     SQL_PLUGIN_SENSITIVE_AUTH_FIELDS,
@@ -172,6 +174,7 @@ from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
 from semantic_kernel_plugins.snowflake_plugin_factory import SnowflakePluginFactory
 from semantic_kernel_plugins.tableau_plugin_factory import TableauPluginFactory
 from semantic_kernel_plugins.yamcs_plugin_factory import YamcsPluginFactory
+from semantic_kernel_plugins.microsoft_decision_plugin_factory import MicrosoftDecisionPluginFactory
 from functions_agent_scope import find_agent_by_scope, is_selected_agent_scope_enabled
 import app_settings_cache
 
@@ -206,6 +209,26 @@ def get_max_auto_invoke_attempts(settings=None):
         return max(1, min(MAX_AUTO_INVOKE_ATTEMPTS_UPPER_BOUND, int(raw_value)))
     except (TypeError, ValueError):
         return DEFAULT_MAX_AUTO_INVOKE_ATTEMPTS
+
+
+def build_agent_function_choice_behavior(agent_config, settings=None):
+    """Enable automatic tool calls only when the selected route supports them."""
+    resolved_endpoint = (agent_config or {}).get("resolved_model_endpoint")
+    resolved_route = (
+        resolved_endpoint.get("_resolved_route")
+        if isinstance(resolved_endpoint, dict)
+        else None
+    )
+    if isinstance(resolved_route, dict):
+        capabilities = resolved_route.get("capabilities") or {}
+        if capabilities.get("toolCalling") is not True:
+            return FunctionChoiceBehavior(
+                enable_kernel_functions=False,
+                maximum_auto_invoke_attempts=0,
+            )
+    return FunctionChoiceBehavior.Auto(
+        maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings)
+    )
 
 
 def should_apply_prompt_settings(agent_config, settings=None):
@@ -307,12 +330,16 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
     provider = str(
         agent_config.get("model_provider") or agent_config.get("provider") or "aoai"
     ).strip().lower()
-    if provider == "custom":
+    resolved_model_endpoint = agent_config.get("resolved_model_endpoint")
+    if resolved_model_endpoint or provider == "custom":
         chat_service, _ = build_semantic_kernel_chat_service_for_model(
             agent_config["deployment"],
             settings if settings is not None else get_settings(),
             service_id=service_id,
             model_context={
+                "routing_schema_version": agent_config.get("routing_schema_version"),
+                "endpoint_id": agent_config.get("model_endpoint_id") or "",
+                "model_id": agent_config.get("model_id") or "",
                 "provider": provider,
                 "endpoint": agent_config["endpoint"],
                 "api_version": agent_config.get("api_version") or "",
@@ -320,10 +347,12 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
                 "anthropic_version": agent_config.get("anthropic_version") or "",
                 "auth": agent_config.get("auth") or {},
                 "request_model": agent_config["deployment"],
-                "endpoint_id": agent_config.get("model_endpoint_id") or "",
-                "model_id": agent_config.get("model_id") or "",
             },
-            resolved_model_endpoint=agent_config.get("model_endpoint_config"),
+            resolved_model_endpoint=(
+                resolved_model_endpoint
+                or agent_config.get("model_endpoint_config")
+            ),
+            apply_model_persona=False,
         )
         return chat_service
 
@@ -760,7 +789,24 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
 
         connection = endpoint_cfg.get("connection", {}) or {}
         auth = endpoint_cfg.get("auth", {}) or {}
-        deployment = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
+        explicit_routing = routing_schema_version(endpoint_cfg) == 2
+        deployment = resolve_model_endpoint_request_model(
+            endpoint_cfg,
+            model_cfg,
+            use_model_routing=explicit_routing,
+        )
+        api_type = get_model_endpoint_api_type(
+            endpoint_cfg,
+            model_cfg,
+            use_model_routing=explicit_routing,
+        )
+        resolved_model_endpoint = None
+        if explicit_routing:
+            resolved_model_endpoint = dict(endpoint_cfg)
+            resolved_model_endpoint["_resolved_route"] = resolve_model_endpoint_route(
+                endpoint_cfg,
+                model_cfg,
+            )
         api_version = connection.get("openai_api_version") or connection.get("api_version")
         endpoint = resolve_model_inference_endpoint(
             connection.get("endpoint"), use_responses_api=connection.get("use_responses_api"),
@@ -771,11 +817,15 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             "provider": provider,
             "endpoint": endpoint,
             "api_version": api_version,
-            "api_type": get_model_endpoint_api_type(endpoint_cfg),
+            "api_type": api_type,
             "anthropic_version": connection.get("anthropic_version") or "",
             "deployment": deployment,
             "auth": auth,
             "model": model_cfg,
+            "model_endpoint_id": endpoint_id,
+            "model_id": model_id,
+            "routing_schema_version": 2 if explicit_routing else 1,
+            "resolved_model_endpoint": resolved_model_endpoint,
             "model_budget_model": project_model_budget_metadata(model_cfg),
             "model_budget_endpoint": project_model_budget_metadata(endpoint_cfg),
             "model_endpoint_config": endpoint_cfg,
@@ -1035,10 +1085,12 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
                     "agent_type": agent_type or "local",
                     "other_settings": other_settings,
                     "token_provider": token_provider,
-                    "model_endpoint_id": agent.get("model_endpoint_id", ""),
-                    "model_id": agent.get("model_id", ""),
+                    "model_endpoint_id": multi_endpoint_config.get("model_endpoint_id") or "",
+                    "model_id": multi_endpoint_config.get("model_id") or "",
                     "model_provider": provider,
                     "auth": auth,
+                    "routing_schema_version": multi_endpoint_config.get("routing_schema_version", 1),
+                    "resolved_model_endpoint": multi_endpoint_config.get("resolved_model_endpoint"),
                     "model_budget_model": multi_endpoint_config["model_budget_model"],
                     "model_budget_endpoint": multi_endpoint_config["model_budget_endpoint"],
                     "reasoning_effort": agent.get("reasoning_effort"),
@@ -1118,10 +1170,12 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             "agent_type": agent_type or "local",
             "other_settings": other_settings,
             "token_provider": token_provider,
-            "model_endpoint_id": agent.get("model_endpoint_id", ""),
-            "model_id": agent.get("model_id", ""),
+            "model_endpoint_id": multi_endpoint_config.get("model_endpoint_id") or "",
+            "model_id": multi_endpoint_config.get("model_id") or "",
             "model_provider": provider,
             "auth": auth,
+            "routing_schema_version": multi_endpoint_config.get("routing_schema_version", 1),
+            "resolved_model_endpoint": multi_endpoint_config.get("resolved_model_endpoint"),
             "model_budget_model": multi_endpoint_config["model_budget_model"],
             "model_budget_endpoint": multi_endpoint_config["model_budget_endpoint"],
             "reasoning_effort": agent.get("reasoning_effort"),
@@ -1923,7 +1977,8 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                         print(f"[SK_LOADER] Created Tableau plugin: {name}")
                     elif plugin_type == YAMCS_PLUGIN_TYPE:
                         plugin = YamcsPluginFactory.create_from_config(manifest)
-                        print(f"[SK_LOADER] Created Yamcs plugin: {name}")
+                    elif plugin_type == MICROSOFT_DECISION_PLUGIN_TYPE:
+                        plugin = MicrosoftDecisionPluginFactory.create_from_config(manifest)
                     elif plugin_type == MCP_PLUGIN_TYPE:
                         origin = get_action_origin(manifest)
                         if origin is None:
@@ -2604,8 +2659,10 @@ def load_single_agent_for_kernel(
                 ),
                 "function_choice_behavior": (
                     captured_function_choice if invocation_capture is not None
-                    else FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings))
-                )
+                    else build_agent_function_choice_behavior(
+                        agent_config, settings
+                    )
+                ),
             }
             # Don't pass plugins to agent since they're already loaded in kernel
             agent_obj = LoggingChatCompletionAgent(**kwargs)
@@ -3118,6 +3175,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                         plugin = TableauPluginFactory.create_from_config(manifest)
                     elif plugin_type == YAMCS_PLUGIN_TYPE:
                         plugin = YamcsPluginFactory.create_from_config(manifest)
+                    elif plugin_type == MICROSOFT_DECISION_PLUGIN_TYPE:
+                        plugin = MicrosoftDecisionPluginFactory.create_from_config(manifest)
                     elif plugin_type == MCP_PLUGIN_TYPE:
                         origin = get_action_origin(manifest)
                         if origin is None:
@@ -3670,9 +3729,10 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         "api_version": agent_config["api_version"],
                         "model_token_budget": model_budget,
                         "arguments": build_agent_budget_arguments(chat_service, agent_config, model_budget),
-                        "function_choice_behavior": FunctionChoiceBehavior.Auto(
-                            maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings)
-                        )
+                        "function_choice_behavior": build_agent_function_choice_behavior(
+                            agent_config,
+                            settings,
+                        ),
                     }
                     if agent_config.get("actions_to_load"):
                         kwargs["plugins"] = agent_config["actions_to_load"]
@@ -4008,8 +4068,9 @@ def set_prompt_settings_for_agent(chat_service, agent_config: dict):
     if hasattr(prompt_exec_settings, 'function_choice_behavior'):
         if getattr(prompt_exec_settings, 'function_choice_behavior', None) is None:
             try:
-                prompt_exec_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(
-                    maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(agent_config)
+                prompt_exec_settings.function_choice_behavior = build_agent_function_choice_behavior(
+                    agent_config,
+                    agent_config,
                 )
             except Exception:
                 # pass this to prevent additional future agent types from potentially failing

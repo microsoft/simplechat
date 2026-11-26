@@ -1,9 +1,11 @@
 # test_admin_shared_ai_connections.py
 """
 Browser coverage for independent chat/image/embedding defaults and connection availability.
-Version: 0.261.400
+Version: 0.261.438
 Implemented in: 0.261.105; embeddings added in 0.261.106
 Strict image-test response regression coverage added in: 0.261.400
+Native grouped model menu contrast regression added in: 0.261.434
+Connection editor popup contrast regression added in: 0.261.437
 
 Exercise the real built SPA, production schema and protected API shapes without live services.
 """
@@ -15,6 +17,8 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import expect
+
+from ui_tests.fixtures.color_contrast import assert_readable_native_menu
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 
@@ -59,6 +63,42 @@ def test_shared_list_and_grouped_defaults_preserve_connection_identity(ai_ui, wi
     expect(manager.get_by_text(re.compile(r"1 embeddings"))).to_be_visible()
     expect(manager.get_by_text(re.compile("transcription|speech|computer use", re.I))).to_have_count(0)
     expect(page.get_by_label("Default embedding model", exact=True)).to_have_value("0")
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_default_chat_popup_options_and_connection_labels_have_readable_contrast(ai_ui, theme):
+    ai_ui.open()
+    page = ai_ui.page
+    if theme == "dark":
+        page.get_by_role("button", name="Switch to dark theme", exact=True).click()
+        expect(page.locator("html")).to_have_class(re.compile(r"\bdark\b"))
+
+    chat = page.get_by_label("Default chat model", exact=True)
+    expect(chat.locator("optgroup")).to_have_count(1)
+    assert_readable_native_menu(chat)
+    assert ai_ui.selections["chat"] == reference("team", "same:model", "custom")
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_connection_editor_authentication_menus_have_readable_contrast(ai_ui, theme):
+    ai_ui.open()
+    page = ai_ui.page
+    if theme == "dark":
+        page.get_by_role("button", name="Switch to dark theme", exact=True).click()
+        expect(page.locator("html")).to_have_class(re.compile(r"\bdark\b"))
+
+    page.get_by_role("button", name="Add connection", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Add a connection", exact=True)
+    method = dialog.get_by_label("Method", exact=True)
+    expect(method.locator("option")).to_have_text(["Managed identity", "Service principal", "API key"])
+    for label in ("Method", "Provider", "Identity", "Management cloud"):
+        assert_readable_native_menu(dialog.get_by_label(label, exact=True))
+
+    method.select_option("service_principal")
+    expect(dialog.get_by_label("Tenant id", exact=True)).to_be_visible()
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
+    expect(dialog).to_have_count(0)
+    assert not ai_ui.connection_writes
 
 
 @pytest.mark.parametrize("chat_enabled,image_enabled", [(False, True), (True, False), (False, False)])
@@ -363,7 +403,9 @@ def test_foundry_mixed_connection_preserves_operation_overrides_and_blank_secret
     ai_ui.open()
     ai_ui.page.get_by_role("button", name="Edit Team OpenAI", exact=True).click()
     dialog = ai_ui.page.get_by_role("dialog")
-    expect(dialog.get_by_label("Embedding inference base URL", exact=True)).to_have_value("https://foundry.example.test/openai/v1/")
+    dialog.locator("li").filter(has=ai_ui.page.get_by_label("Enable docs-embedding", exact=True)).get_by_text("Capability metadata", exact=True).click()
+    dialog.get_by_text("Embedding routing", exact=True).click()
+    expect(dialog).to_contain_text("https://foundry.example.test/openai/v1/")
     expect(dialog).to_contain_text("Foundry project endpoints do not route embeddings")
     dialog.get_by_label("Name", exact=True).fill("Reviewed Foundry")
     dialog.get_by_role("button", name="Save changes", exact=True).click()
@@ -373,6 +415,15 @@ def test_foundry_mixed_connection_preserves_operation_overrides_and_blank_secret
     assert payload["connection"]["endpoint"].endswith("/api/projects/project")
     assert "api_key" not in payload["auth"]
     assert "embedding_config" not in payload["models"][1]
+
+
+def test_embedding_default_route_opens_the_selected_model_editor(ai_ui):
+    ai_ui.open()
+    button = ai_ui.page.get_by_role("button", name="Edit embedding model in AI Connections", exact=True)
+    button.click()
+    focused_model = ai_ui.page.get_by_role("dialog").get_by_test_id("connection-model-linked")
+    expect(focused_model.get_by_label("Enable docs-embedding", exact=True)).to_be_visible()
+    assert ai_ui.selection_writes == [] and ai_ui.connection_writes == []
 
 
 def test_embedding_import_notice_is_independent_and_does_not_execute_markup(ai_ui):
@@ -415,8 +466,10 @@ def test_unsupported_foundry_embedding_routes_are_explained_not_published(ai_ui)
     expect(dialog.get_by_label("Use for images", exact=True)).to_be_disabled()
     expect(dialog.get_by_role("button", name="Test embeddings", exact=True)).to_have_count(0)
     expect(dialog).to_contain_text("Native and deprecated embedding APIs are not supported.")
+    dialog.get_by_text("Capability metadata", exact=True).click()
+    dialog.get_by_text("Embedding routing", exact=True).click()
     expect(dialog).to_contain_text("Foundry project endpoints do not route embeddings.")
-    expect(dialog.get_by_label("Embedding API", exact=True).locator("option")).to_have_count(2)
+    expect(dialog.get_by_label("Use for embeddings", exact=True)).not_to_be_checked()
 
 
 def test_embedding_profile_edit_rejection_keeps_draft_and_previous_default(ai_ui):
@@ -537,18 +590,20 @@ def test_custom_embeddings_keep_request_identity_image_metadata_and_independent_
     expect(page.get_by_text(f"{wire_name} returned 1,536 dimensions. No vectors were stored and the default was not changed.", exact=True)).to_be_visible()
     assert ai_ui.embedding_tests == [{"test_type": "embedding", "selection": reference("custom-vectors", "custom-embedding", "custom")}]
     assert ai_ui.selections == previous and ai_ui.selection_writes == []
-    dialog.get_by_label("Embedding inference base URL", exact=True).fill("https://gateway.example.test/other/embedding-base")
-    dialog.get_by_label("Embedding authentication header", exact=True).select_option("authorization")
+    embedding_row.get_by_text("Capability metadata", exact=True).click()
+    embedding_row.get_by_text("Embedding routing", exact=True).click()
+    embedding_row.get_by_label("Use model-specific embedding routing", exact=True).check()
+    embedding_row.get_by_label("Embedding inference base URL", exact=True).fill("https://gateway.example.test/other/embedding-base")
+    embedding_row.get_by_label("Embedding authentication header", exact=True).select_option("authorization")
     dialog.get_by_label("Name", exact=True).fill("Reviewed Custom Mixed Gateway")
     dialog.get_by_role("button", name="Save changes", exact=True).click()
     expect(dialog).to_have_count(0)
     saved = ai_ui.connection_writes[-1]
     assert saved["provider"] == "custom" and saved["api_type"] == api_type
-    expected_connection = copy.deepcopy(original["connection"])
-    expected_connection["operation_settings"]["embeddings"] = {
+    assert saved["connection"] == original["connection"]
+    assert saved["models"][1]["embedding_operation"] == {
         "endpoint": "https://gateway.example.test/other/embedding-base", "auth_header": "authorization",
     }
-    assert saved["connection"] == expected_connection
     assert saved["models"][1]["id"] == "custom-embedding"
     assert saved["models"][1]["deploymentName"] == "embedding-wire-alias"
     assert saved["models"][1]["modelName"] == "text-embedding-3-small"

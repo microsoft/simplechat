@@ -10,7 +10,9 @@ from functions_group import (
     GROUP_WRITE_CONFLICT_MESSAGE,
     GroupDocumentWriteConflict,
     assert_group_role,
+    find_group_by_id,
     get_group_model_endpoints,
+    get_user_role_in_group,
     require_active_group,
     update_group_model_endpoints,
 )
@@ -19,16 +21,22 @@ from functions_group_endpoint_access import (
     discard_staged_group_endpoint_credentials,
     group_endpoint_error_response,
     keep_staged_group_endpoint_credentials,
+    list_group_model_endpoints,
     read_strict_json_object,
     reject_query_parameters,
     require_group_endpoint_discovery_context,
     staged_group_endpoint_credentials,
 )
+from functions_group_endpoint_policy import group_endpoint_management_operations
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
-from functions_model_capabilities import ModelTokenBudgetError
+from functions_model_capabilities import (
+    ModelTokenBudgetError, preview_model_token_limits, project_model_budget_metadata,
+)
 from functions_model_endpoint_app_identity import check_application_identity_request, check_application_identity_save
 from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_persona import validate_model_persona_settings_document
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route, routing_schema_version
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
@@ -39,6 +47,7 @@ from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
     validate_custom_model_endpoint,
     validate_custom_model_endpoints,
+    validate_model_endpoint_routing,
 )
 from functions_settings import *
 from foundry_agent_runtime import FOUNDRY_DELEGATED_AUTH_REQUIRED_MESSAGE, FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
@@ -68,6 +77,9 @@ from azure.identity import DefaultAzureCredential, ClientSecretCredential, get_b
 import re
 import requests
 import uuid
+from model_endpoint_ca_bundles import CABundleError
+from functions_genai_mil import fetch_genai_mil_models
+from model_endpoint_profiles import GENAI_MIL_PROFILE, GenAIMilRequestError, get_custom_endpoint_profile
 
 
 def _get_configured_models(settings, setting_key):
@@ -283,6 +295,8 @@ def register_route_backend_models(bp):
             # under the scope it is stored in, so a global endpoint is never judged by
             # the group and personal application identity rule.
             endpoint["_endpoint_scope"] = endpoint_scope
+            if routing_schema_version(endpoint) == 2:
+                endpoint["_governance_endpoint_scope"] = endpoint_scope
         return endpoint
 
     def resolve_endpoint_scope_value(endpoint_cfg, fallback_endpoint_id=""):
@@ -468,6 +482,7 @@ def register_route_backend_models(bp):
         anthropic_version=DEFAULT_ANTHROPIC_VERSION,
         url_mode="",
         endpoint_config=None,
+        model_id="",
     ):
         client, runtime_protocol = build_model_endpoint_sync_chat_client(
             auth_settings,
@@ -480,6 +495,7 @@ def register_route_backend_models(bp):
             anthropic_version=anthropic_version,
             settings=get_settings(),
             endpoint_config=endpoint_config,
+            model_id=model_id,
         )
         log_models_debug(
             f"Inference client provider={provider} protocol={runtime_protocol}"
@@ -578,6 +594,8 @@ def register_route_backend_models(bp):
             )
 
             if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+                if get_custom_endpoint_profile(data) == GENAI_MIL_PROFILE:
+                    return jsonify({"models": fetch_genai_mil_models(data, get_settings())})
                 return build_safe_error_response(
                     "Model discovery is not available for Custom endpoints. Add models manually.",
                     400,
@@ -661,8 +679,12 @@ def register_route_backend_models(bp):
                 return jsonify({"models": mapped})
 
             return jsonify({"error": "Model provider not found."}), 400
+        except GenAIMilRequestError as error:
+            return jsonify(error.payload), error.status_code if error.status_code in (401, 403, 404, 429, 502) else 502
         except AIConnectionError as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 400
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message}), 400
         except LookupError as exc:
             log_event(
                 "[MODELS] Fetch model list blocked because the model endpoint was not found",
@@ -688,12 +710,204 @@ def register_route_backend_models(bp):
                 400,
             )
 
+    def handle_model_routing_preview(data, scope, group_id=None):
+        settings = get_settings()
+        scope_flag = {"user": "allow_user_custom_endpoints", "group": "allow_group_custom_endpoints"}.get(scope)
+        if not settings.get("enable_multi_model_endpoints") or (scope_flag and not settings.get(scope_flag)):
+            return build_safe_error_response("Custom endpoints are disabled for this scope.", 403)
+        user_id = get_current_user_id()
+        try:
+            ensure_governance_access(f"governance_{scope}_endpoints", user_id)
+            endpoint_id = str(data.get("id") or data.get("endpoint_id") or "").strip()
+            if endpoint_id and not resolve_endpoint_by_id(
+                user_id, scope, endpoint_id, group_id=group_id
+            ):
+                return build_safe_error_response("The selected model endpoint could not be found.", 404)
+        except PermissionError:
+            return build_safe_error_response("You do not have access to preview this endpoint.", 403)
+        try:
+            endpoint = normalize_model_endpoint_routing({
+                "id": endpoint_id or "preview",
+                "routing_schema_version": data.get("routing_schema_version"),
+                # Unset orders resolve exactly as a saved connection does at runtime.
+                "routing_path_order": data.get("routing_path_order"),
+                "provider": data.get("provider"),
+                "profile": data.get("profile") or "",
+                "connection": data.get("connection"),
+                "models": [data.get("model")],
+                **project_model_budget_metadata(data),
+            })
+            resolved = resolve_model_endpoint_route(endpoint, endpoint["models"][0])
+            budget = preview_model_token_limits(
+                endpoint["models"][0], endpoint, resolved["protocol"],
+            )
+        except ModelTokenBudgetError as exc:
+            log_models_exception(
+                "Model limit preview validation failed", exc,
+                extra={"scope": scope, "code": exc.code}, level=logging.WARNING,
+            )
+            return jsonify(exc.payload), 400
+        except (ValueError, TypeError):
+            return build_safe_error_response(
+                "Invalid model routing. Check API Type, API Path, URL Handling, model identifier, and version.",
+                400,
+            )
+        fields = (
+            "api_type",
+            "inference_api",
+            "protocol",
+            "request_model",
+            "api_base",
+            "operation_url",
+            "api_version",
+            "anthropic_version",
+            "url_mode",
+            "api_path_order",
+        )
+        return jsonify({
+            "preview_only": True,
+            "resolved": {"method": "POST", **{field: resolved[field] for field in fields}},
+            "budget": budget,
+        }), 200
+
+    def handle_explicit_model_test(
+        data, scope, saved_endpoint=None, group_id=None
+    ):
+        settings = get_settings()
+        scope_flag = {"user": "allow_user_custom_endpoints", "group": "allow_group_custom_endpoints"}.get(scope)
+        if settings.get("enable_multi_model_endpoints") is not True or (
+            scope_flag and settings.get(scope_flag) is not True
+        ):
+            return build_safe_error_response("Model endpoints are disabled for this scope.", 403)
+
+        user_id = get_current_user_id()
+        endpoint_id = str(data.get("endpoint_id") or data.get("id") or "").strip()
+        requested_model = data.get("model") if isinstance(data.get("model"), dict) else {}
+        model_id = str(data.get("model_id") or requested_model.get("id") or "").strip()
+        if not endpoint_id or not model_id:
+            return build_safe_error_response("Save the endpoint and select a configured model before testing.", 400)
+
+        endpoint = saved_endpoint or resolve_endpoint_by_id(
+            user_id, scope, endpoint_id, group_id=group_id
+        )
+        if not isinstance(endpoint, dict) or str(endpoint.get("id") or "").strip() != endpoint_id:
+            raise LookupError("Model endpoint not found.")
+        endpoint = dict(endpoint)
+        endpoint_scope = endpoint.pop("_governance_endpoint_scope", scope)
+        if endpoint_scope not in ("global", "user", "group"):
+            raise ValueError("Invalid model endpoint scope.")
+        if routing_schema_version(endpoint) != 2:
+            return build_safe_error_response("The selected endpoint does not use explicit model routing.", 400)
+
+        models = [
+            model for model in (endpoint.get("models") or [])
+            if isinstance(model, dict) and str(model.get("id") or "").strip() == model_id
+        ]
+        if len(models) != 1:
+            raise LookupError("Model endpoint model not found.")
+        requested_connection = data.get("connection") if isinstance(data.get("connection"), dict) else {}
+        saved_connection = endpoint.get("connection") if isinstance(endpoint.get("connection"), dict) else {}
+        if (
+            "endpoint" in requested_connection
+            and requested_connection.get("endpoint") != saved_connection.get("endpoint")
+        ):
+            return build_safe_error_response("Save the endpoint changes before testing this route.", 409)
+        requested_route_model = data.get("model") if isinstance(data.get("model"), dict) else {}
+        for field in (
+            "id", "api_type", "inference_api", "api_path", "api_path_order",
+            "url_mode", "modelName", "deploymentName",
+            "api_version", "anthropic_version",
+        ):
+            if field in requested_route_model and requested_route_model.get(field) != models[0].get(field):
+                return build_safe_error_response("Save the model changes before testing this route.", 409)
+
+        endpoint = keyvault_model_endpoint_get_helper(
+            endpoint,
+            endpoint_id,
+            scope=endpoint_scope,
+            return_type=SecretReturnType.VALUE,
+        )
+        endpoint = normalize_model_endpoint_routing(endpoint)
+        routes = validate_model_endpoint_routing(
+            endpoint,
+            settings,
+            require_resolvable=True,
+        )
+        route = next(candidate for candidate in routes if candidate["model_id"] == model_id)
+        if endpoint.get("provider") == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+            validate_custom_model_endpoint(endpoint, settings)
+
+        connection = endpoint.get("connection") or {}
+        client, runtime_protocol = build_model_endpoint_sync_chat_client(
+            auth_settings=endpoint.get("auth") or {},
+            provider=endpoint.get("provider") or "aoai",
+            endpoint=connection.get("endpoint") or "",
+            api_version=route["api_version"],
+            deployment_name=route["request_model"],
+            api_type=route["api_type"],
+            url_mode=route["url_mode"],
+            anthropic_version=route["anthropic_version"] or DEFAULT_ANTHROPIC_VERSION,
+            allow_private_custom_endpoints=settings.get("allow_private_custom_model_endpoints") is True,
+            allow_insecure_custom_endpoints=settings.get("allow_insecure_custom_model_endpoints") is True,
+            custom_endpoint_ca_bundle_path=str(settings.get("custom_model_endpoint_ca_bundle_path") or ""),
+            settings=settings,
+            endpoint_config=endpoint,
+            resolved_route=route,
+        )
+        response = client.chat.completions.create(
+            model=route["request_model"],
+            messages=[{"role": "user", "content": "Testing access."}],
+        )
+        if not response:
+            return jsonify({"error": "No response returned from model."}), 400
+        return jsonify({
+            "success": True,
+            "resolved": {
+                "request_url": route["operation_url"],
+                "protocol": runtime_protocol,
+                "api_type": route["api_type"],
+                "request_model": route["request_model"],
+            },
+        }), 200
+
     def handle_test_model_connection(scope="global", group_id=None):
         try:
             data = request.get_json(silent=True)
             if not isinstance(data, dict):
-                raise AIConnectionError("Model endpoint payload must be an object.", "invalid_model_selection")
-            data = resolve_request_endpoint_payload(data, scope=scope, for_chat_test=True, group_id=group_id)
+                raise AIConnectionError(
+                    "Model endpoint payload must be an object.",
+                    "invalid_model_selection",
+                )
+            if data.get("preview_only") is True:
+                return handle_model_routing_preview(data, scope, group_id=group_id)
+            if data.get("routing_schema_version") == 2:
+                return handle_explicit_model_test(
+                    data, scope, group_id=group_id
+                )
+            if scope == "group" and group_id is None:
+                # The saved-endpoint lookup and payload resolution below must target one active group.
+                group_id = require_active_group(get_current_user_id())
+            endpoint_id = str(data.get("endpoint_id") or data.get("id") or "").strip()
+            if endpoint_id:
+                saved_endpoint = resolve_endpoint_by_id(
+                    get_current_user_id(),
+                    scope,
+                    endpoint_id,
+                    group_id=group_id,
+                )
+                if saved_endpoint and routing_schema_version(saved_endpoint) == 2:
+                    return handle_explicit_model_test(
+                        data,
+                        scope,
+                        saved_endpoint,
+                        group_id=group_id,
+                    )
+            data = resolve_request_endpoint_payload(
+                data,
+                scope=scope,
+                for_chat_test=True,
+                group_id=group_id,
+            )
             provider = (data.get("provider") or "aoai").lower()
             if provider == "openai_compatible":
                 return jsonify({
@@ -784,6 +998,7 @@ def register_route_backend_models(bp):
                 anthropic_version=anthropic_version,
                 url_mode=connection.get("url_mode") or "",
                 endpoint_config={**data, "models": [model]},
+                model_id=str(model.get("id") or "").strip(),
             )
             try:
                 response = gpt_client.chat.completions.create(
@@ -817,12 +1032,25 @@ def register_route_backend_models(bp):
 
             return jsonify({"error": "No response returned from model."}), 400
 
+        except PermissionError as exc:
+            log_event(
+                "[MODELS] Test model request blocked by endpoint authorization",
+                extra={"scope": scope},
+                level=logging.WARNING,
+            )
+            return build_safe_error_response("You do not have access to test this model endpoint.", 403)
         except AIConnectionError as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 400
         except ModelEndpointValidationError as exc:
             return jsonify({"error": exc.public_message}), 400
         except SanitizedModelEndpointError as exc:
             return jsonify({"error": exc.public_message}), 400
+        except GenAIMilRequestError as exc:
+            return jsonify(exc.payload), (
+                exc.status_code
+                if exc.status_code in (401, 403, 404, 429, 502)
+                else 502
+            )
         except LookupError as exc:
             log_event(
                 "[MODELS] Test model request blocked because the model endpoint was not found",
@@ -1132,6 +1360,8 @@ def register_route_backend_models(bp):
                 return jsonify({"success": True, "count": count})
 
             return jsonify({"error": "Model provider not found."}), 400
+        except GenAIMilRequestError as error:
+            return jsonify(error.payload), error.status_code if error.status_code in (401, 403, 404, 429, 502) else 502
         except ModelEndpointValidationError as exc:
             return jsonify({"error": exc.public_message}), 400
         except LookupError as e:
@@ -1180,16 +1410,28 @@ def register_route_backend_models(bp):
         user_settings = get_user_settings(user_id)
         endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
         return jsonify({
-            "endpoints": sanitize_model_endpoints_for_frontend(endpoints),
-            "custom_api_types": get_model_endpoint_provider_ui_options(),
+            "endpoints": sanitize_model_endpoints_for_frontend(
+                endpoints, include_hidden_persona_text=True
+            ),
+            "custom_api_types": get_model_endpoint_provider_ui_options(routing_schema_version=2),
+            "revision": user_settings.get("_etag") or "",
         })
 
 
     def _load_personal_endpoints(user_id):
         """Read the caller's stored personal endpoints as a list."""
+        user_settings, endpoints, _revision = _load_personal_endpoint_state(user_id)
+        return endpoints
+
+    def _load_personal_endpoint_state(user_id):
+        """Read the endpoint list together with its optimistic-concurrency revision."""
         user_settings = get_user_settings(user_id)
         endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
-        return endpoints if isinstance(endpoints, list) else []
+        return (
+            user_settings,
+            endpoints if isinstance(endpoints, list) else [],
+            user_settings.get("_etag") or "",
+        )
 
     def _find_personal_endpoint(endpoints, endpoint_id):
         reference = str(endpoint_id or "")
@@ -1214,8 +1456,18 @@ def register_route_backend_models(bp):
                 level=logging.WARNING,
             )
             return None, (jsonify({"error": exc.public_message, "error_code": exc.code}), 400)
+        except ModelEndpointValidationError as exc:
+            log_models_exception(
+                "Personal model routing validation failed", exc,
+                extra={"scope": "user"}, level=logging.WARNING,
+            )
+            return None, (jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400)
         try:
             validate_custom_model_endpoints(normalized, get_settings())
+            validate_model_endpoint_ca_choices(normalized, get_settings())
+        except CABundleError as exc:
+            log_models_exception("Personal CA bundle validation failed", exc, extra={"code": exc.code}, level=logging.WARNING)
+            return None, (jsonify(exc.payload), exc.status)
         except ModelEndpointValidationError as exc:
             log_models_exception(
                 "Personal model endpoint validation failed",
@@ -1276,7 +1528,9 @@ def register_route_backend_models(bp):
             )
         return saved_endpoints, None
 
-    def _persist_personal_endpoints(user_id, normalized, existing):
+    def _persist_personal_endpoints(
+        user_id, normalized, existing, *, expected_etag=None
+    ):
         """Save a full endpoint list, moving Key Vault secrets to match.
 
         Secrets are handled in three passes because each endpoint can carry them: saved
@@ -1287,6 +1541,17 @@ def register_route_backend_models(bp):
         Returns ``(saved_endpoints, None)``, or ``(None, response)`` when a credential
         is refused, in which case nothing is written.
         """
+        personal_state = get_user_settings(user_id)
+        try:
+            validate_model_persona_settings_document({
+                **personal_state,
+                "settings": {
+                    **(personal_state.get("settings") or {}),
+                    "personal_model_endpoints": normalized,
+                },
+            })
+        except AIConnectionError as exc:
+            return None, (jsonify({"error": exc.public_message, "code": exc.code}), 400)
         existing_by_id = {
             endpoint.get("id"): endpoint
             for endpoint in existing
@@ -1296,37 +1561,80 @@ def register_route_backend_models(bp):
         if error:
             return None, error
 
-        for endpoint in saved_endpoints:
-            if not isinstance(endpoint, dict):
-                continue
-            endpoint_id = endpoint.get("id")
-            if not endpoint_id:
-                continue
-            keyvault_model_endpoint_cleanup_helper(
-                existing_by_id.get(endpoint_id),
-                endpoint,
-                endpoint_id,
-                scope="user",
-            )
-
         saved_endpoint_ids = {
             endpoint.get("id")
             for endpoint in saved_endpoints
             if isinstance(endpoint, dict) and endpoint.get("id")
         }
+        try:
+            personal_updates = {"personal_model_endpoints": saved_endpoints}
+            updated = (
+                update_user_settings(
+                    user_id, personal_updates, expected_etag=expected_etag
+                )
+                if expected_etag else update_user_settings(user_id, personal_updates)
+            )
+        except SettingsConflictError:
+            updated = None
+
+        if not updated:
+            for endpoint in saved_endpoints:
+                endpoint_id = endpoint.get("id") if isinstance(endpoint, dict) else ""
+                if not endpoint_id:
+                    continue
+                try:
+                    keyvault_model_endpoint_cleanup_helper(
+                        endpoint,
+                        existing_by_id.get(endpoint_id),
+                        endpoint_id,
+                        scope="user",
+                    )
+                except Exception as cleanup_exc:
+                    log_models_exception(
+                        "Unable to remove a staged personal endpoint credential",
+                        cleanup_exc,
+                        extra={"endpoint_id": endpoint_id},
+                        level=logging.WARNING,
+                    )
+            if updated is None:
+                return None, (
+                    jsonify({
+                        "error": "The personal endpoint catalog changed. Reload and try again.",
+                        "error_code": "settings_conflict",
+                    }),
+                    409,
+                )
+            return None, build_safe_error_response(
+                "Unable to confirm the endpoint save. Reload and verify before retrying.",
+                503,
+            )
+
+        for endpoint in saved_endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            endpoint_id = endpoint.get("id")
+            if endpoint_id:
+                keyvault_model_endpoint_cleanup_helper(
+                    existing_by_id.get(endpoint_id),
+                    endpoint,
+                    endpoint_id,
+                    scope="user",
+                )
         for endpoint in existing:
             if not isinstance(endpoint, dict):
                 continue
             endpoint_id = endpoint.get("id")
             if endpoint_id and endpoint_id not in saved_endpoint_ids:
-                keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="user")
-
-        update_user_settings(user_id, {"personal_model_endpoints": saved_endpoints})
+                keyvault_model_endpoint_delete_helper(
+                    endpoint, endpoint_id, scope="user"
+                )
         return saved_endpoints, None
 
     def _single_endpoint_response(saved_endpoints, endpoint_id, status):
         saved = _find_personal_endpoint(saved_endpoints, endpoint_id)
-        sanitized = sanitize_model_endpoints_for_frontend([saved]) if saved else []
+        sanitized = sanitize_model_endpoints_for_frontend(
+            [saved], include_hidden_persona_text=True
+        ) if saved else []
         return jsonify({"endpoint": sanitized[0] if sanitized else {}}), status
 
     def _create_personal_model_endpoint(user_id, payload):
@@ -1334,7 +1642,7 @@ def register_route_backend_models(bp):
         if not isinstance(payload, dict) or not payload:
             return jsonify({"error": "Model endpoint payload must be an object."}), 400
 
-        existing = _load_personal_endpoints(user_id)
+        _state, existing, revision = _load_personal_endpoint_state(user_id)
         candidate = dict(payload)
         endpoint_id = str(candidate.get("id") or "").strip()
         if not endpoint_id:
@@ -1346,7 +1654,9 @@ def register_route_backend_models(bp):
         normalized, error = _normalize_personal_endpoints(list(existing) + [candidate], existing)
         if error:
             return error
-        saved_endpoints, error = _persist_personal_endpoints(user_id, normalized, existing)
+        saved_endpoints, error = _persist_personal_endpoints(
+            user_id, normalized, existing, expected_etag=revision or None
+        )
         if error:
             return error
         return _single_endpoint_response(saved_endpoints, endpoint_id, 201)
@@ -1377,18 +1687,28 @@ def register_route_backend_models(bp):
         incoming = data.get("endpoints", [])
         if not isinstance(incoming, list):
             return jsonify({"error": "endpoints must be a list."}), 400
+        expected_revision = data.get("revision")
+        if not isinstance(expected_revision, str) or not expected_revision.strip():
+            return jsonify({
+                "error": "A catalog revision is required for a whole-list endpoint save.",
+                "error_code": "revision_required",
+            }), 400
 
-        existing = _load_personal_endpoints(user_id)
+        _state, existing, _revision = _load_personal_endpoint_state(user_id)
 
         normalized, error = _normalize_personal_endpoints(incoming, existing)
         if error:
             return error
-        saved_endpoints, error = _persist_personal_endpoints(user_id, normalized, existing)
+        saved_endpoints, error = _persist_personal_endpoints(
+            user_id, normalized, existing, expected_etag=expected_revision
+        )
         if error:
             return error
         return jsonify({
             "success": True,
-            "endpoints": sanitize_model_endpoints_for_frontend(saved_endpoints),
+            "endpoints": sanitize_model_endpoints_for_frontend(
+                saved_endpoints, include_hidden_persona_text=True
+            ),
         })
 
 
@@ -1409,7 +1729,9 @@ def register_route_backend_models(bp):
         if not endpoint:
             return jsonify({"error": "Model endpoint not found."}), 404
 
-        sanitized = sanitize_model_endpoints_for_frontend([endpoint])
+        sanitized = sanitize_model_endpoints_for_frontend(
+            [endpoint], include_hidden_persona_text=True
+        )
         return jsonify({"endpoint": sanitized[0] if sanitized else {}})
 
 
@@ -1435,7 +1757,7 @@ def register_route_backend_models(bp):
         if not isinstance(updates, dict):
             return jsonify({"error": "Model endpoint payload must be an object."}), 400
 
-        existing = _load_personal_endpoints(user_id)
+        _state, existing, revision = _load_personal_endpoint_state(user_id)
         current = _find_personal_endpoint(existing, endpoint_id)
         if not current:
             return jsonify({"error": "Model endpoint not found."}), 404
@@ -1450,7 +1772,9 @@ def register_route_backend_models(bp):
         normalized, error = _normalize_personal_endpoints(replaced, existing)
         if error:
             return error
-        saved_endpoints, error = _persist_personal_endpoints(user_id, normalized, existing)
+        saved_endpoints, error = _persist_personal_endpoints(
+            user_id, normalized, existing, expected_etag=revision or None
+        )
         if error:
             return error
         return _single_endpoint_response(saved_endpoints, current.get("id"), 200)
@@ -1472,10 +1796,12 @@ def register_route_backend_models(bp):
         user_id = get_current_user_id()
         try:
             ensure_governance_access("governance_user_endpoints", user_id)
-        except PermissionError as exc:
-            return jsonify({"error": str(exc)}), 403
+        except PermissionError:
+            return build_safe_error_response(
+                "Governance policy blocks access for feature 'governance_user_endpoints'.", 403,
+            )
 
-        existing = _load_personal_endpoints(user_id)
+        _state, existing, revision = _load_personal_endpoint_state(user_id)
         if not _find_personal_endpoint(existing, endpoint_id):
             return jsonify({"error": "Model endpoint not found."}), 404
 
@@ -1488,7 +1814,9 @@ def register_route_backend_models(bp):
         normalized, error = _normalize_personal_endpoints(remaining)
         if error:
             return error
-        _saved, error = _persist_personal_endpoints(user_id, normalized, existing)
+        _saved, error = _persist_personal_endpoints(
+            user_id, normalized, existing, expected_etag=revision or None
+        )
         if error:
             return error
         log_event(
@@ -1520,10 +1848,11 @@ def register_route_backend_models(bp):
             return build_group_access_error_response(user_id, exc, "group model endpoints")
         except PermissionError as exc:
             return build_group_access_error_response(user_id, exc, "group model endpoints")
-        endpoints = get_group_model_endpoints(group_id)
-        return jsonify({
-            "endpoints": sanitize_model_endpoints_for_frontend(endpoints)
-        })
+        payload, status = list_group_model_endpoints(user_id, group_id)
+        group = find_group_by_id(group_id)
+        payload["group_id"] = group_id
+        payload["revision"] = (group or {}).get("_etag") or ""
+        return jsonify(payload), status
 
 
     @bp.route('/api/group/model-endpoints', methods=['POST'])
@@ -1542,6 +1871,12 @@ def register_route_backend_models(bp):
         incoming = data.get("endpoints", [])
         if not isinstance(incoming, list):
             return jsonify({"error": "endpoints must be a list."}), 400
+        expected_revision = data.get("revision")
+        if not isinstance(expected_revision, str) or not expected_revision.strip():
+            return jsonify({
+                "error": "A catalog revision is required for a whole-list endpoint save.",
+                "error_code": "revision_required",
+            }), 400
 
         try:
             group_id = require_active_group(user_id)
@@ -1552,6 +1887,18 @@ def register_route_backend_models(bp):
             return build_group_access_error_response(user_id, exc, "group model endpoint settings")
         except PermissionError as exc:
             return build_group_access_error_response(user_id, exc, "group model endpoint settings")
+
+        group = find_group_by_id(group_id)
+        if not group:
+            return build_group_access_error_response(
+                user_id, LookupError("group_not_found"), "group model endpoint settings"
+            )
+        if group.get("status", "active") != "active":
+            return jsonify({"error": "Model endpoint editing requires an active group."}), 403
+        if not group_endpoint_management_operations(
+            user_id, group, get_user_role_in_group(group, user_id), get_settings()
+        ):
+            return jsonify({"error": "Model endpoint editing is not available."}), 403
 
         existing = get_group_model_endpoints(group_id)
 
@@ -1568,6 +1915,10 @@ def register_route_backend_models(bp):
             return jsonify({"error": exc.public_message, "error_code": exc.code}), 400
         try:
             validate_custom_model_endpoints(normalized, get_settings())
+            validate_model_endpoint_ca_choices(normalized, get_settings())
+        except CABundleError as exc:
+            log_models_exception("Group CA bundle validation failed", exc, extra={"code": exc.code}, level=logging.WARNING)
+            return jsonify(exc.payload), exc.status
         except ModelEndpointValidationError as exc:
             log_models_exception(
                 "Group model endpoint validation failed",
@@ -1581,6 +1932,13 @@ def register_route_backend_models(bp):
             for endpoint in existing
             if isinstance(endpoint, dict) and endpoint.get("id")
         }
+        try:
+            validate_model_persona_settings_document({
+                **(group or {}),
+                "model_endpoints": normalized,
+            })
+        except AIConnectionError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
         saved_endpoints, error = save_scoped_endpoint_secrets(normalized, existing_by_id, "group")
         if error:
             return error
@@ -1593,20 +1951,31 @@ def register_route_backend_models(bp):
         staged = staged_group_endpoint_credentials(normalized, existing_by_id, saved_endpoints)
         outcome = {}
         try:
-            committed = update_group_model_endpoints(group_id, saved_endpoints, user_id=user_id, outcome=outcome)
+            committed = update_group_model_endpoints(
+                group_id,
+                saved_endpoints,
+                user_id=user_id,
+                outcome=outcome,
+                expected_etag=expected_revision,
+            )
         except GroupDocumentWriteConflict:
             discard_staged_group_endpoint_credentials(group_id, staged)
             return jsonify({"error": GROUP_WRITE_CONFLICT_MESSAGE, "error_code": GROUP_WRITE_CONFLICT_CODE}), 409
         except (LookupError, PermissionError) as exc:
             discard_staged_group_endpoint_credentials(group_id, staged)
             return build_group_access_error_response(user_id, exc, "group model endpoint settings")
+        except (AIConnectionError, ModelTokenBudgetError) as exc:
+            discard_staged_group_endpoint_credentials(group_id, staged)
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
         except Exception:
             keep_staged_group_endpoint_credentials(group_id, staged)
             raise
         clean_up_committed_group_endpoint_credentials(group_id, committed, outcome, staged)
         return jsonify({
             "success": True,
-            "endpoints": sanitize_model_endpoints_for_frontend(saved_endpoints),
+            "endpoints": sanitize_model_endpoints_for_frontend(
+                saved_endpoints, include_hidden_persona_text=True
+            ),
         })
 
 

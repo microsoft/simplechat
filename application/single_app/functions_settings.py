@@ -3,10 +3,11 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import wraps
+import hashlib
 import logging
 import re
 import threading
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import requests
 from flask import g, has_request_context, jsonify, request, session
@@ -41,7 +42,9 @@ from functions_ai_connections import (
     normalize_model_capability_fields,
     supports_model_capability,
 )
-from functions_embedding_profile import normalize_embedding_operation, resolve_embedding_profile
+from functions_embedding_profile import (
+    normalize_embedding_operation, normalize_model_embedding_operation, resolve_embedding_profile,
+)
 from functions_content_safety import (
     CONTENT_SAFETY_CATEGORY_KEYS,
     CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
@@ -60,10 +63,19 @@ from functions_group_assignment_ids import (
 )
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
-from functions_model_capabilities import ModelTokenBudgetError, normalize_model_budget_overrides
-from functions_orchestration_timing import (
-    DEFAULT_STEP_TIMEOUT_SECONDS,
-    DEFAULT_TOTAL_TIMEOUT_SECONDS,
+from functions_model_capabilities import (
+    ModelTokenBudgetError,
+    normalize_model_budget_overrides,
+)
+from functions_model_persona import (
+    MODEL_PERSONA_ENABLED_FIELD,
+    MODEL_PERSONA_MARKDOWN_FIELD,
+    MODEL_PERSONA_TEXT_VISIBLE_FIELD,
+    normalize_model_persona,
+    validate_model_persona_collection_size,
+)
+from model_endpoint_ca_bundles import (
+    CABundleRegistry, ManagedCABundle, endpoint_ca_bundle_ids, normalize_ca_bundle_reference,
 )
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
@@ -74,7 +86,6 @@ from functions_model_endpoint_identity_header import (
 )
 from functions_model_endpoint_providers import (
     get_model_endpoint_provider,
-    normalize_api_type_value,
     normalize_custom_endpoint_auth_type,
     normalize_custom_endpoint_url_mode,
 )
@@ -87,9 +98,20 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     normalize_model_endpoint_api_type,
 )
+from functions_model_endpoint_urls import (
+    normalize_model_endpoint_routing,
+    routing_schema_version,
+)
+from model_endpoint_profiles import (
+    get_custom_endpoint_profile, merge_profile_credential_approval,
+)
 from functions_model_endpoint_validation import (
     endpoint_uses_mai_chat_completions,
     normalize_model_inference_connection,
+)
+from functions_orchestration_timing import (
+    DEFAULT_STEP_TIMEOUT_SECONDS,
+    DEFAULT_TOTAL_TIMEOUT_SECONDS,
 )
 from functions_rate_limit import (
     RATE_LIMIT_MESSAGE_DEFAULT,
@@ -97,6 +119,7 @@ from functions_rate_limit import (
     build_rate_limit_message,
 )
 from functions_service_health import get_default_service_health
+from functions_terms_of_use_config import TERMS_OF_USE_REVISION_KEY, normalize_terms_of_use_revision
 from json_schema_validation import validate_legacy_plugin_settings_update
 from functions_workflow_limits import (
     CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
@@ -1842,7 +1865,7 @@ def get_settings(use_cosmos=False, include_source=False):
             "selected": [],
             "all": []
         },
-        'enable_multi_model_endpoints': False,
+        'enable_multi_model_endpoints': True,
         'model_endpoints': [],
         'allow_private_custom_model_endpoints': False,
         'allow_insecure_custom_model_endpoints': False,
@@ -1906,6 +1929,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Redis Cache Settings
         'enable_redis_cache': False,
+        'enable_cosmos_replay_index_exclusion': False,
         'redis_url': '',
         'redis_key': '',
         # Every reader treats an empty value as key authentication, so seeding 'key'
@@ -2345,7 +2369,8 @@ def get_settings(use_cosmos=False, include_source=False):
             return settings_payload, source
         return settings_payload
 
-    def normalize_loaded_settings(settings_item):
+    def normalize_loaded_settings(settings_item, *, include_terms_revision=True):
+        legacy_multi_endpoint_setting_missing = 'enable_multi_model_endpoints' not in settings_item
         legacy_control_center_schedule = (
             'control_center_auto_refresh_timezone' not in settings_item
         )
@@ -2369,6 +2394,8 @@ def get_settings(use_cosmos=False, include_source=False):
         # Merge default_settings in, to fill in any missing or nested keys
         deep_merge_dicts(default_settings, settings_item)
         merged = settings_item
+        if legacy_multi_endpoint_setting_missing:
+            merged['enable_multi_model_endpoints'] = False
         if legacy_control_center_schedule:
             if legacy_control_center_time == '06:00':
                 merged['control_center_auto_refresh_time'] = '02:00'
@@ -2390,6 +2417,8 @@ def get_settings(use_cosmos=False, include_source=False):
         normalize_key_vault_reminder_settings(merged)
         normalize_model_endpoint_identity_header_settings(merged)
         normalize_tabular_parity_durable_preflight_defaults(merged)
+        if include_terms_revision:
+            normalize_terms_of_use_revision(merged)
         normalize_image_generation_api_version_settings(merged)
         normalize_image_connection_api_version_settings(merged)
 
@@ -2416,7 +2445,7 @@ def get_settings(use_cosmos=False, include_source=False):
             except (SettingsUnavailableError, SettingsConflictError) as error:
                 # Reads remain available during an outage; migrations are deferred,
                 # not reported as persisted or written via a second version source.
-                merged = normalize_loaded_settings(store.read(use_cosmos=True))
+                merged = normalize_loaded_settings(store.read(use_cosmos=True), include_terms_revision=False)
                 log_event(
                     "[ASC] Settings migration deferred; shared writes are unavailable.",
                     extra={"error_type": type(error).__name__},
@@ -2451,6 +2480,66 @@ def get_rate_limit_message(settings=None):
     """
     resolved_settings = settings if isinstance(settings, dict) else get_settings()
     return build_rate_limit_message(resolved_settings)
+
+
+def get_model_endpoint_ca_bundle_registry(settings):
+    """Build lazy CA storage from this operation's settings and initialized handles."""
+    def log_ca(action, **properties):
+        log_event(
+            f"[MODEL_CA_BUNDLES] Certificate bundle {action}.",
+            extra=properties, level=logging.INFO,
+        )
+
+    def fence_global(expected_etag):
+        try:
+            _get_app_settings_store().write(lambda document: document, expected_etag=expected_etag)
+        except SettingsConflictError:
+            # A newer conditional write already fenced the abandoned writer.
+            return
+
+    return CABundleRegistry(
+        cosmos_settings_container,
+        lambda: build_enhanced_citations_blob_service_client(settings),
+        {
+            "settings": cosmos_settings_container,
+            "user_settings": cosmos_user_settings_container,
+            "groups": cosmos_groups_container,
+        },
+        global_source_fence=fence_global, log=log_ca,
+    )
+
+
+@contextmanager
+def reserve_model_endpoint_ca_references(kind, source_id, old_endpoints, new_endpoints, expected_etag, *, settings=None):
+    """Existing configurations without managed bundles incur no registry I/O."""
+    if not (endpoint_ca_bundle_ids(old_endpoints) | endpoint_ca_bundle_ids(new_endpoints)):
+        yield False
+        return
+    settings = get_settings() if settings is None else settings
+    registry = get_model_endpoint_ca_bundle_registry(settings)
+    with registry.reserve_references(kind, source_id, old_endpoints, new_endpoints, expected_etag):
+        yield True
+
+
+def validate_model_endpoint_ca_choices(endpoints, settings):
+    bundle_ids = endpoint_ca_bundle_ids(endpoints)
+    if bundle_ids:
+        registry = get_model_endpoint_ca_bundle_registry(settings)
+        for bundle_id in bundle_ids:
+            registry.validate_selection(bundle_id)
+
+
+def resolve_model_endpoint_ca_trust(endpoint, settings, legacy_path):
+    connection = (endpoint or {}).get("connection") or {}
+    mode, bundle_id = normalize_ca_bundle_reference(connection)
+    if mode == "public":
+        return ""
+    if not bundle_id:
+        return legacy_path
+    if settings is None:
+        raise ValueError("Current application settings are required to resolve a managed CA bundle.")
+    pem, revision, digest = get_model_endpoint_ca_bundle_registry(settings).resolve(bundle_id)
+    return ManagedCABundle(bundle_id, revision, digest, pem)
 
 
 def validate_content_screening_settings(new_settings, current_settings, *, repository=None):
@@ -2604,7 +2693,7 @@ def update_settings(new_settings, *, expected_etag=None):
     updates = {
         key: copy.deepcopy(value)
         for key, value in new_settings.items()
-        if key not in COSMOS_METADATA_FIELDS | {SETTINGS_REVISION_FIELD, "id"}
+        if key not in COSMOS_METADATA_FIELDS | {SETTINGS_REVISION_FIELD, TERMS_OF_USE_REVISION_KEY, "id"}
     }
 
     def apply_updates(settings_item):
@@ -2622,7 +2711,9 @@ def update_settings(new_settings, *, expected_etag=None):
                 if candidate.get('web_iq_consent_accepted') is not True:
                     raise ValueError('Web IQ requires separate consent.')
         existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
+        normalize_terms_of_use_revision(settings_item)
         settings_item.update(updates)
+        normalize_terms_of_use_revision(settings_item)
         normalize_group_workflow_assignment_settings(settings_item)
         normalize_agents_page_promoted_popular_settings(settings_item)
         normalize_document_access_index_required_settings(settings_item)
@@ -2646,22 +2737,49 @@ def update_settings(new_settings, *, expected_etag=None):
         @contextmanager
         def guard_settings_write(current, candidate):
             with embedding_settings_write_guard(
-                current, candidate, force_check=EMBEDDING_SELECTION_KEY in updates,
+                current,
+                candidate,
+                force_check=EMBEDDING_SELECTION_KEY in updates,
             ):
                 if new_settings.get('enable_content_screening') is True:
-                    # First activation is create-only; revalidate a concurrent policy.
-                    from content_screening.service import initialize_screening_policy, validate_screening_configuration
+                    from content_screening.service import (
+                        initialize_screening_policy,
+                        validate_screening_configuration,
+                    )
 
                     initialize_screening_policy()
                     validate_screening_configuration(
-                        candidate, proposed_settings=True,
-                        document_operation=candidate.get('enable_content_screening_workspace_uploads', True) is True,
+                        candidate,
+                        proposed_settings=True,
+                        document_operation=(
+                            candidate.get(
+                                'enable_content_screening_workspace_uploads',
+                                True,
+                            ) is True
+                        ),
                     )
                 yield
 
-        _get_app_settings_store().write(
-            apply_updates, expected_etag=expected_etag, write_guard=guard_settings_write,
-        )
+        store = _get_app_settings_store()
+        if "model_endpoints" in updates:
+            previous = store.read(use_cosmos=True)
+            previous_endpoints = previous.get("model_endpoints") or []
+            new_endpoints = updates["model_endpoints"] or []
+            with reserve_model_endpoint_ca_references(
+                "settings", "app_settings", previous_endpoints, new_endpoints,
+                previous.get("_etag"), settings={**previous, **updates},
+            ) as fenced:
+                store.write(
+                    apply_updates,
+                    expected_etag=expected_etag or (previous.get("_etag") if fenced else None),
+                    write_guard=guard_settings_write,
+                )
+        else:
+            store.write(
+                apply_updates,
+                expected_etag=expected_etag,
+                write_guard=guard_settings_write,
+            )
         log_event(
             "[ASC] App settings updated and published successfully.",
             level=logging.INFO
@@ -3336,6 +3454,7 @@ def normalize_model_endpoints(endpoints):
         if not isinstance(endpoint, dict):
             continue
         endpoint_copy = json.loads(json.dumps(endpoint))
+        explicit_routing = routing_schema_version(endpoint_copy) == 2
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
         endpoint_copy.pop("has_bearer_token", None)
@@ -3346,7 +3465,11 @@ def normalize_model_endpoints(endpoints):
         connection = endpoint_copy.get("connection") or {}
         if not isinstance(connection, dict):
             raise AIConnectionError("Connection configuration must be an object.")
-        normalized_connection = normalize_model_inference_connection(connection)
+        normalized_connection = (
+            connection
+            if explicit_routing
+            else normalize_model_inference_connection(connection)
+        )
         if normalized_connection != connection:
             changed = True
         connection = normalized_connection
@@ -3355,8 +3478,12 @@ def normalize_model_endpoints(endpoints):
         if endpoint_copy.get("provider") != provider:
             endpoint_copy["provider"] = provider
             changed = True
-        if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
-            api_type = normalize_api_type_value(endpoint_copy.get("api_type"))
+        get_custom_endpoint_profile(endpoint_copy)
+        if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM and not explicit_routing:
+            api_type = normalize_model_endpoint_api_type(
+                provider,
+                endpoint_copy.get("api_type"),
+            )
             if endpoint_copy.get("api_type") != api_type:
                 endpoint_copy["api_type"] = api_type
                 changed = True
@@ -3443,15 +3570,20 @@ def normalize_model_endpoints(endpoints):
 
         models = endpoint_copy.get("models") or []
         normalized_models = []
-        custom_api_type = get_model_endpoint_api_type(endpoint_copy)
+        custom_api_type = "" if explicit_routing else get_model_endpoint_api_type(endpoint_copy)
         for model in models:
             if not isinstance(model, dict):
                 continue
-            model_copy = normalize_model_capability_fields(json.loads(json.dumps(model)))
+            model_copy = normalize_model_persona(
+                normalize_model_capability_fields(json.loads(json.dumps(model)))
+            )
+            if "embedding_operation" in model_copy:
+                model_copy["embedding_operation"] = normalize_model_embedding_operation(model_copy["embedding_operation"])
             # Effective profile metadata is resolved from current settings, never accepted
             # as a caller-supplied assertion or saved back as a deployment override.
             model_copy.pop("_catalog_profile", None)
             model_copy.pop("_catalog_effective_revision", None)
+            model_copy.pop("capability_status", None)
             profile_id = model_copy.get("catalogProfileId")
             if profile_id is not None and (
                 not isinstance(profile_id, str) or len(profile_id) > 160
@@ -3528,8 +3660,11 @@ def normalize_model_endpoints(endpoints):
             normalized_models.append(model_copy)
 
         endpoint_copy["models"] = normalized_models
+        if explicit_routing:
+            endpoint_copy = normalize_model_endpoint_routing(endpoint_copy)
         normalized.append(endpoint_copy)
 
+    validate_model_persona_collection_size(normalized)
     return normalized, changed or normalized != endpoints
 
 
@@ -3559,7 +3694,7 @@ def merge_model_endpoint_auth(existing_auth, incoming_auth):
             or (value == "Stored_In_KeyVault" and existing_auth.get(key))
         ):
             continue
-        if key in ("api_key_header", "api_key_prefix", "scope") and value == "":
+        if key in ("api_key_header", "api_key_prefix", "scope") and value is not None:
             merged[key] = value
             continue
         if value in (None, ""):
@@ -3575,17 +3710,52 @@ def merge_model_endpoint_payload(existing_endpoint, incoming_endpoint):
     if not isinstance(incoming_endpoint, dict):
         return dict(existing_endpoint)
 
+    if routing_schema_version(existing_endpoint) == 2 and (
+        "routing_schema_version" in incoming_endpoint
+        and routing_schema_version(incoming_endpoint) != 2
+    ):
+        raise ValueError("Explicit model routing cannot be downgraded by an editor save.")
+
     merged = dict(existing_endpoint)
     for key, value in incoming_endpoint.items():
+        if key == "models" and isinstance(value, list):
+            existing_models = existing_endpoint.get("models") if isinstance(existing_endpoint.get("models"), list) else []
+            existing_by_id = {
+                str(model.get("id")): model
+                for model in existing_models
+                if isinstance(model, dict) and model.get("id") not in (None, "")
+            }
+            merged_models = []
+            for model in value:
+                if not isinstance(model, dict):
+                    continue
+                merged_model = dict(model)
+                existing_model = existing_by_id.get(str(model.get("id") or ""))
+                if existing_model:
+                    for persona_field in (
+                        MODEL_PERSONA_ENABLED_FIELD,
+                        MODEL_PERSONA_MARKDOWN_FIELD,
+                        MODEL_PERSONA_TEXT_VISIBLE_FIELD,
+                    ):
+                        if persona_field not in model and persona_field in existing_model:
+                            merged_model[persona_field] = existing_model[persona_field]
+                merged_models.append(merged_model)
+            merged[key] = merged_models
+            continue
         if key == "auth":
             merged["auth"] = merge_model_endpoint_auth(existing_endpoint.get("auth"), value)
             continue
         if value in (None, ""):
             continue
         merged[key] = value
+    if "profile" in incoming_endpoint:
+        merged["profile"] = incoming_endpoint["profile"] or ""
+    merge_profile_credential_approval(existing_endpoint, incoming_endpoint, merged)
     # Null capacity/identity overrides deliberately restore inheritance, unlike
     # blank authentication fields which must retain their stored secrets.
     merged.update(normalize_model_budget_overrides(incoming_endpoint))
+    if routing_schema_version(merged) == 2:
+        normalize_model_endpoint_routing(merged)
     return merged
 
 
@@ -3627,7 +3797,13 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
     return merged
 
 
-def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True, catalog_settings=None):
+def sanitize_model_endpoints_for_frontend(
+    endpoints,
+    *,
+    include_connection_details=True,
+    include_hidden_persona_text=False,
+    catalog_settings=None,
+):
     """Keep editable model metadata while stripping stored auth credentials."""
     from functions_model_catalog import ModelCatalogError, apply_model_profile, get_effective_model_profiles
 
@@ -3667,6 +3843,12 @@ def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_detai
         endpoint_copy["has_bearer_token"] = has_bearer_token
         for model in endpoint_copy.get("models") or []:
             if isinstance(model, dict):
+                persona_enabled = model.get(MODEL_PERSONA_ENABLED_FIELD) is True
+                persona_visible = model.get(MODEL_PERSONA_TEXT_VISIBLE_FIELD, True) is True
+                if not include_hidden_persona_text and (
+                    not persona_enabled or not persona_visible
+                ):
+                    model.pop(MODEL_PERSONA_MARKDOWN_FIELD, None)
                 effective_model = model
                 if profiles is not None:
                     try:
@@ -3677,12 +3859,106 @@ def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_detai
                 model["capability_status"] = describe_model_capabilities(
                     effective_model, endpoint_copy.get("provider"), endpoint=endpoint,
                 )
+                if not include_connection_details:
+                    model.pop("embedding_operation", None)
         if not include_connection_details:
             for field in ("auth", "connection", "management", "identity_header"):
                 endpoint_copy.pop(field, None)
         sanitized.append(endpoint_copy)
 
     return sanitized
+
+def _model_endpoint_routing_fingerprint(endpoint):
+    return hashlib.sha256(json.dumps(endpoint, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def plan_model_endpoint_routing_migration(endpoint, *, excluded_consumers_present=None):
+    """Plan only; candidates/backups contain secrets and must remain server-side.
+
+An authorized owner must audit excluded consumers and securely export the backup
+before any separate persistence operation. No settings are written by this API.
+"""
+    if not isinstance(endpoint, dict):
+        raise ValueError("Invalid endpoint configuration.")
+    original = copy.deepcopy(endpoint)
+    result = {"can_migrate": False, "issues": [], "endpoint": None, "backup": None}
+    if excluded_consumers_present is not False:
+        result["issues"].append("Excluded consumer references require review; retain legacy routing.")
+        return result
+    try:
+        candidate = copy.deepcopy(endpoint)
+        if routing_schema_version(candidate) == 1:
+            if candidate.get("provider") != "custom":
+                raise ValueError("Non-Custom migration requires owner review of the existing wire contract.")
+            api_type = get_model_endpoint_api_type(candidate)
+            descriptor = get_model_endpoint_provider(api_type)
+            if descriptor is None or descriptor.routing_schema_version > 1:
+                raise ValueError("Legacy API type requires review.")
+            connection = candidate.get("connection") or {}
+            raw_endpoint = connection.get("endpoint") or ""
+            if not isinstance(raw_endpoint, str) or any(character.isspace() or ord(character) < 32 for character in raw_endpoint) or "?" in raw_endpoint or "#" in raw_endpoint:
+                raise ValueError("Legacy URL components require owner review; retain legacy routing.")
+            parsed = urlsplit(raw_endpoint)
+            path = parsed.path.rstrip("/")
+            allowed_paths = {
+                "openai": {"", "/v1", "/openai/v1"},
+                "azure_openai": {""},
+                "anthropic": {"", "/v1", "/v1/messages"},
+                "gemini": {"/v1beta/openai"},
+            }
+            if path not in allowed_paths.get(api_type, set()):
+                raise ValueError("Existing gateway or operation path requires owner review; retain legacy routing.")
+            mode = str(connection.get("url_mode") or "auto").strip().lower()
+            if mode not in ("auto", "exact"):
+                raise ValueError("Legacy URL handling requires owner review.")
+            if api_type == "azure_openai" and mode == "exact":
+                raise ValueError("Legacy deployment Exact behavior requires owner review.")
+            if api_type == "anthropic":
+                path = "/v1"
+                mode = "exact"
+                connection["endpoint"] = urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+            candidate["routing_schema_version"] = 2
+            for model in candidate.get("models") or []:
+                if not isinstance(model, dict) or not model.get("id") or not candidate.get("id"):
+                    raise ValueError("Stable endpoint and model IDs are required before migration.")
+                if any(field in model for field in ("api_type", "url_mode", "api_path")):
+                    raise ValueError("Pre-existing model routing fields require owner review.")
+                field = "modelName" if descriptor.uses_model_name else "deploymentName"
+                alias = "name" if descriptor.uses_model_name else "deployment"
+                model[field] = model.get(field) or model.get(alias) or ""
+                model.update({"api_type": api_type, "url_mode": mode, "api_path": ""})
+                if descriptor.version_field:
+                    legacy_version = (
+                        connection.get(descriptor.version_field)
+                        or (connection.get("openai_api_version") if api_type == "azure_openai" else None)
+                        or descriptor.default_version
+                    )
+                    if model.get(descriptor.version_field) not in (None, "", legacy_version):
+                        raise ValueError("Conflicting model version metadata requires owner review; retain legacy routing.")
+                    model[descriptor.version_field] = legacy_version
+        normalized, _ = normalize_model_endpoints([candidate])
+        candidate = normalized[0]
+    except ValueError as exc:
+        result["issues"].append(str(exc))
+        return result
+    result.update({
+        "can_migrate": True,
+        "endpoint": candidate,
+        "backup": {"format_version": 1, "endpoint": original, "migrated_fingerprint": _model_endpoint_routing_fingerprint(candidate)},
+    })
+    return result
+
+
+def restore_model_endpoint_routing_backup(current_endpoint, backup):
+    """Return the original record only if the migrated record has not changed."""
+    if not isinstance(backup, dict) or backup.get("format_version") != 1:
+        raise ValueError("Invalid model endpoint routing backup.")
+    original = backup.get("endpoint")
+    if not isinstance(original, dict) or original.get("id") != current_endpoint.get("id"):
+        raise ValueError("Routing backup does not match the selected endpoint.")
+    if backup.get("migrated_fingerprint") != _model_endpoint_routing_fingerprint(current_endpoint):
+        raise ValueError("Endpoint changed after migration; review before restoring.")
+    return copy.deepcopy(original)
 
 
 EMPTY_DEFAULT_MODEL_SELECTION = {"endpoint_id": "", "model_id": "", "provider": ""}
@@ -3850,6 +4126,7 @@ def build_migrated_model_endpoints_from_legacy(settings):
         },
         "models": migrated_models,
     }]
+
 
 
 def encrypt_key(key):
@@ -4105,7 +4382,9 @@ def _clear_stale_active_group(user_id, stale_group_id):
     return False
 
 
-def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
+def update_user_settings(
+    user_id, settings_to_update, allow_cross_user=False, *, expected_etag=None
+):
     """
     Updates or creates user settings in Cosmos DB, merging new settings
     into the existing 'settings' sub-dictionary and updating 'lastUpdated'.
@@ -4139,6 +4418,13 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
         # Try to read the existing document
         try:
             doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+            if (
+                expected_etag is not None
+                and str(doc.get("_etag") or "") != str(expected_etag)
+            ):
+                raise SettingsConflictError(
+                    "The user settings changed after they were loaded."
+                )
 
             # Ensure the 'settings' key exists and is a dictionary
             if 'settings' not in doc or not isinstance(doc.get('settings'), dict):
@@ -4146,6 +4432,10 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
 
 
         except exceptions.CosmosResourceNotFoundError:
+            if expected_etag is not None and str(expected_etag):
+                raise SettingsConflictError(
+                    "The user settings changed after they were loaded."
+                )
 
             # Document doesn't exist, create the basic structure
             doc = {
@@ -4154,6 +4444,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
                 # Add any other default top-level fields if needed
             }
 
+        old_model_endpoints = copy.deepcopy(doc["settings"].get("personal_model_endpoints") or [])
 
         try:
             validate_legacy_plugin_settings_update(doc['settings'], settings_to_update)
@@ -4268,30 +4559,45 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
         # Use timezone-aware UTC time
         doc['lastUpdated'] = datetime.now(timezone.utc).isoformat()
 
-        if (
-            {'plugins', 'semantic_kernel_plugins'}.intersection(settings_to_update)
-            or doc['settings'].get('plugins') or doc['settings'].get('semantic_kernel_plugins')
-        ):
-            if doc.get('_etag'):
-                cosmos_user_settings_container.replace_item(
-                    user_id, body=doc,
-                    etag=doc['_etag'], match_condition=MatchConditions.IfNotModified,
-                )
+        new_model_endpoints = (
+            doc["settings"].get("personal_model_endpoints") or []
+            if "personal_model_endpoints" in settings_to_update else old_model_endpoints
+        )
+        with reserve_model_endpoint_ca_references(
+            "user_settings", user_id, old_model_endpoints, new_model_endpoints, doc.get("_etag"),
+        ) as fenced:
+            if (
+                expected_etag is not None
+                or fenced
+                or {'plugins', 'semantic_kernel_plugins'}.intersection(settings_to_update)
+                or doc['settings'].get('plugins') or doc['settings'].get('semantic_kernel_plugins')
+            ):
+                if doc.get('_etag'):
+                    cosmos_user_settings_container.replace_item(
+                        user_id, body=doc,
+                        etag=doc['_etag'], match_condition=MatchConditions.IfNotModified,
+                    )
+                else:
+                    cosmos_user_settings_container.create_item(body=doc)
             else:
-                cosmos_user_settings_container.create_item(body=doc)
-        else:
-            cosmos_user_settings_container.upsert_item(body=doc)
+                cosmos_user_settings_container.upsert_item(body=doc)
         _set_request_cached_user_settings(user_id, doc)
         _delete_user_ui_settings_cache(user_id)
 
         return True
 
+    except SettingsConflictError:
+        raise
+    except exceptions.CosmosAccessConditionFailedError as exc:
+        raise SettingsConflictError(
+            "The user settings changed while they were being saved."
+        ) from exc
     except exceptions.CosmosHttpResponseError as e:
         log_event(
             "User settings update failed with Cosmos DB HTTP error.",
             extra={
                 "user_id": user_id,
-                "error": str(e)
+                "error_type": type(e).__name__
             },
             level=logging.ERROR,
             exceptionTraceback=True
@@ -4304,7 +4610,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
             "User settings update failed with unexpected error.",
             extra={
                 "user_id": user_id,
-                "error": str(e)
+                "error_type": type(e).__name__
             },
             level=logging.ERROR,
             exceptionTraceback=True
@@ -4458,7 +4764,16 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
         return full_settings
     
     sanitized = {}
-    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret", "bearer_token", "access_token"]
+    sensitive_key_terms = [
+        "key",
+        "base64",
+        "image",
+        "storage_account_url",
+        "_secret",
+        "bearer_token",
+        "access_token",
+        MODEL_PERSONA_MARKDOWN_FIELD,
+    ]
     
     for k, v in full_settings.items():
         if k.startswith('content_screening'):

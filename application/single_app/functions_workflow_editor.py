@@ -187,9 +187,14 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
     seen_endpoints = set()
     for endpoint in endpoints:
         endpoint_id = str(endpoint.get("id") or "")
-        if endpoint_id in seen_endpoints:
+        endpoint_scope = str(endpoint.get("scope") or "global").strip().lower()
+        endpoint_scope_id = str(endpoint.get("scope_id") or (
+            "global" if endpoint_scope == "global" else scope_id
+        )).strip()
+        endpoint_key = (endpoint_scope, endpoint_scope_id, endpoint_id)
+        if endpoint_key in seen_endpoints:
             continue
-        seen_endpoints.add(endpoint_id)
+        seen_endpoints.add(endpoint_key)
         if not endpoint_id or endpoint.get("enabled") is False:
             continue
         provider = endpoint.get("provider") or "aoai"
@@ -199,6 +204,8 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
             models.append({
                 "endpoint_id": endpoint_id,
                 "model_id": str(model["id"]),
+                "scope_type": endpoint_scope,
+                "scope_id": endpoint_scope_id,
                 "label": f"{endpoint.get('name') or endpoint_id} / {model.get('displayName') or model.get('modelName') or model['id']}",
                 "provider": provider,
                 # Catalog models use the locally metered model path, not hosted-agent execution.

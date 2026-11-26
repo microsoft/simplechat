@@ -1,8 +1,9 @@
 # test_cosmos_document_boundaries.py
 """Functional contracts for the SDK document boundary and reviewed owner inventory.
 
-Version: 0.261.324
+Version: 0.261.485
 Implemented in: 0.261.324
+Offline conditional patch double coverage implemented in: 0.261.485
 
 No cloud client, configuration bootstrap, or network service is required.
 """
@@ -180,6 +181,51 @@ def test_migrated_workflow_and_bootstrap_doubles_keep_explicit_compatibility(
     expected = CosmosDict if sdk_responses else dict
     assert type(created) is type(read) is expected
     assert type(read["nested"]) is dict and type(default) is CosmosDict
+
+
+def test_offline_container_patch_honors_replay_predicates_and_preconditions():
+    container = importlib.import_module("test_support.offline_bootstrap").OfflineContainer()
+    operation = [{"op": "set", "path": "/updated_at", "value": "now"}]
+    with pytest.raises(exceptions.CosmosResourceNotFoundError):
+        container.patch_item("missing", "missing", operation)
+    created = container.create_item(body={"id": "events", "payload": ["first"]})
+    first = 'FROM c WHERE IS_ARRAY(c.payload) AND (NOT IS_DEFINED(c.replay_append_watermarks))'
+    advance = (
+        'FROM c WHERE IS_ARRAY(c.payload) AND (IS_OBJECT(c.replay_append_watermarks) '
+        'AND (NOT IS_DEFINED(c.replay_append_watermarks["writer"]) OR c.replay_append_watermarks["writer"] < 2))'
+    )
+    container.patch_item("events", "events", [
+        {"op": "add", "path": "/payload/-", "value": "second"},
+        {"op": "set", "path": "/replay_append_watermarks", "value": {"writer": 1}},
+    ], filter_predicate=first)
+    patched = container.patch_item("events", "events", [
+        {"op": "add", "path": "/payload/-", "value": "third"},
+        {"op": "incr", "path": "/streamed_content_chars", "value": 5},
+        {"op": "set", "path": "/replay_append_watermarks/writer", "value": 2},
+    ], filter_predicate=advance)
+    assert type(patched) is CosmosDict and patched["_etag"] != created["_etag"]
+    assert patched["payload"] == ["first", "second", "third"] and patched["streamed_content_chars"] == 5
+    before = deepcopy(container.items)
+    for predicate in (first, advance):
+        with pytest.raises(exceptions.CosmosAccessConditionFailedError):
+            container.patch_item("events", "events", operation, filter_predicate=predicate)
+    with pytest.raises(exceptions.CosmosAccessConditionFailedError):
+        container.patch_item(
+            "events", "events", operation, etag=created["_etag"], match_condition=MatchConditions.IfNotModified,
+        )
+    with pytest.raises(exceptions.CosmosHttpResponseError) as missing_parent:
+        container.patch_item("events", "events", [{"op": "set", "path": "/absent/child", "value": 1}])
+    assert missing_parent.value.status_code == 400 and container.items == before
+
+    submission = 'attempt "quoted"'
+    container.create_item(body={"id": "meta", "payload": {"submission_id": submission, "active": False}})
+    owned = f"FROM c WHERE c.payload.submission_id = {json.dumps(submission)}"
+    assert container.patch_item("meta", "meta", operation, filter_predicate=owned, no_response=True) == {}
+    with pytest.raises(exceptions.CosmosAccessConditionFailedError):
+        container.patch_item("meta", "meta", operation, filter_predicate=f"{owned} AND c.payload.active = true")
+    with pytest.raises(AssertionError, match="Unsupported Cosmos filter predicate"):
+        container.patch_item("meta", "meta", operation, filter_predicate="FROM c WHERE STARTSWITH(c.id, 'm')")
+    assert container.items["meta"]["updated_at"] == "now"
 
 
 def test_repository_boundary_inventory_has_no_unreviewed_or_stale_owners():

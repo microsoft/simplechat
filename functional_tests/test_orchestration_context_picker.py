@@ -83,6 +83,25 @@ def test_picked_tags_reach_the_plan():
         assert resolve_seeds({})['tags'] == []
 
 
+def test_model_scope_and_agent_persona_opt_out_reach_the_resolver():
+    with stubbed_app_imports():
+        from functions_orchestration_context import resolve_seeds
+
+        direct = resolve_seeds({
+            'model_endpoint_id': 'shared-endpoint',
+            'model_id': 'shared-model',
+            'model_provider': 'custom',
+            'model_scope_type': 'group',
+            'model_scope_id': 'group-one',
+        })
+        assert direct['model']['model_scope_type'] == 'group'
+        assert direct['model']['model_scope_id'] == 'group-one'
+        assert direct['apply_model_persona'] is True
+
+        agent = resolve_seeds({'agent_info': {'id': 'agent-one'}})
+        assert agent['apply_model_persona'] is False
+
+
 def test_a_tag_scopes_the_probe_rather_than_replacing_it():
     with stubbed_app_imports():
         from functions_orchestration_context import resolve_seeds, seeds_are_explicit

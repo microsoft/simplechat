@@ -1,7 +1,7 @@
 # test_cosmos_throughput_request_boundary.py
 """
 Functional tests for the Cosmos ARM resource request boundary (CodeQL alert 1089).
-Version: 0.261.457
+Version: 0.261.472
 Implemented in: 0.261.457
 
 Real resource builders and Requests URL preparation run without cloud access.
@@ -83,6 +83,20 @@ def test_container_dot_segments_cannot_select_database_throughput(arm, container
     arm.credential_factory.assert_not_called()
     arm.credential.get_token.assert_not_called()
     assert arm.sent == []
+
+
+def test_container_policy_update_uses_the_configured_arm_endpoint_and_etag(arm):
+    path = f"{DATABASE_PATH}/containers/settings"
+    body = {"properties": {"resource": {
+        "id": "settings", "indexingPolicy": {"excludedPaths": [{"path": "/stream_replay_events/[]/?"}]},
+    }, "options": {}}}
+    arm.module._arm_request("PUT", path, payload=body, if_match='"fixture-etag"')
+    (request, _), = arm.sent
+    target = urlsplit(request.url)
+    assert target.netloc == urlsplit(arm.config.resource_manager).netloc
+    assert target.path == path
+    assert request.headers["If-Match"] == '"fixture-etag"'
+    assert json.loads(request.body) == body
 
 
 @pytest.mark.parametrize("resource_path", [

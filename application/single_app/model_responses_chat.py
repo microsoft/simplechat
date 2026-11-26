@@ -127,7 +127,51 @@ def responses_request(parameters):
             {"type": "json_schema", **response_format["json_schema"]}
             if response_format.get("type") == "json_schema" else response_format
         )}
+    if values.get("stream") is True:
+        request["stream"] = True
+    stream_options = values.get("stream_options")
+    if stream_options:
+        if not isinstance(stream_options, dict):
+            raise ModelEndpointValidationError(
+                "Responses stream options are invalid."
+            )
+        # Responses reports usage on its terminal event; include_usage is Chat Completions-only.
+        native_options = {key: value for key, value in stream_options.items() if key != "include_usage"}
+        if native_options:
+            request["stream_options"] = deepcopy(native_options)
     return request
+
+
+def responses_stream_text_delta(event):
+    """Return incremental visible text, or an empty string for other events."""
+    event_type = str(getattr(event, "type", "") or "")
+    if event_type in {
+        "response.output_text.delta",
+        "response.refusal.delta",
+    }:
+        return str(getattr(event, "delta", "") or "")
+    return ""
+
+
+def responses_stream_final_response(event):
+    """Return a terminal response, or raise for an explicitly failed stream."""
+    event_type = str(getattr(event, "type", "") or "")
+    if event_type == "response.completed":
+        response = getattr(event, "response", None)
+        if response is None:
+            raise ModelEndpointValidationError(
+                "The Responses stream completed without a response."
+            )
+        return response
+    if event_type in {
+        "response.failed",
+        "response.incomplete",
+        "response.cancelled",
+        "error",
+    }:
+        response = getattr(event, "response", None)
+        return response
+    return None
 
 
 def responses_completion(response):
@@ -137,19 +181,32 @@ def responses_completion(response):
             "The model did not complete its response. Review Response Length and the request before retrying.",
         )
     output = [item.model_dump(exclude_none=True) for item in response.output]
-    texts, calls = [], []
+    texts, calls, normalized_output = [], [], []
+    seen_calls = set()
     for item in output:
         if item["type"] == "function_call":
+            signature = (
+                str(item.get("call_id") or ""),
+                str(item.get("name") or ""),
+                str(item.get("arguments") or ""),
+            )
+            if signature in seen_calls:
+                continue
+            seen_calls.add(signature)
+            normalized_output.append(item)
             calls.append({
                 "id": item["call_id"], "type": "function",
                 "function": {"name": item["name"], "arguments": item["arguments"]},
             })
         elif item["type"] == "message":
+            normalized_output.append(item)
             texts.extend(
                 block.get("text") or block.get("refusal", "")
                 for block in item.get("content") or []
                 if block.get("type") in {"output_text", "refusal"}
             )
+        else:
+            normalized_output.append(item)
     if not texts and not calls:
         raise ModelEndpointValidationError("The Responses endpoint returned no answer or function calls.")
     usage = None
@@ -167,5 +224,5 @@ def responses_completion(response):
         }],
         usage=usage,
     )
-    completion._responses_items = output
+    completion._responses_items = normalized_output
     return completion

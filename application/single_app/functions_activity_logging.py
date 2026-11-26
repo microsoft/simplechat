@@ -1800,6 +1800,7 @@ def log_terms_of_use_accepted(
     source: str,
     accepted_date: str,
     auth_state: Optional[str] = None,
+    terms_version: Optional[int] = None,
 ) -> None:
     """Log when a user accepts the terms of use."""
     try:
@@ -1811,6 +1812,7 @@ def log_terms_of_use_accepted(
             'created_at': datetime.utcnow().isoformat(),
             'accepted_date': accepted_date,
             'terms_hash': terms_hash,
+            'terms_version': terms_version,
             'frequency': frequency,
             'source': source,
             'auth_state': auth_state or 'authenticated',
@@ -1844,6 +1846,7 @@ def log_terms_of_use_declined(
     source: str,
     redirect_url: str,
     auth_state: Optional[str] = None,
+    terms_version: Optional[int] = None,
 ) -> None:
     """Log when a signed-in user declines the terms of use."""
     try:
@@ -1855,6 +1858,7 @@ def log_terms_of_use_declined(
             'created_at': datetime.utcnow().isoformat(),
             'declined_date': datetime.utcnow().strftime('%Y-%m-%d'),
             'terms_hash': terms_hash,
+            'terms_version': terms_version,
             'frequency': frequency,
             'source': source,
             'redirect_url': redirect_url,

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for admin multi-endpoint persistence guard.
-Version: 0.261.122
-Implemented in: 0.239.199; updated in 0.250.172
+Version: 0.261.428
+Implemented in: 0.239.199; store-boundary and default coverage updated in 0.261.043
 
 This test ensures that once multi-endpoint model management is enabled, admin
 settings saves preserve it even if the checkbox is omitted from later form
@@ -110,8 +110,7 @@ def test_config_version_is_bumped_for_multi_endpoint_persistence_fix():
     """Verify config version was bumped for the admin persistence guard fix."""
     print('🔍 Testing config version bump...')
 
-    config_content = read_file(CONFIG_FILE)
-    assert_app_version_at_least("0.239.199")
+    assert_app_version_at_least("0.261.043")
 
     print('✅ Config version bump passed')
     return True

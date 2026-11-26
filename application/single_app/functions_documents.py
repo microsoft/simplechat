@@ -142,7 +142,12 @@ from functions_authentication import *
 from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
-from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, build_model_endpoint_sync_chat_client
+from functions_model_endpoint_runtime import (
+    MODEL_ENDPOINT_PROVIDER_ALLOWLIST,
+    build_model_endpoint_sync_chat_client,
+    resolve_model_endpoint_from_context,
+)
+from functions_model_endpoint_urls import routing_schema_version
 from functions_xsd_schema import (
     ERR_COMPILE_FAILED,
     ERR_DEPENDENCY_LOCATIONLESS_IMPORT,
@@ -361,6 +366,8 @@ def _build_model_endpoint_client(
     settings=None,
     endpoint_config=None,
     identity_context=None,
+    resolved_route=None,
+    model_id='',
 ):
     client, _ = build_model_endpoint_sync_chat_client(
         auth_settings,
@@ -371,9 +378,13 @@ def _build_model_endpoint_client(
         api_type=api_type,
         anthropic_version=anthropic_version,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
+        allow_insecure_custom_endpoints=(settings or {}).get('allow_insecure_custom_model_endpoints') is True,
+        custom_endpoint_ca_bundle_path=str((settings or {}).get('custom_model_endpoint_ca_bundle_path') or ''),
         settings=settings,
         endpoint_config=endpoint_config,
         identity_context=identity_context,
+        resolved_route=resolved_route,
+        model_id=model_id,
     )
     return client
 
@@ -403,25 +414,74 @@ def _build_model_endpoint_client_for_model(
     provider = str(endpoint_cfg.get("provider") or fallback_provider or "aoai").lower()
     require_model_capability(model_cfg, provider=provider)
 
-    endpoint_cfg = keyvault_model_endpoint_get_helper(
-        endpoint_cfg,
-        endpoint_cfg.get("id") or fallback_endpoint_id,
-        scope="global",
-        return_type=SecretReturnType.VALUE,
-    )
+    resolved_route = None
+    if routing_schema_version(endpoint_cfg) == 2:
+        identity = (
+            identity_context if isinstance(identity_context, dict) else {}
+        )
+        endpoint_cfg = resolve_model_endpoint_from_context(
+            settings,
+            {
+                "routing_schema_version": 2,
+                "scope_type": "global",
+                "scope_id": "global",
+                "endpoint_id": (
+                    endpoint_cfg.get("id") or fallback_endpoint_id
+                ),
+                "model_id": model_id,
+                "user_id": str(identity.get("user_id") or "").strip(),
+            },
+            authorize=True,
+        )
+        if not isinstance(endpoint_cfg, dict):
+            raise LookupError(
+                f"Selected {purpose_label} endpoint could not be authorized."
+            )
+        resolved_route = endpoint_cfg.get("_resolved_route")
+        if not isinstance(resolved_route, dict):
+            raise ValueError(
+                f"Selected {purpose_label} route could not be resolved."
+            )
+    else:
+        endpoint_cfg = keyvault_model_endpoint_get_helper(
+            endpoint_cfg,
+            endpoint_cfg.get("id") or fallback_endpoint_id,
+            scope="global",
+            return_type=SecretReturnType.VALUE,
+        )
 
     connection = endpoint_cfg.get("connection", {}) or {}
     auth_settings = endpoint_cfg.get("auth", {}) or {}
-    deployment = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
+    deployment = (
+        resolved_route["request_model"]
+        if resolved_route
+        else resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
+    )
     endpoint = str(connection.get("endpoint") or "").strip()
-    api_version = str(connection.get("openai_api_version") or connection.get("api_version") or "").strip()
-    api_type = get_model_endpoint_api_type(endpoint_cfg)
-    anthropic_version = str(connection.get("anthropic_version") or "").strip()
-    runtime_protocol = infer_model_endpoint_protocol(
-        provider,
-        endpoint,
-        deployment,
-        api_type,
+    api_version = str(
+        resolved_route["api_version"]
+        if resolved_route
+        else connection.get("openai_api_version")
+        or connection.get("api_version")
+        or ""
+    ).strip()
+    api_type = (
+        resolved_route["api_type"]
+        if resolved_route
+        else get_model_endpoint_api_type(endpoint_cfg)
+    )
+    anthropic_version = str(
+        resolved_route["anthropic_version"]
+        if resolved_route
+        else connection.get("anthropic_version")
+        or ""
+    ).strip()
+    runtime_protocol = (
+        resolved_route["protocol"]
+        if resolved_route
+        else infer_model_endpoint_protocol(
+            provider, endpoint, deployment, api_type
+        )
     )
 
     if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
@@ -445,6 +505,8 @@ def _build_model_endpoint_client_for_model(
         settings=settings,
         endpoint_config=endpoint_cfg,
         identity_context=identity_context,
+        resolved_route=resolved_route,
+        model_id=model_id,
     ), deployment
 
 
@@ -12213,6 +12275,36 @@ def get_audio_runtime_capabilities(force_refresh: bool = False):
 
     _AUDIO_RUNTIME_CAPABILITIES_CACHE = capabilities
     return dict(capabilities)
+
+
+def peek_audio_runtime_capabilities() -> Dict[str, Any]:
+    """Return non-blocking audio-runtime facts for an admin request."""
+    global _AUDIO_RUNTIME_CAPABILITIES_CACHE
+    if _AUDIO_RUNTIME_CAPABILITIES_CACHE is not None:
+        return dict(_AUDIO_RUNTIME_CAPABILITIES_CACHE)
+
+    ffmpeg_path = shutil.which("ffmpeg") or ""
+    ffprobe_path = shutil.which("ffprobe") or ""
+    return {
+        "ffmpeg_available": bool(ffmpeg_path),
+        "ffprobe_available": bool(ffprobe_path),
+        "broad_transcoding_available": False,
+        "ffmpeg_path": ffmpeg_path,
+        "ffprobe_path": ffprobe_path,
+        "ffmpeg_version": "",
+        "supported_extensions": sorted(f".{extension}" for extension in AUDIO_EXTENSIONS),
+        "direct_transcription_extensions": sorted(
+            f".{extension}"
+            for extension in AUDIO_FAST_TRANSCRIPTION_SOURCE_EXTENSIONS
+            if extension in AUDIO_EXTENSIONS
+        ),
+        "recommended_container_packages": ["ffmpeg", "ffprobe"],
+        "message": (
+            "FFmpeg was found; the runtime probe runs outside the admin settings request."
+            if ffmpeg_path
+            else "FFmpeg was not found in this app runtime; audio uploads use Azure Speech source-file fallback only."
+        ),
+    }
 
 
 def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:

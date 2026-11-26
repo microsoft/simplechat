@@ -39,6 +39,7 @@ SAFE_MESSAGE_FIELDS = (
 )
 SAFE_METADATA_FIELDS = (
     "thread_info", "user_info", "sender", "token_usage", "model_selection",
+    "response_attempt",
     "source_conversation_id", "source_message_id", "source_thought_user_id",
     "explicit_ai_invocation", "orchestration_turn_id",
 )

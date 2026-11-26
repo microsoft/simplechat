@@ -12,6 +12,7 @@ from typing import Any
 MODEL_ENDPOINT_PROVIDER_CUSTOM = "custom"
 MODEL_ENDPOINT_API_TYPE_OPENAI = "openai"
 MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI = "azure_openai"
+MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1 = "azure_openai_v1"
 MODEL_ENDPOINT_API_TYPE_ANTHROPIC = "anthropic"
 MODEL_ENDPOINT_API_TYPE_GEMINI = "gemini"
 MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI = "azure_openai"
@@ -21,10 +22,21 @@ MODEL_ENDPOINT_PROTOCOL_ANTHROPIC = "anthropic"
 URL_POLICY_APPEND_V1_IF_MISSING = "append_v1_if_missing"
 URL_POLICY_AS_GIVEN = "as_given"
 URL_POLICY_AZURE_DEPLOYMENT = "azure_deployment"
+URL_POLICY_AZURE_OPENAI_V1 = "azure_openai_v1"
 URL_POLICY_ANTHROPIC_MESSAGES = "anthropic_messages"
 CUSTOM_ENDPOINT_URL_MODE_AUTO = "auto"
 CUSTOM_ENDPOINT_URL_MODE_EXACT = "exact"
-CUSTOM_ENDPOINT_URL_MODES = (CUSTOM_ENDPOINT_URL_MODE_AUTO, CUSTOM_ENDPOINT_URL_MODE_EXACT)
+CUSTOM_ENDPOINT_URL_MODE_API_BASE = "api_base"
+CUSTOM_ENDPOINT_URL_MODE_FULL = "full"
+CUSTOM_ENDPOINT_URL_MODES = (
+    CUSTOM_ENDPOINT_URL_MODE_AUTO,
+    CUSTOM_ENDPOINT_URL_MODE_API_BASE,
+    CUSTOM_ENDPOINT_URL_MODE_FULL,
+    CUSTOM_ENDPOINT_URL_MODE_EXACT,
+)
+MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS = "chat_completions"
+MODEL_ENDPOINT_INFERENCE_API_RESPONSES = "responses"
+MODEL_ENDPOINT_INFERENCE_API_MESSAGES = "messages"
 MODEL_IDENTIFIER_MODEL_NAME = "model_name"
 MODEL_IDENTIFIER_DEPLOYMENT_NAME = "deployment_name"
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
@@ -72,6 +84,11 @@ class ModelEndpointProvider:
     supports_streaming: bool = True
     supports_tools: bool = True
     supports_stream_options: bool = False
+    routing_schema_version: int = 1
+    default_inference_api: str = MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS
+    supported_inference_apis: tuple[str, ...] = (
+        MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS,
+    )
     description: str = ""
 
     @property
@@ -80,6 +97,14 @@ class ModelEndpointProvider:
 
     def to_ui_option(self) -> dict:
         """Return non-secret configuration metadata for the global editors."""
+        operation_labels = {
+            MODEL_ENDPOINT_INFERENCE_API_RESPONSES: (
+                "Responses (/openai/v1/responses)"
+                if self.api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1
+                else "Responses (/v1/responses)"
+            ),
+            MODEL_ENDPOINT_INFERENCE_API_MESSAGES: "Anthropic Messages (/v1/messages)",
+        }
         return {
             "value": self.api_type,
             "label": self.display_name,
@@ -92,23 +117,50 @@ class ModelEndpointProvider:
             "authTypes": list(self.auth_types),
             "defaultApiKeyHeader": self.default_api_key_header,
             "defaultApiKeyPrefix": self.default_api_key_prefix,
+            "routingSchemaVersion": self.routing_schema_version,
+            "defaultInferenceApi": self.default_inference_api,
+            "supportedInferenceApis": list(self.supported_inference_apis),
+            "requestApiOptions": [
+                {"value": f"{self.api_type}:{operation}", "label": operation_labels.get(operation, self.display_name)}
+                for operation in self.supported_inference_apis
+            ],
+            "supportsStreaming": self.supports_streaming,
+            "supportsTools": self.supports_tools,
+            "supportsStreamOptions": self.supports_stream_options,
             "description": self.description,
         }
 
 
 MODEL_ENDPOINT_PROVIDERS = (
     ModelEndpointProvider(
+        api_type=MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1,
+        display_name="Chat Completions (/openai/v1/chat/completions)",
+        protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+        model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
+        url_policy=URL_POLICY_AZURE_OPENAI_V1,
+        routing_schema_version=2,
+        supported_inference_apis=(
+            MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS,
+            MODEL_ENDPOINT_INFERENCE_API_RESPONSES,
+        ),
+        description="Chat Completions with the Azure/Foundry OpenAI v1 URL policy.",
+    ),
+    ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_OPENAI,
-        display_name="OpenAI API",
+        display_name="Chat Completions (/v1/chat/completions)",
         protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
         model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
         url_policy=URL_POLICY_APPEND_V1_IF_MISSING,
         supports_stream_options=True,
+        supported_inference_apis=(
+            MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS,
+            MODEL_ENDPOINT_INFERENCE_API_RESPONSES,
+        ),
         description="OpenAI or an OpenAI-compatible gateway. Compatibility alone does not grant image capabilities.",
     ),
     ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
-        display_name="Azure OpenAI API",
+        display_name="Chat Completions (/openai/deployments/{deploymentid}/chat/completions?api-version={api-version})",
         protocol=MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
         model_identifier=MODEL_IDENTIFIER_DEPLOYMENT_NAME,
         url_policy=URL_POLICY_AZURE_DEPLOYMENT,
@@ -120,7 +172,7 @@ MODEL_ENDPOINT_PROVIDERS = (
     ),
     ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
-        display_name="Anthropic",
+        display_name="Messages (/v1/messages)",
         protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
         model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
         url_policy=URL_POLICY_ANTHROPIC_MESSAGES,
@@ -128,11 +180,13 @@ MODEL_ENDPOINT_PROVIDERS = (
         default_api_key_prefix="",
         version_field="anthropic_version",
         default_version=DEFAULT_ANTHROPIC_VERSION,
+        default_inference_api=MODEL_ENDPOINT_INFERENCE_API_MESSAGES,
+        supported_inference_apis=(MODEL_ENDPOINT_INFERENCE_API_MESSAGES,),
         description="Anthropic's messages API, direct or through a compatible gateway.",
     ),
     ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_GEMINI,
-        display_name="Google Gemini (OpenAI-compatible)",
+        display_name="Chat Completions (/v1beta/openai/chat/completions)",
         protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
         model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
         url_policy=URL_POLICY_AS_GIVEN,
@@ -153,8 +207,12 @@ def get_model_endpoint_provider(api_type: Any) -> ModelEndpointProvider | None:
     return MODEL_ENDPOINT_PROVIDERS_BY_API_TYPE.get(normalize_api_type_value(api_type))
 
 
-def get_model_endpoint_provider_ui_options() -> list[dict]:
-    return [provider.to_ui_option() for provider in MODEL_ENDPOINT_PROVIDERS]
+def get_model_endpoint_provider_ui_options(*, routing_schema_version: int = 1) -> list:
+    """Return descriptors supported by the requesting editor schema."""
+    return [
+        provider.to_ui_option() for provider in MODEL_ENDPOINT_PROVIDERS
+        if provider.routing_schema_version <= routing_schema_version
+    ]
 
 
 def is_supported_custom_api_type(api_type: Any) -> bool:

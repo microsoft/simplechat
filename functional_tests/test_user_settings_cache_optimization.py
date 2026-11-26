@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for user settings cache optimization.
-Version: 0.242.048
+Version: 0.261.484
 Implemented in: 0.242.044
 
 This test ensures user settings reads use request-scoped caching, shared UI settings
@@ -78,7 +78,12 @@ def test_user_ui_settings_cache_contract():
     ]:
         assert marker in settings_content, f"Missing user UI settings marker: {marker}"
 
-    assert "APP_SETTINGS_CACHE_VERSION_DOC_ID" in cache_content, "Expected existing app settings versioning to remain"
+    assert "get_app_settings_cache_version = _get_settings_revision" in cache_content, (
+        "Expected app settings versions to follow the authoritative settings revision"
+    )
+    assert "def _get_settings_revision():" in cache_content, (
+        "Expected app settings version resolution to read the settings-store revision"
+    )
     assert "USER_UI_SETTINGS_CACHE_VERSION_DOC_ID" not in cache_content, (
         "User UI settings cache should not add per-user Cosmos version documents"
     )

@@ -2,8 +2,8 @@
 # test_tabular_analyze_shared_preflight_adapter.py
 """
 Functional test for the Analyze shared tabular preflight adapter.
-Version: 0.261.109
-Implemented in: 0.250.160; updated in 0.250.161 and 0.250.199
+Version: 0.261.428
+Implemented in: 0.250.160; updated in 0.250.161 and 0.250.199; scoped model context in 0.261.045
 
 This test ensures Phase 4 routes pure single-source tabular Analyze durable
 work through the shared planner before foreground tabular tools or immediate
@@ -121,6 +121,28 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
         reduction_calls.append({"prompt": prompt, "kwargs": kwargs})
         return "Combined foreground answer."
 
+    def fake_evidence_handoff(
+        manifest_records, evidence_envelopes, *_args, **_kwargs
+    ):
+        entries = [
+            {
+                "document_id": envelope.get("document_id"),
+                "status": envelope.get("status") or "completed",
+            }
+            for envelope in evidence_envelopes
+        ]
+        return {
+            "content": "Offline foreground evidence.",
+            "evidence_envelopes": evidence_envelopes,
+            "mixed_source_coverage": {
+                "requested_source_count": len(manifest_records),
+                "pending_source_count": 0,
+                "partial_coverage": False,
+                "terminal_ledger": entries,
+                "sources": manifest_records,
+            },
+        }
+
     namespace = {
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
         "EVIDENCE_ENGINE_DOCUMENT_ANALYSIS": orchestration.EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
@@ -133,7 +155,7 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
         "SELECTION_MODE_SELECTED": "selected",
         "_get_document_action_source_ids": lambda config: (list(config.get("document_ids") or []), {}),
         "_resolve_tabular_document_action_model_name": lambda workflow, settings: "gpt-4o",
-        "_build_workflow_model_context": lambda workflow, deployment_name, provider: {
+        "_build_workflow_model_context": lambda workflow, deployment_name, provider, *, settings=None: {
             "endpoint_id": workflow.get("model_endpoint_id"),
             "model_id": workflow.get("model_id"),
             "model_deployment": deployment_name,
@@ -145,7 +167,7 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
         "_maybe_execute_tabular_document_action": fake_execute_tabular,
         "build_tabular_file_contexts_from_manifest": orchestration.build_tabular_file_contexts_from_manifest,
         "build_evidence_envelope": orchestration.build_evidence_envelope,
-        "build_mixed_source_evidence_handoff": orchestration.build_mixed_source_evidence_handoff,
+        "build_mixed_source_evidence_handoff": fake_evidence_handoff,
         "evaluate_mixed_source_mode_outcome": orchestration.evaluate_mixed_source_mode_outcome,
         "normalize_mixed_source_correlation_id": orchestration.normalize_mixed_source_correlation_id,
         "partition_source_manifest": orchestration.partition_source_manifest,

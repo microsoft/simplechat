@@ -4,8 +4,10 @@
 import ipaddress
 import re
 import socket
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import urlparse, urlunparse
+from model_endpoint_ca_bundles import CABundleError, normalize_ca_bundle_reference
+from model_endpoint_profiles import ModelEndpointProfileError, validate_genai_profile
 
 from functions_model_capabilities import get_model_foundry_chat_api
 from functions_model_endpoint_providers import (
@@ -13,6 +15,10 @@ from functions_model_endpoint_providers import (
     AUTH_TYPE_BEARER,
     AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS,
     CUSTOM_ENDPOINT_URL_MODES,
+    MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1,
+    MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS,
+    MODEL_ENDPOINT_INFERENCE_API_MESSAGES,
+    MODEL_ENDPOINT_INFERENCE_API_RESPONSES,
     get_model_endpoint_provider,
     normalize_custom_endpoint_auth_type,
 )
@@ -20,6 +26,11 @@ from functions_model_endpoint_types import (
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
+)
+from functions_model_endpoint_urls import (
+    normalize_model_endpoint_routing,
+    resolve_model_endpoint_route,
+    routing_schema_version,
 )
 
 
@@ -47,9 +58,11 @@ CUSTOM_ENDPOINT_PRIVATE_NETWORKS = tuple(
 class ModelEndpointValidationError(ValueError):
     """A stable, user-safe configuration or outbound-policy error."""
 
-    def __init__(self, public_message):
+    def __init__(self, public_message, *, missing_capability=None, request_stage=None):
         super().__init__(public_message)
         self.public_message = public_message
+        self.missing_capability = missing_capability
+        self.request_stage = request_stage
 
 
 class ModelEndpointUnresolvableError(ModelEndpointValidationError):
@@ -119,7 +132,24 @@ def model_endpoint_inference_api(endpoint, use_responses_api=None, *, provider="
     if use_responses_api is not None:
         if not isinstance(use_responses_api, bool):
             raise ModelEndpointValidationError("Use Responses API must be true or false.")
-    if resolve_native_foundry_chat_api(provider, endpoint, model) in {"mai", "anthropic"}:
+    native_api = resolve_native_foundry_chat_api(provider, endpoint, model)
+    explicit = model.get("inference_api") if isinstance(model, dict) else ""
+    if explicit:
+        if explicit == MODEL_ENDPOINT_INFERENCE_API_RESPONSES:
+            if native_api in {"mai", "anthropic"}:
+                raise ModelEndpointValidationError(
+                    "The selected native model API supports Chat Completions, not Responses."
+                )
+            return MODEL_ENDPOINT_INFERENCE_API_RESPONSES
+        if explicit in {
+            MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS,
+            MODEL_ENDPOINT_INFERENCE_API_MESSAGES,
+        }:
+            return MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS
+        raise ModelEndpointValidationError(
+            "The model inference API must be Chat Completions, Responses, or Messages."
+        )
+    if native_api in {"mai", "anthropic"}:
         return "chat_completions"
     if use_responses_api is not None:
         if use_responses_api:
@@ -128,7 +158,11 @@ def model_endpoint_inference_api(endpoint, use_responses_api=None, *, provider="
         path = urlparse(str(endpoint or "")).path.rstrip("/").lower()
     except ValueError as exc:
         raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
-    return "responses" if path.endswith("/responses") else "chat_completions"
+    return (
+        MODEL_ENDPOINT_INFERENCE_API_RESPONSES
+        if path.endswith("/responses")
+        else MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS
+    )
 
 
 def normalize_model_inference_connection(connection):
@@ -168,7 +202,8 @@ def validate_model_endpoint_api_version(provider, endpoint, api_version, api_typ
     )
     if inference_api == "responses" and (
         provider not in {"aoai", "aifoundry", "new_foundry", "custom"}
-        or provider == "custom" and api_type != "openai"
+        or provider == "custom"
+        and api_type not in {"openai", MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1}
         or "/api/projects/" in str(endpoint or "").lower() and not native_foundry
     ):
         raise ModelEndpointValidationError("Responses tool execution requires an OpenAI-compatible v1 inference connection.")
@@ -301,77 +336,171 @@ def validate_custom_api_key_header(auth: dict) -> None:
         raise ModelEndpointValidationError("Custom API key prefix contains invalid characters.")
 
 
+def validate_model_endpoint_routing(endpoint, settings=None, *, require_resolvable=False):
+    """Revalidate each explicit route against the existing outbound policy."""
+    try:
+        normalized = normalize_model_endpoint_routing(endpoint)
+        routes = [resolve_model_endpoint_route(normalized, model) for model in normalized["models"]]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ModelEndpointValidationError("Invalid explicit model routing configuration.") from exc
+    policy = settings or {}
+    for route in routes:
+        operation_url = str(route.get("operation_url") or "").split("?", 1)[0]
+        validate_custom_model_endpoint_url(
+            operation_url,
+            allow_private=policy.get("allow_private_custom_model_endpoints") is True,
+            allow_insecure=policy.get("allow_insecure_custom_model_endpoints") is True,
+            require_resolvable=require_resolvable,
+        )
+    return routes
+
+
 def validate_custom_model_endpoint(
     endpoint: Any, settings: dict | None = None, *, require_api_key: bool = True,
 ) -> None:
     """Validate a normalized record without requiring the deployment to be reachable."""
     if not isinstance(endpoint, dict):
-        raise ModelEndpointValidationError("Custom endpoint configuration must be an object.")
+        raise ModelEndpointValidationError(
+            "Custom endpoint configuration must be an object."
+        )
     if str(endpoint.get("provider") or "").strip().lower() != MODEL_ENDPOINT_PROVIDER_CUSTOM:
         return
+    try:
+        validate_genai_profile(endpoint)
+    except ModelEndpointProfileError as error:
+        raise ModelEndpointValidationError(str(error)) from error
+
     if not str(endpoint.get("name") or "").strip():
         raise ModelEndpointValidationError("Custom endpoint name is required.")
-    provider = get_model_endpoint_provider(get_model_endpoint_api_type(endpoint))
-    if provider is None:
-        raise ModelEndpointValidationError("Custom endpoint API type is not supported.")
-    auth = endpoint.get("auth") or {}
+    explicit_routing = routing_schema_version(endpoint) == 2
     connection = endpoint.get("connection") or {}
-    if not isinstance(auth, dict) or not isinstance(connection, dict):
-        raise ModelEndpointValidationError("Custom endpoint authentication and connection must be objects.")
+    auth = endpoint.get("auth") or {}
+    if not isinstance(connection, dict) or not isinstance(auth, dict):
+        raise ModelEndpointValidationError(
+            "Custom endpoint authentication and connection must be objects."
+        )
+
+    routes = []
+    if explicit_routing:
+        routes = validate_model_endpoint_routing(endpoint, settings)
+        descriptors = [
+            get_model_endpoint_provider(route.get("api_type")) for route in routes
+        ]
+    else:
+        descriptor = get_model_endpoint_provider(
+            get_model_endpoint_api_type(endpoint)
+        )
+        if descriptor is None:
+            raise ModelEndpointValidationError(
+                "Custom endpoint API type is not supported."
+            )
+        if descriptor.routing_schema_version > 1:
+            raise ModelEndpointValidationError(
+                "This API type requires explicit model routing."
+            )
+        descriptors = [descriptor]
+    descriptors = [descriptor for descriptor in descriptors if descriptor is not None]
+    if not descriptors:
+        raise ModelEndpointValidationError(
+            "Custom endpoint API type is not supported."
+        )
+
     auth_type = normalize_custom_endpoint_auth_type(auth.get("type"))
-    if auth_type not in provider.auth_types:
+    if any(auth_type not in descriptor.auth_types for descriptor in descriptors):
         raise ModelEndpointValidationError("Custom endpoints require API key, bearer token, or OAuth2 authentication.")
     validate_custom_api_key_header(auth)
     if require_api_key:
-        required_fields = {
-            AUTH_TYPE_API_KEY: ("api_key",),
-            AUTH_TYPE_BEARER: ("bearer_token",),
-            AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS: ("token_url", "client_id", "client_secret"),
-        }[auth_type]
-        if not all(str(auth.get(field) or "").strip() for field in required_fields):
-            raise ModelEndpointValidationError("The selected Custom authentication scheme requires its credentials.")
-    allow_private = custom_endpoint_setting_enabled(settings, "allow_private_custom_model_endpoints")
-    allow_insecure = custom_endpoint_setting_enabled(settings, "allow_insecure_custom_model_endpoints")
+        if auth_type == AUTH_TYPE_API_KEY and not auth.get("api_key"):
+            raise ModelEndpointValidationError("Custom endpoint API key is required.")
+        if auth_type == AUTH_TYPE_BEARER and not auth.get("bearer_token"):
+            raise ModelEndpointValidationError("Custom endpoint bearer token is required.")
+        if auth_type == AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS and not all(
+            str(auth.get(field) or "").strip()
+            for field in ("token_url", "client_id", "client_secret")
+        ):
+            raise ModelEndpointValidationError(
+                "Custom endpoint OAuth2 authentication requires a token URL, "
+                "client ID, and client secret."
+            )
+    try:
+        normalize_ca_bundle_reference(connection)
+    except CABundleError as error:
+        raise ModelEndpointValidationError(error.public_message) from error
+    allow_private = custom_endpoint_setting_enabled(
+        settings, "allow_private_custom_model_endpoints"
+    )
+    allow_insecure = custom_endpoint_setting_enabled(
+        settings, "allow_insecure_custom_model_endpoints"
+    )
+    if auth_type == AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS:
+        validate_custom_model_endpoint_url(
+            auth.get("token_url"),
+            allow_private=allow_private,
+            allow_insecure=allow_insecure,
+            require_resolvable=False,
+        )
     connection["endpoint"] = validate_custom_model_endpoint_url(
         connection.get("endpoint"), allow_private=allow_private,
         allow_insecure=allow_insecure, require_resolvable=False,
     )
     endpoint["connection"] = connection
-    if connection.get("url_mode", "auto") not in CUSTOM_ENDPOINT_URL_MODES:
-        raise ModelEndpointValidationError("Custom endpoint URL mode must be auto or exact.")
-    if connection.get("url_mode") == "exact" and model_endpoint_inference_api(connection["endpoint"]) == "responses":
-        raise ModelEndpointValidationError("Use automatic URL mode with a full Responses operation URL so the v1 base is resolved correctly.")
     if connection.get("client_key_path") and not connection.get("client_cert_path"):
         raise ModelEndpointValidationError("A Custom client key requires a client certificate.")
     for field in ("client_cert_path", "client_key_path"):
         if field in connection and not isinstance(connection[field], str):
             raise ModelEndpointValidationError("Custom certificate paths must be text.")
-    if auth_type == AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS:
-        if not auth.get("token_url") or not auth.get("client_id"):
-            raise ModelEndpointValidationError("Custom OAuth2 requires a token URL and client ID.")
-        validate_custom_model_endpoint_url(
-            auth["token_url"], allow_private=allow_private,
-            allow_insecure=allow_insecure, require_resolvable=False,
-        )
-    if provider.version_field:
-        version = connection.get(provider.version_field) or provider.default_version
-        if provider.requires_api_version or version:
-            if not CUSTOM_ENDPOINT_VERSION_PATTERN.fullmatch(str(version or "")):
-                raise ModelEndpointValidationError("Custom API version must contain letters, numbers, dots, underscores, or hyphens.")
-    models = endpoint.get("models")
+
+    if not explicit_routing:
+        url_mode = connection.get("url_mode", "auto")
+        if url_mode not in CUSTOM_ENDPOINT_URL_MODES:
+            raise ModelEndpointValidationError(
+                "Custom endpoint URL mode must be automatic, API base, full request URL, or legacy exact."
+            )
+        if descriptors[0].version_field:
+            version = (
+                connection.get(descriptors[0].version_field)
+                or descriptors[0].default_version
+            )
+            if descriptors[0].requires_api_version or version:
+                if not CUSTOM_ENDPOINT_VERSION_PATTERN.fullmatch(str(version or "")):
+                    raise ModelEndpointValidationError(
+                        "Custom API version must contain letters, numbers, dots, underscores, or hyphens."
+                    )
+
+    models: Iterable[Any] = endpoint.get("models") or []
     if not isinstance(models, list) or not models:
         raise ModelEndpointValidationError("Custom endpoints require at least one manually configured model.")
     seen = set()
-    for model in models:
-        request_model = resolve_model_endpoint_request_model(endpoint, model)
-        if not isinstance(model, dict) or not request_model:
-            field = "Model Name" if provider.uses_model_name else "Deployment Name"
-            raise ModelEndpointValidationError(f"Custom endpoint models require {field}.")
+    for index, model in enumerate(models):
+        if not isinstance(model, dict):
+            raise ModelEndpointValidationError(
+                "Custom endpoint model configuration is invalid."
+            )
+        request_model = resolve_model_endpoint_request_model(
+            endpoint, model, use_model_routing=explicit_routing
+        )
+        descriptor = (
+            get_model_endpoint_provider(routes[index]["api_type"])
+            if explicit_routing
+            else descriptors[0]
+        )
+        if not request_model:
+            field = "Model Name" if descriptor.uses_model_name else "Deployment Name"
+            raise ModelEndpointValidationError(
+                f"Custom endpoint models require {field}."
+            )
         if len(request_model) > 512 or any(ord(character) < 32 for character in request_model):
             raise ModelEndpointValidationError("Custom request model identifier is invalid.")
-        if request_model.casefold() in seen:
-            raise ModelEndpointValidationError("Custom request model identifiers must be unique.")
-        seen.add(request_model.casefold())
+        identity = (
+            (request_model, routes[index]["operation_url"])
+            if explicit_routing
+            else request_model.casefold()
+        )
+        if identity in seen:
+            raise ModelEndpointValidationError(
+                "Custom endpoint model identities and routes must be unique."
+            )
+        seen.add(identity)
 
 
 def validate_custom_model_endpoints(
@@ -380,7 +509,7 @@ def validate_custom_model_endpoints(
     if not isinstance(endpoints, list):
         raise ModelEndpointValidationError("Model endpoints must be a list.")
     for endpoint in endpoints:
-        if isinstance(endpoint, dict):
+        if isinstance(endpoint, dict) and routing_schema_version(endpoint) == 1:
             connection = endpoint.get("connection") or {}
             validate_model_endpoint_api_version(
                 endpoint.get("provider"), connection.get("endpoint"),

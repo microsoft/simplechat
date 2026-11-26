@@ -28,6 +28,7 @@ from functions_mcp_operations import MCP_PLUGIN_TYPE
 from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE
 from functions_tableau_operations import TABLEAU_PLUGIN_TYPE
 from functions_yamcs_operations import YAMCS_PLUGIN_TYPE
+from functions_microsoft_decision_operations import MICROSOFT_DECISION_PLUGIN_TYPE
 from semantic_kernel_plugins.databricks_plugin_factory import DatabricksPluginFactory
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
@@ -36,6 +37,7 @@ from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
 from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin
 from semantic_kernel_plugins.tableau_plugin_factory import TableauPluginFactory
 from semantic_kernel_plugins.yamcs_plugin_factory import YamcsPluginFactory
+from semantic_kernel_plugins.microsoft_decision_plugin_factory import MicrosoftDecisionPluginFactory
 from app_settings_cache import get_settings_cache
 from action_runtime_contracts import register_action_plugin, runtime_plugin_name, runtime_plugin_names
 from action_credential_contracts import ActionCredentialsRequired
@@ -154,6 +156,8 @@ class LoggedPluginLoader:
             return self._create_tableau_plugin(manifest)
         elif plugin_type == YAMCS_PLUGIN_TYPE:
             return self._create_yamcs_plugin(manifest)
+        elif plugin_type == MICROSOFT_DECISION_PLUGIN_TYPE:
+            return self._create_microsoft_decision_plugin(manifest)
         elif plugin_type == MCP_PLUGIN_TYPE:
             return self._create_mcp_plugin(manifest)
         elif plugin_type == 'python':
@@ -313,6 +317,27 @@ class LoggedPluginLoader:
                 exceptionTraceback=True,
             )
             self.logger.error(f"Failed to create Yamcs plugin: {e}")
+            return None
+
+    def _create_microsoft_decision_plugin(self, manifest: Dict[str, Any]):
+        """Create a Microsoft Decision-1 plugin instance."""
+        plugin_name = manifest.get('name')
+        try:
+            plugin_instance = MicrosoftDecisionPluginFactory.create_from_config(manifest)
+            log_event(
+                "[LOGGED_PLUGIN_LOADER] Successfully created Microsoft Decision plugin instance using factory",
+                extra={"plugin_name": plugin_name},
+                level=logging.INFO,
+            )
+            return plugin_instance
+        except Exception as e:
+            log_event(
+                "[LOGGED_PLUGIN_LOADER] General error creating Microsoft Decision plugin",
+                extra={"plugin_name": plugin_name, "error": str(e)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            self.logger.error(f"Failed to create Microsoft Decision plugin: {e}")
             return None
 
     def _create_mcp_plugin(self, manifest: Dict[str, Any]):

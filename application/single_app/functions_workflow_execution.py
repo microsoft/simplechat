@@ -10,12 +10,18 @@ from copy import deepcopy
 
 from functions_workflow_result_store import load_workflow_task_result, save_workflow_task_result
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
-from functions_workflow_policy_errors import workflow_policy_failure
+from functions_workflow_policy_errors import (
+    WorkflowTaskPolicyError,
+    safe_workflow_failure_summary,
+    workflow_failure_diagnostics,
+    workflow_policy_failure,
+)
 from functions_m365_approvals import M365ApprovalRequired
 from m365_interaction import M365SignInRequired
 
 
 _execution = ContextVar("durable_workflow_execution", default=None)
+_operation = ContextVar("durable_workflow_operation", default=None)
 
 
 class WorkflowSuspended(BaseException):
@@ -99,6 +105,28 @@ class DurableWorkflowExecution:
     def _update(self, record, updates):
         return self.store.update(self.lease.token, updates, expected_version=record["version"])
 
+    def note_unit_effect(self, key):
+        record = self.check()
+        units = deepcopy(record.get("units") or {})
+        if (units.get(key) or {}).get("state") == "running":
+            units[key]["effect_certainty"] = "possible"
+            self._update(record, {"units": units})
+
+    def note_parent_effect(self, key, *, replay_safe):
+        parent = _operation.get()
+        if parent and parent[0] is self and parent[1] != key and not replay_safe:
+            # Persist uncertainty on the enclosing operation *before* a nested
+            # non-replay-safe unit starts. A later model rejection cannot erase it.
+            self.note_unit_effect(parent[1])
+
+    def invoke_unit_operation(self, key, operation, *, replay_safe):
+        self.note_parent_effect(key, replay_safe=replay_safe)
+        token = _operation.set((self, key))
+        try:
+            return operation()
+        finally:
+            _operation.reset(token)
+
     def fence_batch(self, operations):
         """Compose the workflow fence with a producer's own same-partition CAS."""
         record = self.check()
@@ -147,6 +175,7 @@ class DurableWorkflowExecution:
         ):
             return
         self.store.wait(self.lease.token, state="waiting_recovery", gate={
+            **safe_workflow_failure_summary(unit),
             "id": uuid.uuid4().hex, "kind": "recovery", "unit_id": key,
             "input_digest": digest, "attempt": attempt, "reason": reason,
             "choices": ["retry", "cancel"],
@@ -178,9 +207,19 @@ class DurableWorkflowExecution:
             })
             raise WorkflowSuspended("paused")
         if unit and unit.get("state") == "completed":
+            self.note_parent_effect(key, replay_safe=bool(unit.get("replay_safe")))
             result = self._saved(unit, key)
             self.check()
             return result
+        if unit and unit.get("state") == "failed" and unit.get("terminal_failure"):
+            raise WorkflowTaskPolicyError(
+                unit.get("error_code") or "workflow_terminal_failure",
+                unit.get("error") or "This workflow task failed with a non-retryable error.",
+                **{
+                    name: value for name, value in safe_workflow_failure_summary(unit).items()
+                    if name not in ("error", "error_code")
+                },
+            )
         if unit and unit.get("state") in {"running", "failed"}:
             if not unit.get("replay_safe") or int(unit.get("attempt", 0)) >= 3:
                 self._recovery(
@@ -201,7 +240,7 @@ class DurableWorkflowExecution:
         }
         self._update(record, {"units": units, "phase": key})
         try:
-            result = operation()
+            result = self.invoke_unit_operation(key, operation, replay_safe=replay_safe)
         except (M365ApprovalRequired, M365SignInRequired):
             record = self.check()
             units = deepcopy(record.get("units") or {})
@@ -211,12 +250,23 @@ class DurableWorkflowExecution:
         except Exception as exc:
             record = self.check()
             units = deepcopy(record.get("units") or {})
+            if units[key].get("effect_certainty") in ("possible", "committed"):
+                exc.operation_effect_certainty = units[key]["effect_certainty"]
             failure = workflow_policy_failure(exc)
-            units[key].update(state="failed", **(failure or {}))
+            diagnostics = workflow_failure_diagnostics(exc)
+            resolved_failure = {**(failure or {}), **diagnostics}
+            units[key].update(state="failed", **resolved_failure)
+            if (
+                resolved_failure.get("terminal_failure") is False
+                and resolved_failure.get("effect_certainty") == "none"
+            ):
+                units[key]["replay_safe"] = True
             self._update(record, {"units": units})
             # Policy refusals must reach the runner's non-retryable failure path.
             # This never declares the operation replay-safe after earlier effects.
-            if not replay_safe and failure is None:
+            if not replay_safe and (
+                failure is None or resolved_failure.get("effect_certainty") in ("possible", "committed")
+            ):
                 self._recovery(
                     self.check(), key, digest,
                     "This task failed after it started. Review any external actions before retrying.",

@@ -1,9 +1,10 @@
 # test_custom_model_endpoint_foundation.py
 """
 Functional tests for the Custom endpoint foundation.
-Version: 0.261.392
+Version: 0.261.485
 Implemented in: 0.261.107
 Semantic Kernel screening/workflow guard merge coverage: 0.261.113
+Harness seams and bearer header contract updated in: 0.261.485
 
 Exercise registry contracts, URL/address policy, DNS pinning, authentication,
 normalization, safe diagnostics, and real SDK requests against mock transports.
@@ -41,6 +42,7 @@ sys.path.insert(0, str(APP))
 sys.path.insert(0, str(ROOT / "functional_tests"))
 
 # Application imports follow the path setup so standalone execution uses this worktree.
+from app_settings_store import SettingsConflictError
 from content_screening import access as screening_access
 from content_screening.contracts import DocumentHeldError
 import functions_model_endpoint_auth as endpoint_auth
@@ -53,6 +55,7 @@ from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_
 from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_model_capabilities import project_model_budget_metadata, resolve_model_token_budget
 from test_model_endpoint_normalization_backend import _load_functions_settings_module, _restore_modules
+from test_support.app_stubs import resolve_model_endpoint_ca_trust
 from test_v2_admin_model_endpoints_api import _load_persistence_helper
 from test_workflow_context_budget import ToolCallingCompletion
 
@@ -121,7 +124,17 @@ def test_loader_registration_preserves_screening_and_workflow_tool_round_guards(
                 and isinstance(statement.value.func, ast.Name)
                 and statement.value.func.id == "wrap_workflow_chat_service"
             ):
-                registrations.append([statement, body[index + 1]])
+                # Run through the kernel registration; invocation-capture checks may sit between.
+                end = next(
+                    position for position in range(index + 1, len(body))
+                    if any(
+                        isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "add_service"
+                        for call in ast.walk(body[position])
+                    )
+                )
+                registrations.append(body[index:end + 1])
     registrations.sort(key=lambda statements: statements[0].lineno)
     assert len(registrations) == 3
     budget_model = {
@@ -169,6 +182,11 @@ def test_loader_registration_preserves_screening_and_workflow_tool_round_guards(
         "resolve_model_token_budget": resolve_model_token_budget,
         "infer_model_endpoint_protocol": clients.infer_model_endpoint_protocol,
         "MODEL_ENDPOINT_PROTOCOL_ANTHROPIC": clients.MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+        "resolve_model_inference_endpoint": clients.resolve_model_inference_endpoint,
+        "validate_model_endpoint_api_version": validation.validate_model_endpoint_api_version,
+        "model_endpoint_inference_api": validation.model_endpoint_inference_api,
+        # Ordinary chat; invocation-capture runs have dedicated coverage.
+        "invocation_capture": None,
     }
     budget_helpers = [
         node for node in source.body if isinstance(node, ast.FunctionDef)
@@ -213,6 +231,7 @@ def runtime(monkeypatch):
     foundry.resolve_authority = lambda auth: ""
     settings = types.ModuleType("functions_settings")
     settings.resolve_model_endpoint_foundry_scope = lambda auth, endpoint=None: "https://ai.azure.com/.default"
+    settings.resolve_model_endpoint_ca_trust = resolve_model_endpoint_ca_trust
     for name, module in {"config": config, "foundry_agent_runtime": foundry, "functions_settings": settings}.items():
         monkeypatch.setitem(sys.modules, name, module)
     spec = importlib.util.spec_from_file_location("custom_endpoint_runtime_under_test", APP / "functions_model_endpoint_runtime.py")
@@ -578,6 +597,7 @@ def admin_routes():
     calls["settings"]["enable_multi_model_endpoints"] = False
     names = {
         "_load_global_model_endpoints", "_find_model_endpoint", "_model_endpoint_response",
+        "_ai_connection_error_response",
         "v2_admin_create_model_endpoint", "v2_admin_update_model_endpoint",
         "v2_admin_get_model_endpoint", "v2_admin_delete_model_endpoint",
     }
@@ -594,6 +614,7 @@ def admin_routes():
         "AIConnectionError": settings.AIConnectionError,
         "ModelEndpointValidationError": validation.ModelEndpointValidationError,
         "KeyVaultSecretStorageError": KeyVaultSecretStorageError,
+        "SettingsConflictError": SettingsConflictError,
         "_persist_global_model_endpoints": persist,
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP / "route_backend_v2.py"), "exec"), namespace)

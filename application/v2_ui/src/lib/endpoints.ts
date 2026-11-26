@@ -1126,6 +1126,8 @@ export interface ConversationExportRequest {
     summary_model_endpoint_id?: string | null;
     summary_model_id?: string | null;
     summary_model_provider?: string | null;
+    summary_model_scope_type?: string | null;
+    summary_model_scope_id?: string | null;
     visual_assets?: ExportVisualAsset[];
 }
 

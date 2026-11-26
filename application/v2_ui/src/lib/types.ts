@@ -1422,6 +1422,10 @@ export interface ChatStreamEvent {
 
 /** Request body for POST /api/chat/stream. Field names verified against the Flask route. */
 export interface ChatStreamRequest {
+    /** One-time request binding for a server-stored chat launch configuration. */
+    chat_link_reference?: string;
+    /** Shared with durable retry preparation and stop control; never a model input. */
+    submission_id?: string;
     document_source_selection?: import('./documentSourceSelection').DocumentSourceSelection;
     public_workspace_selection?: PublicWorkspaceSelection;
     message: string;

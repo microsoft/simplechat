@@ -1792,6 +1792,7 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                             key={key}
                             capability={field.component === 'embedding-default-model-selection' ? 'embeddings' : 'image_generation'}
                             featureEnabled={field.component === 'embedding-default-model-selection' || asBoolean(settings['enable_image_generation'])}
+                            onEditEmbeddingModel={(connectionId, modelId) => openConnection({ connectionId, modelId })}
                             help={field.help}
                         />
                     );

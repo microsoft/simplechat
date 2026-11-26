@@ -5,6 +5,7 @@ import { showToast } from './chat-toast.js';
 let reasoningEffortSettings = {}; // Per-model settings: {modelName: 'low', ...}
 let settingsLoaded = false;
 let pendingLevels = {};
+let chatLinkReasoningOverride = null;
 const shownAdjustments = new Set();
 const levelLabels = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh' };
 
@@ -187,6 +188,9 @@ export function syncReasoningStateForCurrentModel() {
     updateReasoningIconForCurrentModel();
     updateReasoningButtonVisibility();
     const modelName = getCurrentModelName();
+    if (chatLinkReasoningOverride?.modelName === modelName) {
+        return;
+    }
     const requested = reasoningEffortSettings[modelName];
     const effective = getCurrentModelReasoningEffort();
     const noticeId = 'reasoning-adjustment-notice';
@@ -299,7 +303,11 @@ export function getCurrentModelReasoningEffort() {
     if (!modelName) {
         return null;
     }
-    
+
+    if (chatLinkReasoningOverride?.modelName === modelName) {
+        return chatLinkReasoningOverride.effort;
+    }
+
     const supportedLevels = getModelSupportedLevels(modelName);
     const savedEffort = reasoningEffortSettings[modelName];
     const adminDefaultEffort = getAdminDefaultReasoningEffort();
@@ -320,6 +328,33 @@ export function getCurrentModelReasoningEffort() {
     
     const defaultEffort = getReasoningPolicy(modelName).default_effort;
     return supportedLevels.includes(defaultEffort) ? defaultEffort : null;
+}
+
+export function selectReasoningForChatLink(effort) {
+    const modelName = getCurrentModelName();
+    if (!modelName) {
+        return false;
+    }
+    const normalized = effort === null || effort === undefined
+        ? null
+        : String(effort).trim().toLowerCase();
+    if (
+        normalized !== null
+        && !getModelSupportedLevels(modelName).includes(normalized)
+    ) {
+        return false;
+    }
+    chatLinkReasoningOverride = { modelName, effort: normalized };
+    syncReasoningStateForCurrentModel();
+    return true;
+}
+
+export function clearReasoningForChatLink() {
+    if (!chatLinkReasoningOverride) {
+        return;
+    }
+    chatLinkReasoningOverride = null;
+    syncReasoningStateForCurrentModel();
 }
 
 /**
@@ -450,6 +485,7 @@ export function showReasoningSlider() {
  * @param {string} modelName - The model name
  */
 function selectReasoningLevel(level, modelName) {
+    chatLinkReasoningOverride = null;
     document.getElementById('reasoning-adjustment-notice')?.remove();
     // Update the settings
     reasoningEffortSettings[modelName] = level;
@@ -514,4 +550,12 @@ export function isReasoningEffortEnabled() {
 export function getCurrentReasoningEffort() {
     const effort = getCurrentModelReasoningEffort();
     return effort;
+}
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('chat:conversation-context-changed', (event) => {
+        if (!event.detail?.preserveSelections) {
+            clearReasoningForChatLink();
+        }
+    });
 }

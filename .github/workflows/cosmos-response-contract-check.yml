@@ -20,7 +20,8 @@ permissions:
 jobs:
   cosmos-contracts:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Typical runs take 37-41 minutes; leave headroom so suite growth fails on results, not the clock.
+    timeout-minutes: 60
     env:
       PYTHONPATH: application/single_app:functional_tests
       PYTHONDONTWRITEBYTECODE: '1'

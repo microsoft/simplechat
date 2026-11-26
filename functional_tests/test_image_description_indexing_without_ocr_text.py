@@ -2,7 +2,7 @@
 # test_image_description_indexing_without_ocr_text.py
 """
 Functional test for indexing image descriptions when OCR finds no text.
-Version: 0.261.210
+Version: 0.261.487
 Implemented in: 0.261.047 (Development); 0.261.210 (React V2)
 
 Issue #1583: two nearly identical photos of an empty lab floor had no real text. Document
@@ -1194,9 +1194,10 @@ def _run_reverse_import_order_probe():
     """Import Content Understanding before functions_content, the reverse of the main probe.
 
     extract_content_with_extraction_engine() imports functions_content_understanding when it
-    runs, and functions_content_understanding reaches functions_content back through
-    functions_settings, functions_document_actions, and functions_search. The image analyzer
-    fallback must resolve both deferred names whichever module is imported first.
+    runs. Until 0.261.487, importing functions_content_understanding also loaded functions_content
+    through functions_settings, functions_document_actions, and functions_search; now it loads
+    completely first. The image analyzer fallback must resolve both deferred names whichever
+    module is imported first.
     """
     from test_support.offline_bootstrap import offline_app_imports  # noqa: PLC0415
 
@@ -1204,8 +1205,8 @@ def _run_reverse_import_order_probe():
         for module_name in ("functions_content", "functions_content_understanding"):
             _require(module_name not in sys.modules, f"{module_name} was imported before the probe.")
         import functions_content_understanding as content_understanding  # noqa: PLC0415
-        _require("functions_content" in sys.modules,
-                 "Importing functions_content_understanding no longer reaches functions_content; update this probe.")
+        _require("functions_content" not in sys.modules,
+                 "Importing functions_content_understanding loads functions_content again; update this probe.")
         import functions_content as content  # noqa: PLC0415
         _require(not offline.network_attempts, "Application imports attempted network access.")
 

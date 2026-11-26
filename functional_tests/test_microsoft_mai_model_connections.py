@@ -1,8 +1,9 @@
 # test_microsoft_mai_model_connections.py
 """
 Functional tests for Microsoft MAI chat connections and gateway compatibility.
-Version: 0.261.410
+Version: 0.261.485
 Implemented in: 0.261.410
+Native Responses streaming fixture and single-header key coverage updated in: 0.261.485
 
 Real sync/async SDKs and Semantic Kernel run against in-memory HTTP responses.
 Fresh normal and optimized interpreters block external network access. No Azure
@@ -297,11 +298,28 @@ with offline_app_imports() as environment:
                     "id": "fc_lookup", "type": "function_call", "status": "completed",
                     "call_id": "call_lookup", "name": tools[0]["name"], "arguments": "{}",
                 }]
-            return httpx.Response(200, json={
+            completed = {
                 "id": "response", "object": "response", "created_at": 0, "model": body["model"],
                 "status": "completed", "output": output,
                 "usage": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30},
-            })
+            }
+            if body.get("stream"):
+                # Native Responses streaming: text deltas, finished items, then the terminal event.
+                events = []
+                for index, item in enumerate(output):
+                    if item["type"] == "message":
+                        events.append({
+                            "type": "response.output_text.delta", "item_id": item["id"],
+                            "output_index": index, "content_index": 0, "delta": item["content"][0]["text"],
+                        })
+                    events.append({"type": "response.output_item.done", "output_index": index, "item": item})
+                events.append({"type": "response.completed", "response": completed})
+                stream_body = "".join(
+                    "data: " + json.dumps({**event, "sequence_number": number}) + "\n\n"
+                    for number, event in enumerate(events)
+                )
+                return httpx.Response(200, text=stream_body, headers={"Content-Type": "text/event-stream"})
+            return httpx.Response(200, json=completed)
         has_result = any(message["role"] == "tool" for message in body["messages"])
         message = {"role": "assistant", "content": "MAI_OK"}
         if tools and not has_result:

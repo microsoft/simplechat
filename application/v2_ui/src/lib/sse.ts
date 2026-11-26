@@ -16,6 +16,7 @@ import { publishUserInput } from './userInput';
 import {
     currentActionRecoveryHeaders, getActionRecoveryRevision, prepareActionRequest, publishActionRecoveryFailure,
 } from './actionRecovery';
+import { startStreamTiming, STREAM_TIMING_REQUEST_HEADER, takeStreamTimingRequest } from './streamTiming';
 
 const CREDENTIALS_MODE: RequestCredentials = API_BASE ? 'include' : 'same-origin';
 
@@ -141,10 +142,11 @@ export interface ChatStreamStatus {
 /** Ask whether a conversation still has a live stream that could be reattached. */
 export async function fetchStreamStatus(
     conversationId: string,
+    submissionId?: string,
 ): Promise<ChatStreamStatus | null> {
     try {
         const response = await v2ApiFetch(
-            apiUrl(`/api/chat/stream/status/${encodeURIComponent(conversationId)}`),
+            apiUrl(`/api/chat/stream/status/${encodeURIComponent(conversationId)}${submissionId ? `?submission_id=${encodeURIComponent(submissionId)}` : ''}`),
             { credentials: CREDENTIALS_MODE, headers: { Accept: 'application/json' } },
         );
         if (!response.ok) {
@@ -196,15 +198,19 @@ export async function readSsePost<TEvent>(
     response: Response,
     onEvent: (event: TEvent) => boolean,
     signal?: AbortSignal,
+    timingRequested = false,
 ): Promise<SseReadOutcome> {
     const reader = response.body!.getReader();
+    const timing = timingRequested ? startStreamTiming(response) : undefined;
     const decoder = new TextDecoder();
     let buffer = '';
     let terminal = false;
     let aborted = false;
+    let bodyEnded = false;
     let transportError: Error | null = null;
 
     const handleFrame = (frame: string): boolean => {
+        timing?.sample(frame);
         const json = parseSseEventPayload(frame);
         if (!json) {
             return false;
@@ -251,11 +257,13 @@ export async function readSsePost<TEvent>(
             const { done, value } = await reader.read();
 
             if (done) {
+                bodyEnded = true;
                 buffer += normalizeLegacyEscapedSseDelimiters(decoder.decode());
                 terminal = drainBuffer(true);
                 break;
             }
 
+            timing?.read(value.byteLength);
             buffer += normalizeLegacyEscapedSseDelimiters(
                 decoder.decode(value, { stream: true }),
             );
@@ -272,6 +280,7 @@ export async function readSsePost<TEvent>(
             transportError = error instanceof Error ? error : new Error('Stream read error');
         }
     } finally {
+        timing?.finish(bodyEnded);
         reader.cancel().catch(() => {
             /* Reader already closed. */
         });
@@ -298,6 +307,7 @@ async function consumeStreamResponse(
     result: ChatStreamResult,
     signal: AbortSignal | undefined,
     reportError: (message: string, event?: ChatStreamEvent) => void,
+    timingRequested = false,
 ): Promise<void> {
     /** Returns true when the frame was terminal and reading should stop. */
     const handleEvent = (event: ChatStreamEvent): boolean => {
@@ -377,7 +387,7 @@ async function consumeStreamResponse(
     // is chat's own. An abort is a Stop press rather than a failure, a transport throw is
     // reported, and a body that closed without a terminal frame is the "ended unexpectedly"
     // case that was previously inlined in the read loop.
-    const outcome = await readSsePost<ChatStreamEvent>(response, handleEvent, signal);
+    const outcome = await readSsePost<ChatStreamEvent>(response, handleEvent, signal, timingRequested);
 
     if (outcome.aborted) {
         result.cancelled = true;
@@ -418,12 +428,13 @@ async function attachToLiveStream(
     handlers: ChatStreamHandlers,
     result: ChatStreamResult,
     signal: AbortSignal | undefined,
+    submissionId?: string,
 ): Promise<boolean> {
     // Announced before the status check, because that round trip plus opening the stream is
     // exactly the window where the user is looking at a response that has stopped moving.
     handlers.onReconnecting?.();
 
-    const status = await fetchStreamStatus(conversationId);
+    const status = await fetchStreamStatus(conversationId, submissionId);
     if (!status?.pending) {
         return false;
     }
@@ -431,7 +442,7 @@ async function attachToLiveStream(
     let response: Response;
     try {
         response = await v2ApiFetch(
-            apiUrl(`/api/chat/stream/reattach/${encodeURIComponent(conversationId)}`),
+            apiUrl(`/api/chat/stream/reattach/${encodeURIComponent(conversationId)}${submissionId ? `?submission_id=${encodeURIComponent(submissionId)}` : ''}`),
             {
                 method: 'GET',
                 credentials: CREDENTIALS_MODE,
@@ -479,6 +490,7 @@ export async function reattachChatStream(
     conversationId: string,
     handlers: ChatStreamHandlers,
     signal?: AbortSignal,
+    submissionId?: string,
 ): Promise<ChatStreamResult | null> {
     const result: ChatStreamResult = {
         accumulated: '',
@@ -487,7 +499,7 @@ export async function reattachChatStream(
         errored: false,
         reconnected: false,
     };
-    const attached = await attachToLiveStream(conversationId, handlers, result, signal);
+    const attached = await attachToLiveStream(conversationId, handlers, result, signal, submissionId);
     return attached ? result : null;
 }
 
@@ -576,14 +588,18 @@ export async function streamChat(
     };
 
     let response: Response;
+    const url = options.url ?? apiUrl('/api/chat/stream');
+    let timingRequested = false;
     try {
-        response = await v2ApiFetch(options.url ?? apiUrl('/api/chat/stream'), {
+        timingRequested = takeStreamTimingRequest(url);
+        response = await v2ApiFetch(url, {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             headers: {
                 'Content-Type': 'application/json',
                 Accept: 'text/event-stream',
                 ...currentActionRecoveryHeaders(),
+                ...(timingRequested ? { [STREAM_TIMING_REQUEST_HEADER]: '1' } : {}),
             },
             body: JSON.stringify(body),
             signal,
@@ -601,7 +617,7 @@ export async function streamChat(
 
     if (!pendingError && response.body && response.headers.get('Content-Type')?.includes('text/event-stream')) {
         // A denied request can still carry an SSE error frame, including its consent handoff.
-        await consumeStreamResponse(response, trackingHandlers, result, signal, captureError);
+        await consumeStreamResponse(response, trackingHandlers, result, signal, captureError, timingRequested);
     } else if (!pendingError && (!response.ok || !response.body)) {
         // A failure before the stream opens comes back as a normal JSON error response.
         let message = `Stream failed with status ${response.status}`;
@@ -630,7 +646,7 @@ export async function streamChat(
         result.errored = true;
         captureError(message, event);
     } else if (!pendingError) {
-        await consumeStreamResponse(response, trackingHandlers, result, signal, captureError);
+        await consumeStreamResponse(response, trackingHandlers, result, signal, captureError, timingRequested);
     }
 
     const requiresAuth = (pendingError as DeferredStreamError | null)?.event?.auth_required === true;
@@ -642,6 +658,7 @@ export async function streamChat(
             trackingHandlers,
             result,
             signal,
+            body.submission_id,
         );
         if (attached) {
             pendingError = null;
@@ -662,16 +679,29 @@ export async function streamChat(
  * `url` overrides the endpoint for a shared conversation, whose cancel route resolves the
  * hidden source conversation before reaching the same stream registry.
  */
-export async function cancelStream(conversationId: string, url?: string): Promise<void> {
-    await v2ApiFetch(
+export interface StreamCancellation {
+    outcome: 'accepted' | 'already_completed';
+    dispatch_prevented?: boolean;
+    user_message_id?: string;
+    message_id?: string;
+}
+
+export async function cancelStream(conversationId: string, url?: string, submissionId?: string): Promise<StreamCancellation> {
+    const response = await v2ApiFetch(
         url ?? apiUrl(`/api/chat/stream/cancel/${encodeURIComponent(conversationId)}`),
         {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reason: 'user_requested' }),
+            body: JSON.stringify({ reason: 'user_requested', submission_id: submissionId }),
         },
-    ).catch(() => {
-        /* Best effort: the stream is torn down client-side regardless. */
-    });
+    );
+    const payload = await response.json() as Partial<StreamCancellation> & { error?: string; cancel_requested?: boolean };
+    if (response.ok && !submissionId && payload.cancel_requested === true && !payload.outcome) {
+        return { outcome: 'accepted' }; // Existing analysis owners confirm via cancel_requested.
+    }
+    if (!response.ok || !['accepted', 'already_completed'].includes(payload.outcome ?? '')) {
+        throw new Error(payload.error || 'Stopping could not be confirmed. Refresh to check saved work.');
+    }
+    return payload as StreamCancellation;
 }

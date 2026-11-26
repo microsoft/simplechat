@@ -26,6 +26,7 @@ from collections.abc import Mapping
 from contextvars import copy_context
 from dataclasses import dataclass, field
 from datetime import date
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 from functions_ai_connections import (
@@ -37,6 +38,10 @@ from functions_ai_connections import (
 from functions_model_capabilities import (
     get_model_catalog_capabilities,
     resolve_model_reasoning_effort,
+)
+from functions_model_persona import (
+    active_model_persona_markdown,
+    prepend_model_persona_messages,
 )
 
 from .contracts import (
@@ -577,11 +582,44 @@ def _parameters(window, check, binding, deployment, protocol, behavior):
         }
     # Reserve bytes, not a characters/4 heuristic: unknown tokenizers and missing
     # usage must not turn an execution budget into an unbounded series of calls.
-    reservation = len(json.dumps(parameters, ensure_ascii=False).encode("utf-8")) + 1024 + output_limit
+    effective_parameters = {
+        **parameters,
+        "messages": prepend_model_persona_messages(
+            parameters["messages"],
+            active_model_persona_markdown(binding.model),
+        ),
+    }
+    reservation = (
+        len(json.dumps(effective_parameters, ensure_ascii=False).encode("utf-8"))
+        + 1024
+        + output_limit
+    )
     return parameters, reservation
 
 
 def _scoped_create(client, protocol, timeout):
+    from model_endpoint_clients import (
+        bind_model_endpoint_request_policy,
+    )
+    from functions_model_persona import (
+        bound_model_persona,
+        bound_model_persona_metadata,
+    )
+
+    route_policy = getattr(client, "_simplechat_route_policy", None)
+    persona_markdown = bound_model_persona(client)
+    persona_metadata = bound_model_persona_metadata(client)
+
+    def bind_scoped(scoped):
+        bound = bind_model_endpoint_request_policy(
+            scoped,
+            route_policy,
+            persona_markdown=persona_markdown,
+        )
+        if persona_metadata is not None:
+            bound._simplechat_model_persona_metadata = copy.deepcopy(persona_metadata)
+        return bound
+
     if protocol == "anthropic":
         # The existing Anthropic adapter uses an instance read timeout, not the
         # create(timeout=...) option. Copy it rather than mutating a shared client.
@@ -590,19 +628,30 @@ def _scoped_create(client, protocol, timeout):
         if isinstance(client, AnthropicChatCompletionClient):
             scoped = copy.copy(client)
             scoped.timeout = timeout
-            return scoped.create
+            scoped.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=scoped.create)
+            )
+            scoped._simplechat_route_policy_bound = False
+            return bind_scoped(scoped).chat.completions.create
     if protocol == "openai_style":
         from model_endpoint_clients import OpenAIStyleChatCompletionClient
 
         if isinstance(client, OpenAIStyleChatCompletionClient):
             scoped = OpenAIStyleChatCompletionClient(
                 client._client.with_options(timeout=timeout, max_retries=0),
+                sanitize_errors=client._sanitize_errors,
+                api_type=client._api_type,
+                protocol=client._protocol,
+                request_url=client._request_url,
+                inference_api=client._inference_api,
+                model_name=client._model_name,
+                custom_profile=client._custom_profile,
             )
-            return scoped.chat.completions.create
+            return bind_scoped(scoped).chat.completions.create
     with_options = getattr(client, "with_options", None)
     if callable(with_options):
         client = with_options(timeout=timeout, max_retries=0)
-    return client.chat.completions.create
+    return bind_scoped(client).chat.completions.create
 
 
 def _is_timeout(error):
@@ -909,6 +958,10 @@ def _model_binding_fingerprint(binding, protocol):
             "reasoning": resolve_model_reasoning_effort(binding.model, "low"),
             "structured_output": _supports_response_format(binding, protocol),
             "response_length": binding.model.get("responseLength"),
+            "persona": hash_payload({
+                "enabled": binding.model.get("persona_enabled") is True,
+                "markdown": active_model_persona_markdown(binding.model),
+            }),
         },
         "identity": {
             name: auth.get(name) for name in (

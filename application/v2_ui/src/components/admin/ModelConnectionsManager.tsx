@@ -30,7 +30,7 @@ import {
 import { ApiError } from '../../lib/apiClient';
 import { capabilityDescription, embeddingPolicyDescription, testCapabilityModel, type ImageModelCapabilityStatus } from '../../lib/capabilityModels';
 import {
-    connectionRequestModel, connectionUsesModelName, CUSTOM_AUTH_TYPE_OPTIONS,
+    connectionRequestModel, connectionUsesModelName, CUSTOM_AUTH_TYPE_OPTIONS, modelApiType, usesExplicitModelRouting,
     EMPTY_CUSTOM_NETWORK_POLICY, type CustomApiTypeDescriptor, type CustomNetworkPolicy,
 } from '../../lib/customModelConnections';
 import {
@@ -46,6 +46,7 @@ import {
     createAdminModelConnectionsAdapter,
     defaultOpenAiApiVersion,
     defaultEmbeddingApi,
+    effectiveEmbeddingOperation,
     emptyConnection,
     embeddingConnectionUnavailableReason,
     enabledModelCount,
@@ -55,6 +56,7 @@ import {
     isFoundryProvider,
     isKnownEmbeddingModel,
     mergeDiscoveredModels,
+    modelRouteFields,
     modelPublishesCapability,
     modelNeedsEmbeddingGateway,
     modelSupportsCapability,
@@ -63,7 +65,6 @@ import {
     personalTestBlockedReason,
     setModelCapabilityEnabled,
     selectModelCatalogProfile,
-    setEmbeddingOperation,
     toEditableConnection,
     validateConnection,
     validateAdvancedConnection,
@@ -81,10 +82,11 @@ import {
 import { rebaseDraft, rebaseNotice, REBASE_DELETED_NOTICE } from '../../lib/rebaseDraft';
 import { AdminModal } from './AdminModal';
 import { CatalogProfilePicker } from './ModelCatalogManager';
-import { CustomAuthenticationFields, CustomConnectionFields } from './CustomConnectionFields';
+import { CustomAuthenticationFields, CustomConnectionFields, ModelRequestRouteFields } from './CustomConnectionFields';
 import { CustomNetworkPolicyEditor } from './CustomNetworkPolicyEditor';
 import { GlassButton } from '../ui/primitives';
-import { EditorSwitch } from '../workspace/EditorLayout';
+import { EditorDependents, EditorSwitch } from '../workspace/EditorLayout';
+import { PlainMarkdown } from '../ui/PlainMarkdown';
 import { isNativeFoundryEndpoint, normalizeInferenceConnection, usesMaiChatCompletions, usesResponsesApi } from '../../lib/modelInference';
 import { ConnectionCapacityFields, ConnectionModelMetadata } from '../workspace/ConnectionMetadataFields';
 import { useModelConnectionsStore, modelConnectionsChanged } from '../../stores/modelConnectionsStore';
@@ -149,6 +151,94 @@ function SectionHeading({ children, hint }: { children: React.ReactNode; hint?: 
     );
 }
 
+function ModelPersonaFields({
+    model,
+    disabled,
+    error,
+    onChange,
+}: {
+    model: ConnectionModel;
+    disabled: boolean;
+    error?: string;
+    onChange: (next: ConnectionModel) => void;
+}) {
+    const [preview, setPreview] = useState(false);
+    const editorId = useId();
+    const markdown = typeof model.persona_markdown === 'string' ? model.persona_markdown : '';
+    const characterCount = Array.from(markdown).length;
+    const enabled = model.persona_enabled === true;
+    return (
+        <section className="mt-2 border-t border-edge pt-1" aria-label="Model persona">
+            <EditorSwitch
+                label="Enable persona"
+                checked={enabled}
+                disabled={disabled}
+                onChange={(checked) => {
+                    if (!checked) setPreview(false);
+                    onChange({ ...model, persona_enabled: checked });
+                }}
+            />
+            {enabled ? (
+                <EditorDependents>
+                    <p className="pt-1 text-xs text-text-3">
+                        Supplemental guidance for direct model use. Agents use agent instructions instead.
+                    </p>
+                    <div>
+                        <div className="mb-1.5 flex items-center justify-between gap-2">
+                            <label htmlFor={`${editorId}-markdown`} className="text-xs font-medium text-text-2">
+                                Persona Markdown
+                            </label>
+                            <GlassButton
+                                type="button"
+                                size="sm"
+                                variant="subtle"
+                                onClick={() => setPreview((current) => !current)}
+                            >
+                                {preview ? 'Edit' : 'Preview'}
+                            </GlassButton>
+                        </div>
+                        {preview ? (
+                            <div className="min-h-20 rounded-lg border border-edge bg-surface-1 p-3">
+                                <PlainMarkdown
+                                    content={markdown}
+                                    emptyLabel="Add persona text to preview it."
+                                    size="sm"
+                                    allowMedia={false}
+                                />
+                            </div>
+                        ) : (
+                            <textarea
+                                id={`${editorId}-markdown`}
+                                rows={5}
+                                className={clsx(inputClass, 'font-mono text-xs')}
+                                value={markdown}
+                                maxLength={16000}
+                                disabled={disabled}
+                                aria-invalid={Boolean(error)}
+                                aria-describedby={`${editorId}-help`}
+                                onChange={(event) => onChange({ ...model, persona_markdown: event.target.value })}
+                            />
+                        )}
+                        <div id={`${editorId}-help`} className="mt-1.5 flex flex-wrap items-start justify-between gap-2 text-xs">
+                            <span className="text-text-3">Basic Markdown only. Raw HTML, embedded media, and diagrams remain inactive.</span>
+                            <span className={characterCount > 8000 ? 'text-danger' : 'text-text-3'}>
+                                {characterCount.toLocaleString()} / 8,000
+                            </span>
+                        </div>
+                        {error ? <p role="alert" className="mt-1.5 text-xs text-danger">{error}</p> : null}
+                    </div>
+                    <EditorSwitch
+                        label="Show persona text to users"
+                        checked={model.persona_text_visible !== false}
+                        disabled={disabled}
+                        onChange={(checked) => onChange({ ...model, persona_text_visible: checked })}
+                    />
+                </EditorDependents>
+            ) : null}
+        </section>
+    );
+}
+
 function Pill({ tone, children }: { tone: 'ok' | 'muted' | 'warn'; children: React.ReactNode }) {
     return (
         <span
@@ -173,9 +263,19 @@ function ModelCapabilities({ model, connection, disabled, errors, onChange }: {
 }) {
     const metadataId = useId();
     const embeddingOnly = connection.provider === 'openai_compatible';
-    const embeddingUnavailableReason = embeddingConnectionUnavailableReason(connection);
+    const embeddingUnavailableReason = embeddingConnectionUnavailableReason(connection, model);
     const capabilities = CAPABILITY_OPTIONS.filter(({ key }) => !embeddingOnly || key === 'embeddings');
-    const embedding = embeddingOnly || modelSupportsCapability(model, 'embeddings') || isKnownEmbeddingModel(model) || Boolean(model.embedding_config);
+    const embedding = embeddingOnly || modelSupportsCapability(model, 'embeddings') || isKnownEmbeddingModel(model) || Boolean(model.embedding_config || model.embedding_operation);
+    const routing = model.embedding_operation;
+    const operation = effectiveEmbeddingOperation(connection, model);
+    const embeddingType = modelApiType(connection, model);
+    const operationErrors = Object.entries(errors).filter(([field]) => field.startsWith('embedding_'));
+    const setRoute = (key: keyof EmbeddingOperationSettings, value: string | boolean) => {
+        const next = { ...routing };
+        if (value === '') delete next[key];
+        else Object.assign(next, { [key]: value });
+        onChange({ ...model, embedding_operation: next });
+    };
     const imageStatus: ImageModelCapabilityStatus | undefined = model.capability_status?.image_generation;
     const setEmbeddingConfig = (key: keyof EmbeddingConfig, value: string | boolean) => {
         const config = { ...model.embedding_config };
@@ -308,6 +408,73 @@ function ModelCapabilities({ model, connection, disabled, errors, onChange }: {
                                 </select>
                             </Field>
                         ) : null}
+                        <details className="mt-3 rounded-lg border border-edge p-2" open={operationErrors.length ? true : undefined}>
+                            <summary className="cursor-pointer font-medium text-text-2">Embedding routing</summary>
+                            <p className="my-2">{isFoundryProvider(connection.provider)
+                                ? 'Foundry project endpoints do not route embeddings. Use the resource inference base ending in /openai/v1/.'
+                                : 'Inherit the connection’s route or override it for this model. The connection still owns credentials.'}</p>
+                            {embeddingUnavailableReason ? <p role="status" className="text-warn">{embeddingUnavailableReason}</p> : null}
+                            <label className="flex items-center gap-2">
+                                <input type="checkbox" className="accent-[var(--accent)]" checked={routing !== undefined}
+                                    disabled={disabled || Boolean(embeddingUnavailableReason)}
+                                    onChange={(event) => {
+                                        const next = { ...model };
+                                        if (event.target.checked) next.embedding_operation = { ...operation };
+                                        else delete next.embedding_operation;
+                                        onChange(next);
+                                    }} />
+                                Use model-specific embedding routing
+                            </label>
+                            {routing === undefined ? (
+                                <p className="mt-2 break-all">
+                                    Inherited embedding base: {operation.endpoint || connection.connection?.endpoint || 'Not configured'}
+                                </p>
+                            ) : <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                <label>
+                                    Embedding API
+                                    <select aria-label="Embedding API" className={inputClass} value={routing.api ?? ''} disabled={disabled}
+                                        onChange={(event) => setRoute('api', event.target.value)}>
+                                        <option value="">Provider default ({defaultEmbeddingApi(connection, model) === 'azure_openai' ? 'Azure OpenAI versioned' : 'OpenAI-compatible'})</option>
+                                        {connection.provider === 'aoai' || embeddingType === 'azure_openai' || routing.api === 'azure_openai'
+                                            ? <option value="azure_openai">Azure OpenAI versioned</option> : null}
+                                        {embeddingType !== 'azure_openai' || routing.api === 'openai'
+                                            ? <option value="openai">Current OpenAI-compatible API</option> : null}
+                                    </select>
+                                </label>
+                                <label>
+                                    Embedding inference base URL
+                                    <input type="url" className={inputClass} value={routing.endpoint ?? ''} disabled={disabled}
+                                        placeholder="Use the connection endpoint" onChange={(event) => setRoute('endpoint', event.target.value)} />
+                                </label>
+                                {(routing.api || defaultEmbeddingApi(connection, model)) === 'azure_openai' || routing.api_version ? (
+                                    <label>
+                                        Embedding API version
+                                        <input className={inputClass} value={routing.api_version ?? ''} disabled={disabled}
+                                            onChange={(event) => setRoute('api_version', event.target.value)} />
+                                    </label>
+                                ) : null}
+                                <label>
+                                    Embedding authentication header
+                                    <select aria-label="Embedding authentication header" className={inputClass} value={routing.auth_header ?? ''} disabled={disabled}
+                                        onChange={(event) => setRoute('auth_header', event.target.value)}>
+                                        <option value="">Protocol default</option>
+                                        <option value="api-key">api-key</option>
+                                        <option value="authorization">Authorization</option>
+                                        <option value="Ocp-Apim-Subscription-Key">Ocp-Apim-Subscription-Key</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    Embedding API Management routing
+                                    <select className={inputClass} value={routing.is_apim === undefined ? '' : String(routing.is_apim)}
+                                        disabled={disabled} onChange={(event) => setRoute('is_apim', event.target.value === '' ? '' : event.target.value === 'true')}>
+                                        <option value="">Protocol default</option>
+                                        <option value="true">API Management gateway</option>
+                                        <option value="false">Direct inference</option>
+                                    </select>
+                                </label>
+                            </div>}
+                            {operationErrors.map(([field, message]) => <p role="alert" key={field} className="mt-1 text-danger">{message}</p>)}
+                        </details>
                     </div>
                 ) : null}
                 {!embeddingOnly ? <div className="mt-2">
@@ -406,11 +573,8 @@ function ConnectionEditor({
     const nativeFoundry = isNativeFoundryEndpoint(draft.provider, draft.connection?.endpoint);
     const mai = usesMaiChatCompletions(draft.connection?.endpoint);
     const embeddingOnly = draft.provider === 'openai_compatible';
-    const embeddingOperation = draft.connection?.operation_settings?.embeddings;
-    const embeddingApi = embeddingOperation?.api || defaultEmbeddingApi(draft);
-    const embeddingUnavailableReason = embeddingConnectionUnavailableReason(draft);
     const custom = draft.provider === 'custom';
-    const usesModelName = connectionUsesModelName(draft);
+    const explicit = usesExplicitModelRouting(draft);
     const authType = String(draft.auth?.type ?? (custom || embeddingOnly ? 'api_key' : 'managed_identity'));
     const authOptions = custom ? CUSTOM_AUTH_TYPE_OPTIONS : AUTH_TYPE_OPTIONS.filter((option) => !embeddingOnly || option.value === 'api_key');
     // Model discovery and chat model tests share one gate: admin always; a group writer when a new
@@ -453,13 +617,31 @@ function ConnectionEditor({
                         openai_api_version: defaultOpenAiApiVersion(value),
                     };
                     if (value === 'custom') {
-                        next.api_type = next.api_type || 'openai';
-                        next.connection.openai_api_version = '';
+                        if (isNew) {
+                            next.routing_schema_version = 2;
+                            next.routing_path_order = 'connection_first';
+                            delete next.api_type;
+                            next.models = next.models?.map((model) => ({
+                                ...model, api_type: 'openai', inference_api: 'chat_completions',
+                                modelName: String(model.deploymentName || model.modelName || ''),
+                                api_path: '', api_path_order: 'connection_first', url_mode: 'auto',
+                            }));
+                        } else if (!usesExplicitModelRouting(next)) {
+                            next.api_type = next.api_type || 'openai';
+                        }
+                        delete next.connection.openai_api_version;
                         next.auth = { ...next.auth, type: 'api_key' };
                     } else if (value === 'openai_compatible') {
                         next.auth = { ...next.auth, type: 'api_key' };
                     } else if (current.provider === 'custom') {
                         next.auth = { ...next.auth, type: 'managed_identity' };
+                    }
+                    if (isNew && current.provider === 'custom' && value !== 'custom') {
+                        delete next.routing_schema_version;
+                        delete next.routing_path_order;
+                        next.models = next.models?.map(({
+                            api_type, inference_api, api_path, api_path_order, url_mode, api_version, anthropic_version, ...model
+                        }) => ({ ...model, deploymentName: model.deploymentName || model.modelName }));
                     }
                     next.models = next.models?.map(({ capability_status: _status, ...model }) => model);
                 }
@@ -477,25 +659,16 @@ function ConnectionEditor({
                 ...((current as Record<string, Record<string, unknown>>)[group] ?? {}),
                 [key]: value,
             };
-            if (path === 'connection.endpoint') {
+            if (path === 'connection.endpoint' && !usesExplicitModelRouting(next)) {
                 next.connection = normalizeInferenceConnection(next.connection ?? {});
             }
             return next;
         });
-    }, [customApiTypes]);
+    }, [customApiTypes, isNew]);
 
     const setModels = useCallback((models: ConnectionModel[]) => {
         setDraft((current) => ({ ...current, models }));
     }, []);
-
-    const setOperation = (key: keyof EmbeddingOperationSettings, value: string | boolean) => {
-        setDraft((current) => setEmbeddingOperation(current, key, value));
-        setErrors((current) => {
-            const next = { ...current };
-            delete next[`embedding_${key}`];
-            return next;
-        });
-    };
 
     const runDiscovery = async () => {
         if (testBlockedReason) { setFormError(testBlockedReason); return; }
@@ -563,17 +736,24 @@ function ConnectionEditor({
             return;
         }
         if (embeddingOnly && capability !== 'embeddings') return;
+        if (capability === 'chat' && explicit && !savedBinding) {
+            setFormError('Save the connection and model before testing this route.');
+            return;
+        }
         if (capability !== 'chat' && !savedBinding) {
             setFormError(`Save the connection first. ${capability === 'embeddings' ? 'Embedding' : 'Image'} tests use only the saved model and credentials.`);
             return;
         }
-        if (capability === 'embeddings' && embeddingUnavailableReason) {
-            setFormError(embeddingUnavailableReason);
-            return;
+        if (capability === 'embeddings') {
+            const unavailable = embeddingConnectionUnavailableReason(draft, model);
+            if (unavailable) {
+                setFormError(unavailable);
+                return;
+            }
         }
         const deploymentName = connectionRequestModel(draft, model);
         if (!deploymentName) {
-            setFormError(`Give the model a ${usesModelName ? 'model name' : 'deployment name'} before testing it.`);
+            setFormError(`Give the model a ${connectionUsesModelName(draft, model) ? 'model name' : 'deployment name'} before testing it.`);
             return;
         }
         setTestingModelId(String(model.id ?? deploymentName));
@@ -597,7 +777,11 @@ function ConnectionEditor({
                     toast.success(`${deploymentName} generated an image.`);
                 }
             } else {
-                await adapter.testConnectionModel(editorPayload(draft), model);
+                await adapter.testConnectionModel(
+                    explicit ? { id: current.id, routing_schema_version: 2, connection: { endpoint: current.connection?.endpoint } }
+                        : editorPayload(draft),
+                    explicit ? modelRouteFields(model) : model,
+                );
                 toast.success(`${deploymentName} answered a chat request. Image inference was not tested.`);
             }
         } catch (error) {
@@ -757,7 +941,7 @@ function ConnectionEditor({
                 </select>
             </Field>
 
-            {custom ? <CustomConnectionFields draft={draft} descriptors={customApiTypes} errors={errors} busy={busy} inputClass={inputClass} onChange={setField} /> : null}
+            {custom ? <CustomConnectionFields draft={draft} descriptors={customApiTypes.filter((item) => item.value !== 'azure_openai_v1')} errors={errors} busy={busy} inputClass={inputClass} onChange={setField} /> : null}
 
             <SectionHeading>Connection</SectionHeading>
 
@@ -791,7 +975,7 @@ function ConnectionEditor({
                 />
             </Field>
 
-            {!embeddingOnly && (draft.provider === 'aoai' || foundry || custom && draft.api_type === 'openai') && (
+            {!explicit && !embeddingOnly && (draft.provider === 'aoai' || foundry || custom && draft.api_type === 'openai') && (
                 <EditorSwitch
                     label="Use Responses API"
                     description={nativeFoundry
@@ -806,7 +990,7 @@ function ConnectionEditor({
                 />
             )}
 
-            {shown.openAiVersion && !usesResponsesApi(draft.connection) ? <Field
+            {!explicit && shown.openAiVersion && !usesResponsesApi(draft.connection) ? <Field
                 label="OpenAI API version"
                 error={errors.openai_api_version}
                 htmlFor="connection-openai-version"
@@ -1098,89 +1282,6 @@ function ConnectionEditor({
                 </>
             ) : null}
 
-            {!embeddingUnavailableReason ? (
-                <>
-                    <SectionHeading hint="These operation-specific settings reuse this connection’s credentials without changing chat or image routing.">
-                        Embedding inference
-                    </SectionHeading>
-                    <Field label="Embedding API" htmlFor="connection-embedding-api" error={errors.embedding_api}>
-                        <select
-                            id="connection-embedding-api"
-                            className={inputClass}
-                            value={embeddingOperation?.api ?? ''}
-                            disabled={busy}
-                            onChange={(event) => setOperation('api', event.target.value)}
-                        >
-                            <option value="">Provider default ({defaultEmbeddingApi(draft) === 'azure_openai' ? 'Azure OpenAI versioned' : 'OpenAI-compatible'})</option>
-                            {draft.provider === 'aoai' || custom && draft.api_type === 'azure_openai' ? <option value="azure_openai">Azure OpenAI versioned</option> : null}
-                            {!custom || draft.api_type === 'openai' ? <option value="openai">Current OpenAI-compatible API</option> : null}
-                        </select>
-                    </Field>
-                    <Field
-                        label="Embedding inference base URL"
-                        htmlFor="connection-embedding-endpoint"
-                        error={errors.embedding_endpoint}
-                        help={foundry
-                            ? 'Foundry project endpoints do not route embeddings. Supply the explicit resource inference base ending /openai/v1/; the project URL is never rewritten.'
-                            : custom
-                            ? 'Optional override using this Custom connection’s API type, URL mode and guarded transport. Its model name or deployment name remains the request identifier.'
-                            : 'Optional when the connection URL already serves embeddings. Preserve a custom gateway’s API base path exactly.'}
-                    >
-                        <input
-                            id="connection-embedding-endpoint"
-                            className={inputClass}
-                            type="url"
-                            placeholder={foundry ? 'https://resource.services.ai.azure.com/openai/v1/' : 'Use the connection endpoint'}
-                            value={embeddingOperation?.endpoint ?? ''}
-                            disabled={busy}
-                            onChange={(event) => setOperation('endpoint', event.target.value)}
-                        />
-                    </Field>
-                    {embeddingApi === 'azure_openai' || embeddingOperation?.api_version ? (
-                        <Field label="Embedding API version" htmlFor="connection-embedding-version" error={errors.embedding_api_version} help="Only Azure OpenAI versioned operations accept an api-version. Leave blank for the connection’s version; OpenAI-compatible operations must leave this blank.">
-                            <input
-                                id="connection-embedding-version"
-                                className={inputClass}
-                                type="text"
-                                value={embeddingOperation?.api_version ?? ''}
-                                disabled={busy}
-                                onChange={(event) => setOperation('api_version', event.target.value)}
-                            />
-                        </Field>
-                    ) : null}
-                    <Field label="Embedding authentication header" htmlFor="connection-embedding-auth-header" error={errors.embedding_auth_header} help="Reuses the connection’s stored credential. Only these supported gateway headers can be overridden.">
-                        <select
-                            id="connection-embedding-auth-header"
-                            className={inputClass}
-                            value={embeddingOperation?.auth_header ?? ''}
-                            disabled={busy}
-                            onChange={(event) => setOperation('auth_header', event.target.value)}
-                        >
-                            <option value="">Protocol default</option>
-                            <option value="api-key">api-key</option>
-                            <option value="authorization">Authorization</option>
-                            <option value="Ocp-Apim-Subscription-Key">Ocp-Apim-Subscription-Key</option>
-                        </select>
-                    </Field>
-                    <Field label="Embedding API Management routing" htmlFor="connection-embedding-apim" help="Keep imported gateway behavior unless intentionally changing the embedding route.">
-                        <select
-                            id="connection-embedding-apim"
-                            className={inputClass}
-                            value={embeddingOperation?.is_apim === undefined ? '' : String(embeddingOperation.is_apim)}
-                            disabled={busy}
-                            onChange={(event) => setOperation('is_apim', event.target.value === '' ? '' : event.target.value === 'true')}
-                        >
-                            <option value="">Protocol default</option>
-                            <option value="true">API Management gateway</option>
-                            <option value="false">Direct inference</option>
-                        </select>
-                    </Field>
-                    <p className="mt-2 text-xs text-warn">Embedding model and dimension changes, including same-dimension model switches, are checked against existing vectors when saved. No automatic rebuild is performed.</p>
-                </>
-            ) : (
-                <p role="status" className="mt-3 text-xs text-warn">{embeddingUnavailableReason}</p>
-            )}
-
             <SectionHeading
                 hint={
                     embeddingOnly
@@ -1239,6 +1340,10 @@ function ConnectionEditor({
                                 deploymentName: '',
                                 displayName: '',
                                 enabled: false,
+                                ...(explicit && custom ? {
+                                    modelName: '', api_type: 'openai' as const, inference_api: 'chat_completions' as const,
+                                    api_path: '', api_path_order: 'connection_first' as const, url_mode: 'auto' as const,
+                                } : {}),
                                 ...(custom || embeddingOnly ? { supportsChat: false, supportsImageGeneration: false, supportsVision: false } : {}),
                             },
                         ])
@@ -1266,6 +1371,7 @@ function ConnectionEditor({
                 <ul className="space-y-2">
                     {models.map((model, index) => {
                         const key = String(model.id ?? index);
+                        const usesModelName = connectionUsesModelName(draft, model);
                         // The catalog names a model by id where it has one, and otherwise by
                         // the same display-name precedence the catalog's links use.
                         const linkedFromCatalog = Boolean(focusModel) && (
@@ -1353,6 +1459,12 @@ function ConnectionEditor({
                                         }}
                                     />
                                 </div>
+                                {explicit ? <ModelRequestRouteFields
+                                    connection={draft} model={model} descriptors={customApiTypes}
+                                    scope={adapter.scope} canPreview={canTest} disabled={busy}
+                                    inputClass={inputClass} error={errors[`model_${index}_routing`]}
+                                    onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
+                                /> : null}
                                 {!usesModelName ? <label className="mt-2 block text-xs text-text-3">
                                     Underlying model name (optional)
                                     <input
@@ -1390,10 +1502,18 @@ function ConnectionEditor({
                                     onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
                                     onIconBusyChange={setIconBusy}
                                 /> : null}
+                                {modelSupportsCapability(model, 'chat') ? (
+                                    <ModelPersonaFields
+                                        model={model}
+                                        disabled={busy}
+                                        error={errors[`model_${index}_persona`]}
+                                        onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
+                                    />
+                                ) : null}
                                 <div className="mt-3 flex flex-wrap gap-2">
                                     {canTest && !embeddingOnly && modelPublishesCapability(model, 'chat') ? (
-                                        <GlassButton type="button" variant="subtle" size="sm" disabled={busy || Boolean(testBlockedReason)} onClick={() => void runModelTest(model, 'chat')}>
-                                            Test chat
+                                        <GlassButton type="button" variant="subtle" size="sm" disabled={busy || Boolean(testBlockedReason) || (explicit && !savedBinding)} onClick={() => void runModelTest(model, 'chat')}>
+                                            {explicit ? 'Test Connection' : 'Test chat'}
                                         </GlassButton>
                                     ) : null}
                                     {canTestCapabilities && !embeddingOnly && modelSupportsCapability(model, 'image_generation') ? (
@@ -1401,7 +1521,7 @@ function ConnectionEditor({
                                             Test image generation
                                         </GlassButton>
                                     ) : null}
-                                    {canTestCapabilities && !embeddingUnavailableReason && modelSupportsCapability(model, 'embeddings') ? (
+                                    {canTestCapabilities && !embeddingConnectionUnavailableReason(draft, model) && modelSupportsCapability(model, 'embeddings') ? (
                                         <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'embeddings')}>
                                             Test embeddings
                                         </GlassButton>
@@ -1781,7 +1901,7 @@ export function ModelConnectionsManager({
                                     </div>
                                     <p className="mt-0.5 truncate text-xs text-text-3">
                                         {providerLabel(connection.provider)} ·{' '}
-                                        {connection.provider === 'custom' ? `${customApiTypes.find((option) => option.value === connection.api_type)?.label || connection.api_type || 'API type missing'} · ` : ''}
+                                        {connection.provider === 'custom' ? `${usesExplicitModelRouting(connection) ? 'Per-model Request API' : customApiTypes.find((option) => option.value === connection.api_type)?.label || connection.api_type || 'API type missing'} · ` : ''}
                                         {authTypeLabel(connection.auth?.type)} ·{' '}
                                         {total === 0
                                             ? 'no models'
@@ -1794,7 +1914,9 @@ export function ModelConnectionsManager({
                                                 {' · '}
                                                 {connection.provider === 'openai_compatible' ? 0 : (connection.models ?? []).filter((model) => modelPublishesCapability(model, 'image_generation')).length} image generation
                                                 {' · '}
-                                                {embeddingConnectionUnavailableReason(connection) ? 0 : (connection.models ?? []).filter((model) => modelPublishesCapability(model, 'embeddings')).length} embeddings
+                                                {(connection.models ?? []).filter((model) =>
+                                                    !embeddingConnectionUnavailableReason(connection, model) && modelPublishesCapability(model, 'embeddings'),
+                                                ).length} embeddings
                                             </>
                                         )}
                                     </p>

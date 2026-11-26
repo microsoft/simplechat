@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 admin global model endpoint API.
-Version: 0.261.392
+Version: 0.261.485
 Implemented in: 0.261.059
+Persona validation and embedding persistence seams updated in: 0.261.485
 
 Global model endpoints were the only scope without per-resource routes. They were
 written through a hidden ``model_endpoints_json`` field on the classic admin form, so
@@ -21,6 +22,7 @@ These checks pin the replacement:
 """
 
 import ast
+import logging
 import sys
 import uuid
 from pathlib import Path
@@ -398,6 +400,8 @@ def _load_persistence_helper():
 
     selection_helpers = _load_selection_helpers()
     connections = import_app_module("functions_ai_connections")
+    endpoint_validation = import_app_module("functions_model_endpoint_validation")
+    persona = import_app_module("functions_model_persona")
 
     namespace = {
         "keyvault_model_endpoint_save_helper": fake_save,
@@ -406,7 +410,10 @@ def _load_persistence_helper():
         "get_settings": lambda: calls["settings"],
         "read_embedding_settings": lambda: calls["settings"],
         "preflight_embedding_settings": lambda current, candidate: calls["events"].append("preflight"),
-        "validate_custom_model_endpoints": import_app_module("functions_model_endpoint_validation").validate_custom_model_endpoints,
+        "validate_custom_model_endpoints": endpoint_validation.validate_custom_model_endpoints,
+        "validate_custom_model_endpoint_url": endpoint_validation.validate_custom_model_endpoint_url,
+        "validate_model_persona_collection_size": persona.validate_model_persona_collection_size,
+        "validate_model_persona_settings_document": persona.validate_model_persona_settings_document,
         "update_settings": fake_update_settings,
         "resolve_default_model_selection": selection_helpers[
             "resolve_default_model_selection"
@@ -420,6 +427,10 @@ def _load_persistence_helper():
         "embedding_settings_use_connections": connections.embedding_settings_use_connections,
         "AIConnectionError": connections.AIConnectionError,
         "resolve_capability_model_selection": connections.resolve_capability_model_selection,
+        "ModelBinding": connections.ModelBinding,
+        "embedding_transport": import_app_module("functions_embedding_profile").embedding_transport,
+        "log_event": lambda *args, **kwargs: None,
+        "logging": logging,
     }
     exec(compile(ast.Module(body=[target], type_ignores=[]), str(ROUTES_FILE), "exec"), namespace)
     return namespace["_persist_global_model_endpoints"], calls

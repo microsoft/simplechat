@@ -1,9 +1,10 @@
 # test_v2_group_endpoints.py
 """
 Production-SPA coverage for the native scope-aware V2 group model endpoints section.
-Version: 0.261.188
+Version: 0.261.464
 Implemented in: 0.261.145
 A failed read offers a retry and never the empty state: 0.261.188
+Compact conditional model persona layout added in: 0.261.464
 
 Exercises the real Endpoints section -- the admin ModelConnectionsManager driven by a
 scope-aware group adapter, not a fork -- and its editor dialog against closed synthetic HTTP.
@@ -172,6 +173,28 @@ def test_admin_surfaces_are_absent_in_group_scope(group_endpoints_ui):
     # The connection-level test is admin-only; a group manager still discovers models.
     expect(dialog.get_by_role("button", name="Test connection", exact=True)).to_have_count(0)
     expect(dialog.get_by_role("button", name="Discover models", exact=True)).to_be_visible()
+
+
+def test_persona_details_expand_only_when_enabled(group_endpoints_ui):
+    ui = group_endpoints_ui
+    open_manager(ui)
+    row(ui, EDITABLE_ENDPOINT_NAME).get_by_role(
+        "button", name=f"Edit {EDITABLE_ENDPOINT_NAME}", exact=True
+    ).click()
+    dialog = ui.page.get_by_role("dialog")
+    enable = dialog.get_by_role("checkbox", name="Enable persona", exact=True)
+    markdown = dialog.get_by_label("Persona Markdown", exact=True)
+
+    expect(enable).to_be_visible()
+    expect(markdown).to_have_count(0)
+    enable.focus()
+    enable.press("Space")
+    expect(markdown).to_be_visible()
+    markdown.fill("Use a concise technical tone.")
+    enable.press("Space")
+    expect(markdown).to_have_count(0)
+    enable.press("Space")
+    expect(markdown).to_have_value("Use a concise technical tone.")
 
 
 def test_inline_endpoint_actions_gate_writes(group_endpoints_ui):

@@ -400,8 +400,8 @@
                                         class="form-check-input"
                                         id="source_review_allow_js_rendering"
                                         name="source_review_allow_js_rendering"
-                                        {% if settings.source_review_allow_js_rendering and js_runtime.js_rendering_available %}checked{% endif %}
-                                        {% if not js_runtime.js_rendering_available %}disabled{% endif %}
+                                        {% if settings.source_review_allow_js_rendering and (js_runtime.js_rendering_available or not js_runtime.runtime_verified) %}checked{% endif %}
+                                        {% if not js_runtime.js_rendering_available and js_runtime.runtime_verified %}disabled{% endif %}
                                     >
                                     <label class="form-check-label ms-2" for="source_review_allow_js_rendering">Allow JavaScript rendering fallback</label>
                                 </div>
@@ -409,7 +409,7 @@
                                 <div class="small mt-1 {% if js_runtime.js_rendering_available %}text-success{% else %}text-warning{% endif %}" id="source_review_js_runtime_status">
                                     <i class="bi {% if js_runtime.js_rendering_available %}bi-check-circle{% else %}bi-exclamation-triangle{% endif %} me-1"></i>{{ js_runtime.message or 'Runtime support has not been checked yet.' }}
                                 </div>
-                                {% if not js_runtime.js_rendering_available %}
+                                {% if not js_runtime.js_rendering_available and js_runtime.runtime_verified %}
                                 <div class="small text-muted mt-1">Install/enable the Playwright Chromium runtime, then reload Admin Settings to enable this option.</div>
                                 {% endif %}
                                 {% if js_runtime.sandbox_disabled %}

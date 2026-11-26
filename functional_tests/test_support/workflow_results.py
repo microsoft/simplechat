@@ -1,9 +1,10 @@
 # workflow_results.py
 """
 Isolated workflow result dependencies for existing sequence unit tests.
-Version: 0.261.454
+Version: 0.261.460
 Implemented in: 0.261.106
 Non-retryable workflow policy dependencies added in: 0.261.362
+Typed failure-summary import dependencies added in: 0.261.430
 """
 
 import hashlib
@@ -69,7 +70,10 @@ from functions_workflow_readiness import (
     reconcile_workflow_publication_output,
 )
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
-from functions_workflow_policy_errors import WorkflowTaskPolicyError, workflow_policy_failure
+from functions_workflow_policy_errors import (
+    WORKFLOW_FAILURE_FIELDS, WorkflowTaskPolicyError, safe_workflow_failure_summary, workflow_policy_failure,
+)
+from functions_task_completeness import completeness_policy
 from model_endpoint_clients import (
     bind_callable_with_timeout,
     resolve_document_action_timeout_seconds,
@@ -111,6 +115,9 @@ def workflow_result_helpers():
         "WorkflowContextBudgetError": WorkflowContextBudgetError,
         "WorkflowTaskPolicyError": WorkflowTaskPolicyError,
         "workflow_policy_failure": workflow_policy_failure,
+        "WORKFLOW_FAILURE_FIELDS": WORKFLOW_FAILURE_FIELDS,
+        "safe_workflow_failure_summary": safe_workflow_failure_summary,
+        "completeness_policy": completeness_policy,
         "exception_outcome": exception_outcome,
         "time": time,
         "copy_context": copy_context,

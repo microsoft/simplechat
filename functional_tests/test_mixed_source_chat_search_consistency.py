@@ -736,6 +736,8 @@ def test_replay_collaboration_foundry_and_chat_path_contracts():
             "selection_mode": "selected",
             "document_context_requested": True,
             "selected_document_ids": ["doc-1"],
+            "model_scope_type": "group",
+            "model_scope_id": "group-1",
         },
         "conversation-1",
         "Question",
@@ -743,6 +745,8 @@ def test_replay_collaboration_foundry_and_chat_path_contracts():
     assert forwarded["selection_mode"] == "selected"
     assert forwarded["document_context_requested"] is True
     assert forwarded["selected_document_ids"] == ["doc-1"]
+    assert forwarded["model_scope_type"] == "group"
+    assert forwarded["model_scope_id"] == "group-1"
 
     chat_source = _read(ROUTE_PATH)
     template_source = _read(APP_ROOT / "templates" / "chats.html")

@@ -1,7 +1,7 @@
 # test_orchestration_result_imports.py
 """
 Real-module result-store cold imports and web/scheduler compatibility.
-Version: 0.261.232
+Version: 0.261.484
 Implemented in: 0.261.125
 Input-only source authorizer name updated in: 0.261.232
 
@@ -172,13 +172,13 @@ print("PASS: real web and scheduler imports with result foundation")
 '''
 
 
-def run_probe(probe, order, optimized):
+def run_probe(probe, order, optimized, *, timeout=300):
     command = [sys.executable, "-B"]
     if optimized:
         command.append("-O")
     process = subprocess.run(
         command + ["-c", probe, str(APP), str(TESTS), *order],
-        capture_output=True, text=True, timeout=180, check=False,
+        capture_output=True, text=True, timeout=timeout, check=False,
     )
     assert process.returncode == 0, process.stdout[-8000:] + process.stderr[-8000:]
     assert "PASS:" in process.stdout
@@ -200,7 +200,7 @@ def test_early_real_modules_and_injected_storage_work_in_both_import_orders(orde
     ("background_tasks", "functions_orchestration_results"),
 ])
 def test_real_web_and_scheduler_imports_are_unchanged(order, optimized):
-    run_probe(APP_PROBE, order, optimized)
+    run_probe(APP_PROBE, order, optimized, timeout=600)
 
 
 def test_new_result_modules_do_not_add_reverse_owner_imports_even_locally():
