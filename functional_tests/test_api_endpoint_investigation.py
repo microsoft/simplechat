@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
+# test_api_endpoint_investigation.py
 """
 Test the actual API endpoint that serves user data to confirm if the bug is in the endpoint.
+Version: 0.261.474
+Implemented in: 0.230.034
 """
 
 import sys

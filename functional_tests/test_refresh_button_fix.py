@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# test_refresh_button_fix.py
 """
 Quick test to verify the Control Center refresh button fix.
 Version: 0.230.025
 
 This test helps debug the refresh button JavaScript issue by providing
 guidance on testing the fix.
+Implemented in: 0.230.024
 """
 
 import sys

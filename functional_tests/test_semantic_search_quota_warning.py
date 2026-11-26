@@ -12,6 +12,7 @@ on workspace and admin pages instead of silently continuing with no augmentation
 
 from pathlib import Path
 import sys
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +41,7 @@ def test_semantic_search_quota_warning() -> bool:
     chat_route_content = read_workspace_file("application/single_app/route_backend_chats.py")
     warning_partial = read_workspace_file("application/single_app/templates/_semantic_search_health_warning.html")
 
-    assert_contains(config_content, 'VERSION = "0.241.086"', "current version bump")
+    assert_app_version_at_least("0.241.086")
     assert_contains(settings_content, "'service_health': get_default_service_health()", "default service-health settings")
 
     helper_expectations = [

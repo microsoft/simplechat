@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_swagger_request_body_auto_generation.py
 """
 Functional test for automatic request body schema generation in swagger_wrapper.
 Version: 0.230.038

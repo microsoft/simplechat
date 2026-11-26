@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_query_parameter_auto_detection.py
 """
 Functional test for automatic query parameter detection in Swagger wrapper.
 Version: 0.234.211

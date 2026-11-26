@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_group_document_metrics_display.py
 """
 Functional test for group document metrics display in Control Center.
 Version: 0.230.048

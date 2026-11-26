@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_activity_trends_chat_creation_date_export.py
 """
 Functional test for Activity Trends raw data export with creation date for chats.
 Version: 0.230.026
@@ -83,7 +84,7 @@ def test_function_structure():
         # Check if the backend file contains our new function
         backend_file = "../application/single_app/route_backend_control_center.py"
         if os.path.exists(backend_file):
-            with open(backend_file, 'r') as f:
+            with open(backend_file, 'r', encoding='utf-8') as f:
                 content = f.read()
             
             # Check for raw activity trends function
@@ -125,7 +126,7 @@ def test_frontend_update():
     try:
         template_file = "../application/single_app/templates/control_center.html"
         if os.path.exists(template_file):
-            with open(template_file, 'r') as f:
+            with open(template_file, 'r', encoding='utf-8') as f:
                 content = f.read()
             
             # Check for updated chat description with creation date

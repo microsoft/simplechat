@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_security_headers_comprehensive.py
 """
 Functional test for comprehensive security headers implementation.
 Version: 0.229.019
@@ -151,7 +152,7 @@ def test_configuration_accessibility():
     
     try:
         # Try to read the config file directly and check for security headers
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
         
         # Check for security configuration

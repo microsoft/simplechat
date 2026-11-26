@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_new_chat_scoping.py
 """
 Functional test for the V2 interface's New chat button.
 

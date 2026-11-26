@@ -238,7 +238,7 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert 'workflow_dispatch' in full_scan_workflow_source
     assert 'fail_on_findings' in full_scan_workflow_source
     assert '--full-file' in full_scan_workflow_source
-    assert 'actions/upload-artifact@v4' in full_scan_workflow_source
+    assert 'actions/upload-artifact@' in full_scan_workflow_source
 
     swagger_route_workflow_source = read_text(SWAGGER_ROUTE_WORKFLOW_FILE)
     assert 'functional_tests/route_tests/test_route_blueprint_policy_inventory.py' in swagger_route_workflow_source

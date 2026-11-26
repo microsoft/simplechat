@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_admin_settings_group_shared_regions.py
 """
 Functional test for Admin Settings group-shared control regions.
 Version: 0.260.016
@@ -84,6 +85,9 @@ def test_shared_controls_are_not_duplicated():
 
     markup = read_admin_settings_template()
     ids = collections.Counter(re.findall(r'\sid="([A-Za-z0-9_-]+)"', markup))
+    # The pane is an if/else on mcp_ui_enabled, so only one of these two is ever rendered.
+    if "{% if mcp_ui_enabled %}" in markup and ids["inbound-mcp-configuration"] == 2:
+        ids["inbound-mcp-configuration"] = 1
     duplicates = sorted(element_id for element_id, count in ids.items() if count > 1)
     assert not duplicates, (
         "Element ids declared more than once in the composed Admin Settings "

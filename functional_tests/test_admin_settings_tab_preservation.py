@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_admin_settings_tab_preservation.py
 """
 Functional test for admin settings tab preservation fix.
 Version: 0.229.032

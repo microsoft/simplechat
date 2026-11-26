@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_storage_container_creation_lightweight.py
 """
 Functional test for storage account container creation fix - lightweight version.
 Version: 0.229.016
@@ -10,6 +11,7 @@ in the config.py file without requiring full module import.
 
 import sys
 import os
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 def test_config_file_structure():
     """Test that the config.py file has the correct structure for container creation."""
@@ -23,7 +25,7 @@ def test_config_file_structure():
             print(f"❌ Config file not found at: {config_path}")
             return False
             
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
         
         # Test container name definitions
@@ -118,10 +120,10 @@ def test_version_update():
     try:
         config_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'config.py')
         
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
         
-        if 'VERSION = "0.229.016"' in config_content:
+        if app_version_is_at_least("0.229.016"):
             print("✅ Version updated to 0.229.016")
             return True
         else:
@@ -139,7 +141,7 @@ def test_container_creation_workflow():
     try:
         config_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'config.py')
         
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
         
         # Extract the container creation section

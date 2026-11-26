@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_chat_message_markdown_sanitizer_guard.py
 """
 Functional test for chat message markdown sanitizer availability guard.
 Version: 0.261.047

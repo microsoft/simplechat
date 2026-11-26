@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_group_table_auto_refresh.py
 """
 Functional test for Group Table Auto-Refresh After Data Refresh.
 Version: 0.230.057

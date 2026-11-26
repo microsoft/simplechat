@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_create_group_button_visibility.py
 """
 Functional test for Create Group Button visibility with enable_group_creation setting.
 Version: 0.230.030
@@ -20,7 +21,7 @@ def test_route_checks_enable_group_creation():
     try:
         # Read the route file
         route_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_frontend_groups.py')
-        with open(route_path, 'r') as f:
+        with open(route_path, 'r', encoding='utf-8') as f:
             route_content = f.read()
         
         # Check that enable_group_creation is retrieved from settings
@@ -54,7 +55,7 @@ def test_template_conditional_logic():
     try:
         # Read the template file
         template_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'templates', 'my_groups.html')
-        with open(template_path, 'r') as f:
+        with open(template_path, 'r', encoding='utf-8') as f:
             template_content = f.read()
         
         # Check that Create Group button is conditionally displayed
@@ -98,7 +99,7 @@ def test_permission_scenarios():
     try:
         # Read the route file to validate the logic patterns
         route_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_frontend_groups.py')
-        with open(route_path, 'r') as f:
+        with open(route_path, 'r', encoding='utf-8') as f:
             route_content = f.read()
         
         # Validate the logical flow:
@@ -145,7 +146,7 @@ def test_api_endpoint_protection():
     try:
         # Read the API route file
         api_route_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_backend_groups.py')
-        with open(api_route_path, 'r') as f:
+        with open(api_route_path, 'r', encoding='utf-8') as f:
             api_content = f.read()
         
         # Check that api_create_group has the enable_group_creation decorator
@@ -183,7 +184,7 @@ def test_version_updated():
     try:
         # Read config.py
         config_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'config.py')
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
         
         # Check for version update

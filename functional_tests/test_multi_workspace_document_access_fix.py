@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_multi_workspace_document_access_fix.py
 """
 Functional test for multi-workspace document access fix.
 Version: 0.229.013
@@ -20,6 +21,7 @@ Critical fix: Blob naming patterns must match the storage structure:
 
 import sys
 import os
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def test_multi_workspace_document_routes():
@@ -307,7 +309,7 @@ def test_version_consistency():
         with open('../application/single_app/config.py', 'r', encoding='utf-8') as f:
             content = f.read()
             
-        if 'VERSION = "0.229.013"' in content:
+        if app_version_is_at_least("0.229.013"):
             print("    ✅ Version updated to 0.229.013 in config.py")
         else:
             print("    ❌ Version not properly updated in config.py")
@@ -330,7 +332,7 @@ def test_version_consistency():
         with open('../application/single_app/config.py', 'r', encoding='utf-8') as f:
             content = f.read()
             
-        if 'VERSION = "0.229.013"' in content:
+        if app_version_is_at_least("0.229.013"):
             print("    ✅ Version updated to 0.229.013 in config.py")
         else:
             print("    ❌ Version not properly updated in config.py")

@@ -12,6 +12,7 @@ their shared runners and chat/workflow entry points.
 
 from pathlib import Path
 import traceback
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,7 +61,7 @@ def test_document_action_debug_logging_markers() -> None:
     assert_contains(CHAT_ROUTE_FILE, "[ChatDocumentAction] Execution failed | ")
     assert_contains(CHAT_ROUTE_FILE, "[ChatDocumentAction] Execution completed | ")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.241.023"')
+    assert_app_version_at_least("0.241.023")
 
     print("✅ Document action debug logging markers verified")
 

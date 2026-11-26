@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_visual_style_controls.py
 """
 Functional test for V2 diagram and chart colour controls, and mermaid PNG download.
 

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
+# test_storage_fallback_isolation.py
 """
 Focused test to isolate the storage account sizing bug.
 This will test the exact code path that should execute when enhanced citations is enabled
 but storage client is not configured.
+Version: 0.261.474
+Implemented in: 0.230.034
 """
 
 import sys

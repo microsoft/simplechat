@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_debug_logging_toggle.py
 """
 Functional test for debug logging toggle feature.
 Version: 0.228.015

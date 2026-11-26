@@ -12,12 +12,13 @@ commit from the March 2025 supply chain incident.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_FILE = ROOT / '.github' / 'workflows' / 'release-notes-check.yml'
 CONFIG_FILE = ROOT / 'application' / 'single_app' / 'config.py'
-FIX_DOC_FILE = ROOT / 'docs' / 'explanation' / 'fixes' / 'CHANGED_FILES_GITHUB_ACTION_SUPPLY_CHAIN_FIX.md'
+FIX_DOC_FILE = ROOT / 'docs' / 'explanation' / 'fixes' / 'v0.241.001' / 'CHANGED_FILES_GITHUB_ACTION_SUPPLY_CHAIN_FIX.md'
 
 SAFE_ACTION_REFERENCE = 'tj-actions/changed-files@v46.0.1'
 MALICIOUS_COMMIT = '0e58ed8671d6b60d0890c21b07f8835ace038e67'
@@ -42,7 +43,7 @@ def test_changed_files_action_version() -> bool:
 
     assert_contains(WORKFLOW_FILE, SAFE_ACTION_REFERENCE)
     assert_not_contains(WORKFLOW_FILE, MALICIOUS_COMMIT)
-    assert_contains(CONFIG_FILE, f'VERSION = "{CURRENT_VERSION}"')
+    assert_app_version_at_least(CURRENT_VERSION)
     assert_contains(FIX_DOC_FILE, f'Fixed/Implemented in version: **{IMPLEMENTED_VERSION}**')
 
     print('changed-files action version pin checks passed!')

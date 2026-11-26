@@ -24,7 +24,7 @@ ROUTE_FRONTEND_ADMIN_SETTINGS = os.path.join(REPO_ROOT, 'application', 'single_a
 SEMANTIC_KERNEL_LOADER = os.path.join(REPO_ROOT, 'application', 'single_app', 'semantic_kernel_loader.py')
 ADMIN_TEMPLATE = os.path.join(REPO_ROOT, 'application', 'single_app', 'templates', 'admin_settings.html')
 ADMIN_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'admin', 'admin_settings.js')
-FIX_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'fixes', 'TABULAR_PROCESSING_ENHANCED_CITATIONS_DEPENDENCY_FIX.md')
+FIX_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'fixes', 'v0.241.001', 'TABULAR_PROCESSING_ENHANCED_CITATIONS_DEPENDENCY_FIX.md')
 
 
 def read_text(path):

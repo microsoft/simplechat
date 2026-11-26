@@ -12,6 +12,7 @@ use safe Content-Disposition encoding.
 import ast
 import sys
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -175,7 +176,7 @@ def test_fix_version_and_documentation_exist():
     print("Testing version bump and fix documentation...")
 
     config_source = _read_text(CONFIG_PATH)
-    assert f'VERSION = "{EXPECTED_VERSION}"' in config_source
+    assert app_version_is_at_least(EXPECTED_VERSION)
     assert FIX_DOC_PATH.exists(), f"Expected fix documentation at {FIX_DOC_PATH}"
 
 

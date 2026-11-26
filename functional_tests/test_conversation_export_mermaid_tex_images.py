@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_conversation_export_mermaid_tex_images.py
 """
 Functional tests for Mermaid and TeX graphics in exports.
 Version: 0.261.027

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+# test_smart_http_plugin_citations.py
 """
 Smart HTTP Plugin Citation Support Test
 Version: 0.228.006
 
 This test validates the agent citation support functionality in the Smart HTTP Plugin.
+Implemented in: 0.229.001
 """
 
 import asyncio

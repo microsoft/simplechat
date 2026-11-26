@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_chat_type_normalization.py
 """
 Functional test for chat type normalization.
 Version: 0.261.047

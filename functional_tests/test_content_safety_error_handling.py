@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+# test_content_safety_error_handling.py
 """
 Functional Test: Content Safety Error Handling for Image Generation
 Tests improved error handling for content moderation blocks.
 
 Author: GitHub Copilot Assistant  
 Date: 2025-09-08
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

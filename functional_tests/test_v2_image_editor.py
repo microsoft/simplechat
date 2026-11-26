@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_image_editor.py
 """
 Functional test for the inline image editor.
 Version: 0.261.107

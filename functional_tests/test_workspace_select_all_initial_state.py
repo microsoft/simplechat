@@ -8,6 +8,7 @@ This test ensures personal and group workspace selection sync calculates
 header select-all availability after row checkboxes are made visible.
 """
 
+from test_support.versioning import assert_app_version_at_least
 from pathlib import Path
 import sys
 import traceback
@@ -84,8 +85,7 @@ def test_group_workspace_selection_sync_order():
 def test_version_was_incremented():
     """Validate the app version was incremented with this bug fix."""
     config_source = read_text(CONFIG_FILE)
-    expected = f'VERSION = "{CURRENT_VERSION}"'
-    assert expected in config_source
+    assert_app_version_at_least(CURRENT_VERSION)
 
 
 def main():

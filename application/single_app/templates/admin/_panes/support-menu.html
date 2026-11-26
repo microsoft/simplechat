@@ -46,7 +46,7 @@
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show a user-facing Latest Features page from the Support menu."></i>
                         </div>
 
-                        <div id="support_latest_features_settings" {% if not settings.enable_support_latest_features %}style="display: none;"{% endif %}>
+                        <div id="support_latest_features_hint"{% if not settings.enable_support_latest_features %} class="d-none"{% endif %}>
                             <p class="text-muted small mb-0">Choose which announcements end users see on the
                                 <a href="#user-facing-latest-features-section" data-admin-link="user-facing-latest-features-section">User-Facing Latest Features</a> tab.</p>
                         </div>

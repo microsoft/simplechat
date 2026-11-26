@@ -13,6 +13,7 @@ record as revision-aware blob paths are introduced.
 import ast
 import os
 import sys
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,7 +22,7 @@ sys.path.append(ROOT_DIR)
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_documents.py')
 ENHANCED_ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_enhanced_citations.py')
 CONFIG_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'config.py')
-FIX_DOC = os.path.join(ROOT_DIR, 'docs', 'explanation', 'fixes', 'CITATION_REVISION_LOOKUP_FIX.md')
+FIX_DOC = os.path.join(ROOT_DIR, 'docs', 'explanation', 'fixes', 'v0.241.001', 'CITATION_REVISION_LOOKUP_FIX.md')
 TARGET_FUNCTIONS = {
     '_extract_citation_document_id',
     '_try_get_document_json',
@@ -155,7 +156,7 @@ def test_version_and_fix_documentation_alignment():
     version = read_config_version()
     fix_doc_content = read_file_text(FIX_DOC)
 
-    assert version == '0.240.025', version
+    assert app_version_is_at_least('0.240.025'), version
     assert 'Fixed/Implemented in version: **0.240.024**' in fix_doc_content
     assert 'exact document ID behind the citation chunk' in fix_doc_content
     assert 'application/single_app/route_backend_documents.py' in fix_doc_content

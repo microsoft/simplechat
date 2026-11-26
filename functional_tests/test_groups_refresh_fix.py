@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_groups_refresh_fix.py
 """
 Functional test for Groups Tab Refresh Fix.
 Version: 0.230.055

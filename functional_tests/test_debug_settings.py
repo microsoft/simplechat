@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
+# test_debug_settings.py
 """
 Check if debug logging is enabled in settings.
+Version: 0.261.474
+Implemented in: 0.230.034
 """
 
 import sys

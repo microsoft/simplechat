@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import harness_build as hb  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402,F401
-from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
+from v2_pending_action_stubs import background_poll_payload, is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -189,6 +189,10 @@ class ConversationHandoffApi:
             route.fulfill(json={"unread_count": 0})
             return
 
+        poll = background_poll_payload(request.method, path)
+        if poll is not None:
+            route.fulfill(json=poll)
+            return
         self.unexpected.append(f"{request.method} {path}")
         route.fulfill(status=404, json={"error": "Unexpected test endpoint."})
 

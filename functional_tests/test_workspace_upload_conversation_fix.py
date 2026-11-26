@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_workspace_upload_conversation_fix.py
 """
 Test to verify that workspace file uploads don't create conversations.
 
@@ -9,6 +10,8 @@ occur due to the shared_group_ids field missing from the search index.
 Bug Fixed: 
 1. File uploads from workspace were creating conversations when they shouldn't
 2. Search index updates were failing due to shared_group_ids field not existing in API version 2024-07-01
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys
@@ -21,8 +24,8 @@ def test_personal_workspace_upload_no_conversation():
     
     try:
         # Check the upload endpoint code to ensure conversation creation is removed
-        route_file = os.path.join(os.path.dirname(__file__), "../route_backend_documents.py")
-        with open(route_file, 'r') as f:
+        route_file = os.path.join(os.path.dirname(__file__), "../application/single_app/route_backend_documents.py")
+        with open(route_file, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Verify conversation creation code is removed/commented
@@ -63,8 +66,8 @@ def test_search_index_field_filtering():
     
     try:
         # Check the functions_documents.py file for proper field filtering
-        functions_file = os.path.join(os.path.dirname(__file__), "../functions_documents.py")
-        with open(functions_file, 'r') as f:
+        functions_file = os.path.join(os.path.dirname(__file__), "../application/single_app/functions_documents.py")
+        with open(functions_file, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Look for the update_chunk_metadata function
@@ -110,8 +113,8 @@ def test_group_workspace_upload_behavior():
     
     try:
         # Check group upload endpoint
-        group_route_file = os.path.join(os.path.dirname(__file__), "../route_backend_group_documents.py")
-        with open(group_route_file, 'r') as f:
+        group_route_file = os.path.join(os.path.dirname(__file__), "../application/single_app/route_backend_group_documents.py")
+        with open(group_route_file, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Verify it doesn't create conversations (should not have conversation creation code)
@@ -145,8 +148,8 @@ def test_public_workspace_upload_behavior():
     
     try:
         # Check public upload endpoint
-        public_route_file = os.path.join(os.path.dirname(__file__), "../route_backend_public_documents.py")
-        with open(public_route_file, 'r') as f:
+        public_route_file = os.path.join(os.path.dirname(__file__), "../application/single_app/route_backend_public_documents.py")
+        with open(public_route_file, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Verify it doesn't create conversations

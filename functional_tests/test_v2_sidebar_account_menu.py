@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_sidebar_account_menu.py
 """
 Functional test for the V2 rail's account menu and remembered navigation groups.
 Version: 0.261.055

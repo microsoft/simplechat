@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_support_menu_blueprint_endpoints.py
 """
 Functional test for support menu Blueprint endpoint normalization.
 Version: 0.242.071

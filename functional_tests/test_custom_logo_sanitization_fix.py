@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_custom_logo_sanitization_fix.py
 """
 Functional test for custom logo sanitization fix.
 Version: 0.237.002

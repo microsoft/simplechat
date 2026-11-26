@@ -21,6 +21,7 @@ FIX_DOC = os.path.join(
     'docs',
     'explanation',
     'fixes',
+    'v0.241.001',
     'CHAT_STREAM_RETRY_CONTEXT_INIT_FIX.md',
 )
 

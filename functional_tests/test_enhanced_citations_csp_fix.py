@@ -11,6 +11,7 @@ the dedicated anchored container below the tutorial launcher.
 
 import sys
 import os
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def test_csp_frame_ancestors_allows_self_framing():
@@ -220,7 +221,7 @@ def test_version_update():
             config_content = f.read()
         
         # Check that version is updated to 0.241.010
-        if 'VERSION = "0.241.010"' not in config_content:
+        if not app_version_is_at_least("0.241.010"):
             print("❌ Version not updated to 0.241.010")
             return False
         print("✅ Version updated to 0.241.010")

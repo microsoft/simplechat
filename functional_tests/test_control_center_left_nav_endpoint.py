@@ -10,6 +10,7 @@ endpoint so admins see the left nav when ControlCenterAdmin enforcement is disab
 """
 
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,7 +67,7 @@ def test_config_version_bumped_for_control_center_left_nav_fix() -> bool:
     print("Testing config version bump for Control Center left nav fix...")
     config_content = read_text("application/single_app/config.py")
 
-    if 'VERSION = "0.250.052"' not in config_content:
+    if not app_version_is_at_least("0.250.052"):
         print("Config version was not bumped to 0.250.052")
         return False
 

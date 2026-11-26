@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+# test_format_buttons_validation.py
 """
 Quick validation test for YAML format buttons in Swagger UI.
 Version: 0.230.042
 
 This test validates that the UI enhancements for format selection are working.
+Implemented in: 0.230.043
 """
 
 import sys

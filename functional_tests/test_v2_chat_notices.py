@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_chat_notices.py
 """
 Functional test for the V2 chat notices (web search notice and AI notice).
 

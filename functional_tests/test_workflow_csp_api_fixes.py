@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_workflow_csp_api_fixes.py
 """
 Functional test for workflow CSP and OpenAI API parameter fixes.
 Version: 0.229.065
@@ -12,6 +13,7 @@ This test ensures that:
 
 import sys
 import os
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def test_workflow_openai_api_parameters():
@@ -154,7 +156,7 @@ def test_version_update():
         with open(config_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        if 'VERSION = "0.229.065"' in content:
+        if app_version_is_at_least("0.229.065"):
             print("   - Version updated to 0.229.065")
             print("✅ Version update confirmed!")
             return True

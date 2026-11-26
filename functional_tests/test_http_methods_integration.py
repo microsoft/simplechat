@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# test_http_methods_integration.py
 """
 Test HTTP methods integration in swagger documentation.
 Version: 0.229.064
 Testing: How Flask route methods are reflected in OpenAPI specification
 
 This test demonstrates that HTTP methods from Flask routes are properly integrated.
+Implemented in: 0.229.068
 """
 
 import sys

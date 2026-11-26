@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_settings_secrets_exposure_hardening.py
 """
 Functional test for settings and secrets exposure hardening.
 Version: 0.242.059

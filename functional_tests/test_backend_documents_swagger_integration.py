@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_backend_documents_swagger_integration.py
 """
 Functional test for backend documents swagger integration.
 Version: 0.229.068
@@ -25,7 +26,7 @@ def test_documents_swagger_imports():
             'route_backend_documents.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Verify swagger imports are present
@@ -54,7 +55,7 @@ def test_documents_swagger_decorators():
             'route_backend_documents.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Expected endpoints that should have swagger decorators
@@ -115,7 +116,7 @@ def test_documents_decorator_order():
             'route_backend_documents.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         lines = content.split('\n')
@@ -159,7 +160,7 @@ def test_documents_endpoint_coverage():
             'route_backend_documents.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Expected document management functions
@@ -215,7 +216,7 @@ def test_documents_auth_security_integration():
             'route_backend_documents.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Count occurrences of security integration
@@ -252,7 +253,7 @@ def test_documents_enabled_required_preservation():
             'route_backend_documents.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Most document endpoints should have @enabled_required("enable_user_workspace")

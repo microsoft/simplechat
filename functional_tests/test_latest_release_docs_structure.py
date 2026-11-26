@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_latest_release_docs_structure.py
 """
 Functional test for latest-release documentation structure.
 Version: 0.261.001

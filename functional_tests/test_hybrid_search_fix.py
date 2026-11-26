@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# test_hybrid_search_fix.py
 """
 Test the hybrid_search parameters fix for PII analysis.
 Version: 0.229.074
 
 This test verifies that the PII analysis correctly calls hybrid_search
 and extracts content from the returned chunks.
+Implemented in: 0.229.088
 """
 
 import sys

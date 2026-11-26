@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_control_center_functionality.py
 """
 Functional test for Control Center feature.
 
@@ -8,6 +9,8 @@ This test validates:
 3. Access control and file upload restrictions work
 4. Authentication middleware properly enforces restrictions
 5. Frontend components render correctly
+Version: 0.261.474
+Implemented in: 0.230.002
 """
 
 import sys

@@ -15,7 +15,7 @@ import os
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 CONFIG_FILE = os.path.join(REPO_ROOT, 'application', 'single_app', 'config.py')
-FIX_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'fixes', 'FLASK_31_MARKUP_IMPORT_FIX.md')
+FIX_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'fixes', 'v0.241.001', 'FLASK_31_MARKUP_IMPORT_FIX.md')
 
 
 def read_file_text(file_path):

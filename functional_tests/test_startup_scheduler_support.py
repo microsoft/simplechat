@@ -13,13 +13,14 @@ documentation describes native Python and container startup behavior.
 import os
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_FILE = ROOT / 'application' / 'single_app' / 'app.py'
 BACKGROUND_TASKS_FILE = ROOT / 'application' / 'single_app' / 'background_tasks.py'
 SCHEDULER_FILE = ROOT / 'application' / 'single_app' / 'simplechat_scheduler.py'
-DOC_FILE = ROOT / 'docs' / 'explanation' / 'features' / 'SIMPLECHAT_STARTUP.md'
+DOC_FILE = ROOT / 'docs' / 'explanation' / 'features' / 'v0.241.001' / 'SIMPLECHAT_STARTUP.md'
 CONFIG_FILE = ROOT / 'application' / 'single_app' / 'config.py'
 
 
@@ -46,7 +47,7 @@ def test_startup_scheduler_support() -> bool:
     assert_contains(DOC_FILE, '## Native Python App Service')
     assert_contains(DOC_FILE, '## Container Runtime')
     assert_contains(DOC_FILE, 'simplechat_scheduler.py')
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.129"')
+    assert_app_version_at_least("0.239.129")
 
     print('Startup and scheduler support checks passed!')
     return True

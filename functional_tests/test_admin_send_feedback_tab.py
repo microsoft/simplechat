@@ -28,7 +28,7 @@ SIDEBAR_TEMPLATE = os.path.join(REPO_ROOT, 'application', 'single_app', 'templat
 ADMIN_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'admin', 'admin_settings.js')
 BACKEND_SETTINGS = os.path.join(REPO_ROOT, 'application', 'single_app', 'route_backend_settings.py')
 ACTIVITY_LOGGING = os.path.join(REPO_ROOT, 'application', 'single_app', 'functions_activity_logging.py')
-FEATURE_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'SEND_FEEDBACK_ADMIN.md')
+FEATURE_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'v0.241.001', 'SEND_FEEDBACK_ADMIN.md')
 
 
 def read_text(path):

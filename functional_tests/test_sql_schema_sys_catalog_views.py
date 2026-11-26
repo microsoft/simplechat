@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_sql_schema_sys_catalog_views.py
 """
 Functional test for SQL Schema Plugin sys.* catalog view migration.
 Version: 0.239.016
@@ -190,7 +191,7 @@ def test_version_updated():
     try:
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                    '..', 'application', 'single_app', 'config.py')
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
 
         assert_app_version_at_least("0.239.016")

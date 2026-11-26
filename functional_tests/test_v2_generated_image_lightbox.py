@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_generated_image_lightbox.py
 """
 Functional test for the V2 generated-image lightbox.
 

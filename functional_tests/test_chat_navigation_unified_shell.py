@@ -14,6 +14,7 @@ drawer offset below the fixed header.
 
 from pathlib import Path
 import sys
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -153,7 +154,7 @@ def test_config_version_bumped_for_chat_navigation_shell() -> bool:
     print("Testing config version bump for chat navigation shell...")
     config_content = read_text("application/single_app/config.py")
 
-    if 'VERSION = "0.241.023"' not in config_content:
+    if not app_version_is_at_least("0.241.023"):
         print("Config version was not bumped to 0.241.023")
         return False
 

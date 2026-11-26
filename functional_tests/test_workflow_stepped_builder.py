@@ -11,6 +11,7 @@ builder and submit ordered tasks and error handling through existing routes.
 """
 
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,7 +107,7 @@ def test_existing_routes_persist_tasks_without_new_endpoints() -> None:
     routes = read_text("application/single_app/route_backend_workflows.py")
     config = read_text("application/single_app/config.py")
 
-    assert f'VERSION = "{EXPECTED_VERSION}"' in config
+    assert app_version_is_at_least(EXPECTED_VERSION)
     assert "'tasks': tasks," in personal_store
     assert "'error_handling': error_handling," in personal_store
     assert "max_tasks=get_workflow_max_tasks(settings)" in personal_store

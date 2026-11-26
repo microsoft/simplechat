@@ -436,7 +436,7 @@ def test_admin_settings_tab_uniqueness():
     # Every tab in the map must render exactly one pane. Checking all of them
     # is stronger than naming one tab, and cannot go stale as tabs are renamed.
     for tab_id in tab_ids:
-        pane_count = template_content.count(f'id="{tab_id}" role="tabpanel"')
+        pane_count = len(re.findall(rf'\sid="{re.escape(tab_id)}"\s+role="tabpanel"', template_content))
         assert pane_count == 1, f"Tab pane '{tab_id}' should appear exactly once, found {pane_count}"
     # No pane may hardcode the active state; exactly one resolves it at render
     # time from the nav map.
@@ -451,7 +451,7 @@ def test_admin_settings_tab_uniqueness():
     assert 'Managesecuritysettingsforkeyvaultandothersecurityconfigurations.</p>' in normalized_template, 'Security intro paragraph should be properly closed'
 
     # Every tab in the map must have a pane to activate.
-    panes = set(re.findall(r'<div class="tab-pane[^"]*" id="([^"]+)"', template_content))
+    panes = set(re.findall(r'<div class="tab-pane[^"]*"\s+id="([^"]+)"', template_content))
     missing = sorted(set(tab_ids) - panes)
     assert not missing, f'Nav map lists tabs with no matching pane: {missing}'
 

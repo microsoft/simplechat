@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_enhanced_citations_pdf_modal_fix.py
 """
 Functional test for enhanced citations PDF modal fix.
 Version: 0.228.006
@@ -10,6 +11,7 @@ endpoint instead of the old SAS URL approach for PDF documents.
 
 import sys
 import os
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def test_pdf_modal_server_side_rendering():
@@ -88,7 +90,7 @@ def test_version_update():
             config_content = f.read()
         
         # Check for the updated version
-        if 'VERSION = "0.228.006"' not in config_content:
+        if not app_version_is_at_least("0.228.006"):
             print("❌ Version not updated to 0.228.006")
             return False
         

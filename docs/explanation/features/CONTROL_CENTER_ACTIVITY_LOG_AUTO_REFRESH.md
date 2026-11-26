@@ -2,6 +2,8 @@
 
 Fixed/Implemented in version: **0.241.028**
 
+Restored in version: **0.261.489** (the controls had been dropped from the app while this page remained)
+
 ## Overview and Purpose
 
 The Control Center Activity Logs tab now lets admins enable browser-side auto-refresh while they monitor recent activity. The control is designed for live operations views where admins previously stayed on the page and repeatedly clicked Reload.
@@ -16,6 +18,7 @@ Architecture overview:
 - The interval range is 1 to 300 seconds with a 30-second default.
 - The browser stores the enabled state and interval in `localStorage` using `simplechat_activityLogsAutoRefreshEnabled` and `simplechat_activityLogsAutoRefreshIntervalSeconds`.
 - Auto-refresh only schedules while the Activity Logs tab is active and the document is visible.
+- A newer search, filter, page or reload request replaces one still running; late responses are ignored.
 - Auto-refresh pauses after authorization failures or repeated refresh errors to avoid noisy background polling.
 
 Configuration options:
@@ -63,3 +66,4 @@ Known limitations:
 
 - Auto-refresh is a per-browser preference, not an administrator-wide server setting.
 - The timer refreshes the current Activity Logs page and filters; it does not force a metrics recalculation.
+- The V2 (React) Control Center does not have this control.

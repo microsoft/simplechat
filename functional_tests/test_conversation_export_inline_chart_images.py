@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_conversation_export_inline_chart_images.py
 """
 Functional tests for inline chart graphics in conversation exports.
 Version: 0.241.143

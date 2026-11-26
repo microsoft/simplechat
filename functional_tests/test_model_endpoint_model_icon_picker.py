@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_model_endpoint_model_icon_picker.py
 """
 Functional test for model endpoint model icon picker support.
 Version: 0.242.060

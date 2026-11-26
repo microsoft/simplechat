@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_workspace_upload_request_status_copy.py
 """
 UI test for workspace upload request status copy.
 Version: 0.261.005

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_hidden_conversation_sidebar_click_fix.py
 """
 Functional test for hidden conversation sidebar click fix.
 Version: 0.233.176

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# test_smart_http_plugin_citation_content_fix.py
 """
 Test Smart HTTP Plugin Citation Content Fix.
 Version: 0.228.014
 
 This test specifically validates that the function result in citations shows 
 actual content instead of coroutine objects after the async decorator fix.
+Implemented in: 0.229.001
 """
 
 import sys

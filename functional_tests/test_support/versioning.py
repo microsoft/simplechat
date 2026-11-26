@@ -1,5 +1,9 @@
 # versioning.py
-"""Shared SimpleChat version helpers for functional tests."""
+"""Shared SimpleChat version helpers for functional tests.
+
+Version: 0.261.489
+app_version_is_at_least added in: 0.261.489
+"""
 
 import re
 from pathlib import Path
@@ -68,3 +72,13 @@ def assert_app_version_at_least(minimum_version, repo_root=None, reason=None):
         label="config.py VERSION",
         reason=reason,
     )
+
+
+def app_version_is_at_least(minimum_version, repo_root=None):
+    """Return True when the current app VERSION is at least ``minimum_version``.
+
+    Use this, or assert_app_version_at_least, instead of checking config.py for an
+    exact ``VERSION = "..."`` string. An exact check fails on the next version bump,
+    including every bump a fork makes, although the feature it guards is still there.
+    """
+    return compare_simplechat_versions(read_app_version(repo_root), minimum_version) >= 0

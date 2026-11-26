@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_enable_group_creation_setting.py
 """
 Functional test for enable_group_creation setting implementation.
 Version: 0.230.029
@@ -24,7 +25,7 @@ def test_default_settings_include_enable_group_creation():
     try:
         # Read the functions_settings.py file directly to check for enable_group_creation
         settings_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'functions_settings.py')
-        with open(settings_path, 'r') as f:
+        with open(settings_path, 'r', encoding='utf-8') as f:
             settings_content = f.read()
         
         # Verify enable_group_creation exists in default settings
@@ -51,7 +52,7 @@ def test_admin_settings_template_includes_toggle():
     try:
         # Read the admin settings template
         template_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'templates', 'admin_settings.html')        
-        with open(template_path, 'r') as f:
+        with open(template_path, 'r', encoding='utf-8') as f:
             template_content = f.read()
         
         # Check for enable_group_creation toggle
@@ -81,7 +82,7 @@ def test_admin_settings_backend_processes_toggle():
     try:
         # Read the admin settings route file
         backend_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_frontend_admin_settings.py')
-        with open(backend_path, 'r') as f:
+        with open(backend_path, 'r', encoding='utf-8') as f:
             backend_content = f.read()
         
         # Check that enable_group_creation is processed
@@ -104,7 +105,7 @@ def test_group_creation_api_has_required_decorator():
     try:
         # Read the groups backend route file
         backend_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_backend_groups.py')
-        with open(backend_path, 'r') as f:
+        with open(backend_path, 'r', encoding='utf-8') as f:
             backend_content = f.read()
         
         # Check that api_create_group has the enable_group_creation decorator
@@ -143,7 +144,7 @@ def test_control_center_integration():
     try:
         # Read the control center template
         template_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'templates', 'control_center.html')
-        with open(template_path, 'r') as f:
+        with open(template_path, 'r', encoding='utf-8') as f:
             template_content = f.read()
         
         # Check for disable group creation toggle
@@ -176,7 +177,7 @@ def test_admin_settings_javascript_visibility():
     try:
         # Read the admin settings JavaScript file
         js_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'static', 'js', 'admin', 'admin_settings.js')
-        with open(js_path, 'r') as f:
+        with open(js_path, 'r', encoding='utf-8') as f:
             js_content = f.read()
         
         # Check for enable_group_creation_setting visibility logic
@@ -201,7 +202,7 @@ def test_version_updated():
     try:
         # Read config.py
         config_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'config.py')
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
         
         # Check for version update

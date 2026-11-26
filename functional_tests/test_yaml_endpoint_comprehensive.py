@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_yaml_endpoint_comprehensive.py
 """
 Complete validation test for YAML OpenAPI endpoint functionality.
 Version: 0.230.042
@@ -6,6 +7,7 @@ Version: 0.230.042
 This test provides a comprehensive validation that both JSON and YAML endpoints
 work correctly when the server is running, and falls back to offline validation
 when the server is not available.
+Implemented in: 0.230.043
 """
 
 import sys

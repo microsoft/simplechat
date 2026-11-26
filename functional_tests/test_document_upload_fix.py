@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
+# test_document_upload_fix.py
 """
 Test for fixing Azure Document Intelligence API upload issue.
 
 This test validates that document uploads work correctly with the Azure Document Intelligence API
 and prevents regression of the "Session.request() got an unexpected keyword argument 'document'" error.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

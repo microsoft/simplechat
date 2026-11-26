@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_agent_citations_per_message_fix.py
 """
 Test script to validate the agent citations per-message isolation fix.
 
@@ -6,6 +7,8 @@ This script tests that:
 1. Agent citations don't leak across conversations (previous fix)
 2. Agent citations don't accumulate across messages within the same conversation (new fix)
 3. Each message only shows citations for tools executed during that specific interaction
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

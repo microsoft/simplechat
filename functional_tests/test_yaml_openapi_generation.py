@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_yaml_openapi_generation.py
 """
 Functional test for YAML OpenAPI specification generation.
 Version: 0.230.042

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_sql_plugin_validation_fix.py
 """
 Test SQL Plugin Configuration Validation Fix
 
@@ -9,6 +10,8 @@ required all plugins to have endpoints.
 
 This test validates the fix for the issue where creating SQL schema plugins
 would fail with a 400 BAD REQUEST error due to endpoint validation.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

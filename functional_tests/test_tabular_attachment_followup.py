@@ -12,6 +12,7 @@ and strengthens the final handoff so attachment excerpts are not ignored.
 
 from pathlib import Path
 import traceback
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +39,7 @@ def test_tabular_attachment_followup_wires_document_search() -> None:
     current_version = read_current_version()
     chat_route_content = read_text(CHAT_ROUTE_FILE)
 
-    assert current_version == EXPECTED_VERSION, (
+    assert app_version_is_at_least(EXPECTED_VERSION), (
         f'Expected config.py version {EXPECTED_VERSION} for the tabular attachment follow-up fix.'
     )
     assert 'from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin' in chat_route_content, (

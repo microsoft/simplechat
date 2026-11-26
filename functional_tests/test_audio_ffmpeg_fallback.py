@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 from test_support.templates import compose_if_admin_settings
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -240,7 +241,7 @@ def test_config_version_bumped_for_audio_fallback_fix():
     config_source = read_file(CONFIG_FILE)
     version_match = re.search(r'VERSION = "([0-9.]+)"', config_source)
     assert version_match, 'Could not find VERSION in config.py'
-    assert version_match.group(1) == '0.250.011', 'Expected config.py version 0.250.011'
+    assert app_version_is_at_least('0.250.011'), 'Expected config.py version 0.250.011'
 
     print('Config version bump passed')
     return True

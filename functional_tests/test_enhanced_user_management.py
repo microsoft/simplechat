@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_enhanced_user_management.py
 """
 Functional test for enhanced user management with profile images and detailed metrics.
 Version: 0.230.018

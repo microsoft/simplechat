@@ -16,15 +16,23 @@ import subprocess
 import sys
 import time
 import types
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import requests
+from flask import Flask, session
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "application" / "single_app"
 LOCAL_MCP_SERVER = REPO_ROOT / "application" / "development" / "local_mcp" / "server.py"
 sys.path.insert(0, str(APP_DIR))
+sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
+
+from test_support.live_services import require_live_cosmos  # noqa: E402
+
+# The MCP destination policy reads the deployment's settings from Cosmos DB.
+require_live_cosmos(__file__)
 
 
 def _noop(*_args, **_kwargs):
@@ -59,6 +67,7 @@ sys.modules.setdefault(
     types.SimpleNamespace(debug_print=lambda *args, **kwargs: None),
 )
 
+from functions_action_manifest import McpActionOrigin  # noqa: E402
 from functions_mcp_operations import MCP_PLUGIN_TYPE  # noqa: E402
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory  # noqa: E402
 
@@ -152,6 +161,21 @@ def extract_mcp_content(result):
     return content
 
 
+# MCP execution requires a server-bound action origin (0.261.x MCP destination policy).
+# The local server is reached as a personal action owned by a test user.
+TEST_ACTION_ORIGIN = McpActionOrigin("personal", "functional-test-user", "local-mcp-test")
+
+
+@contextmanager
+def signed_in_test_user():
+    """MCP execution also requires the authenticated caller; sign in the origin's owner."""
+    app = Flask(__name__)
+    app.secret_key = "local-mcp-functional-test"
+    with app.test_request_context("/"):
+        session["user"] = {"oid": TEST_ACTION_ORIGIN.scope_id}
+        yield
+
+
 def build_manifest(port):
     """Build a SimpleChat MCP action manifest for the local server."""
     return {
@@ -189,9 +213,13 @@ def test_local_mcp_server_workflow():
     port = find_free_port()
     process = start_local_mcp_server(port)
 
+    stack = ExitStack()
+
     try:
+
+        stack.enter_context(signed_in_test_user())
         manifest = build_manifest(port)
-        tools = asyncio.run(McpPluginFactory.discover_tools_from_config(manifest))
+        tools = asyncio.run(McpPluginFactory.discover_tools_from_config(manifest, origin=TEST_ACTION_ORIGIN))
         tool_names = {tool.get("original_name") for tool in tools}
         assert "ping" in tool_names
         assert "require_headers" in tool_names
@@ -209,6 +237,7 @@ def test_local_mcp_server_workflow():
                         "X-Splunk-Host": "local-search-head",
                     },
                 },
+                origin=TEST_ACTION_ORIGIN,
             )
         )
         header_content = extract_mcp_content(header_result)
@@ -224,6 +253,7 @@ def test_local_mcp_server_workflow():
                     "auth_type": "bearer",
                     "expected_token": "real-auth-token",
                 },
+                origin=TEST_ACTION_ORIGIN,
             )
         )
         auth_content = extract_mcp_content(auth_result)
@@ -239,6 +269,7 @@ def test_local_mcp_server_workflow():
                     "header_names": ["Authorization", "X-SimpleChat-Test"],
                     "include_sensitive": False,
                 },
+                origin=TEST_ACTION_ORIGIN,
             )
         )
         inspect_content = extract_mcp_content(inspect_result)
@@ -248,6 +279,7 @@ def test_local_mcp_server_workflow():
 
         print("SimpleChat local MCP server workflow test passed.")
     finally:
+        stack.close()
         stop_local_mcp_server(process)
 
 
@@ -260,7 +292,11 @@ def test_local_mcp_ingress_header_gate():
         ["--require-header-value", "X-Required-Gate=open-sesame"],
     )
 
+    stack = ExitStack()
+
     try:
+
+        stack.enter_context(signed_in_test_user())
         manifest = build_manifest(port)
         manifest["auth"] = {"type": "NoAuth"}
         manifest["additionalFields"]["auth_method"] = "none"
@@ -268,7 +304,7 @@ def test_local_mcp_ingress_header_gate():
             "X-Required-Gate": "open-sesame",
         }
 
-        tools = asyncio.run(McpPluginFactory.discover_tools_from_config(manifest))
+        tools = asyncio.run(McpPluginFactory.discover_tools_from_config(manifest, origin=TEST_ACTION_ORIGIN))
         tool_names = {tool.get("original_name") for tool in tools}
         assert "server_info" in tool_names
 
@@ -282,6 +318,7 @@ def test_local_mcp_ingress_header_gate():
 
         print("SimpleChat local MCP ingress header gate test passed.")
     finally:
+        stack.close()
         stop_local_mcp_server(process)
 
 
