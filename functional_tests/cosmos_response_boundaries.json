@@ -936,7 +936,7 @@
           "replace_item",
           "upsert_item"
         ],
-        "sha256": "e42473581f624fc6d088fffede40a61dc0c9a854d585e2f97b965b04ccfb45bf"
+        "sha256": "5f686ede7c5323fb5d5061df16cb6aa61de127dd6c5d97f4781184cd049bc7d5"
       },
       "classification": "sdk-default",
       "contract": "Point/write documents default to the installed CosmosDict; explicit sdk_responses=False is compatibility-only. Stored/query rows stay plain, ETags/conditional writes and message partition reads are preserved, and attempt batches reuse the installed-SDK formatter/atomic boundary rather than a hand-reimplemented state chart.",

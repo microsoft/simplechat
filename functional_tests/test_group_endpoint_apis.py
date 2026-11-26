@@ -1,7 +1,7 @@
 # test_group_endpoint_apis.py
 """
 Functional test for the immutable-target group model endpoint APIs.
-Version: 0.261.436
+Version: 0.261.488
 Implemented in: 0.261.140
 
 The real policy, access, route, group-document, Key Vault and settings modules run
@@ -242,7 +242,8 @@ def test_providers_the_editor_does_not_offer_are_neither_listed_nor_addressable(
     assert ids == ["ep-a"]
     assert env.client.get(item_path("ep-workflow")).status_code == 404
     assert patch(env, "ep-workflow", {"expected_revision": "x", "name": "n"}).status_code == 404
-    assert delete(env, "ep-workflow", "x").status_code == 404
+    deleted = delete(env, "ep-workflow", "x")
+    assert deleted.status_code == 404
     # Every write preserves it.
     assert create(env, new_endpoint()).status_code == 201
     assert env.stored_endpoint(GROUP_A, "ep-workflow") is not None
@@ -724,7 +725,8 @@ def test_a_new_key_replaces_the_legacy_name_which_is_cleaned_up_after_the_write(
 
 def test_delete_removes_the_endpoint_credentials(seeded):
     revision = seeded.revision_of(GROUP_A, "ep-a")
-    assert delete(seeded, "ep-a", revision).status_code == 200
+    deleted = delete(seeded, "ep-a", revision)
+    assert deleted.status_code == 200
     assert seeded.vault.deletes == [legacy_key_name("ep-a")]
     assert seeded.stored_group(GROUP_A)["model_endpoints"] == []
 

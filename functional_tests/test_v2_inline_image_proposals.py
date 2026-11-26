@@ -2,7 +2,7 @@
 """
 Functional test for V2 inline image generation proposals.
 
-Version: 0.261.485
+Version: 0.261.488
 Implemented in: 0.261.029
 
 A model can propose a generated image inside an ordinary reply by emitting a fenced
@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "application" / "single_app"
@@ -443,7 +444,7 @@ def test_no_third_party_browser_assets_were_added():
             url = match.group(0)
             # A URL inside the source is only a problem when the browser would fetch it. The
             # image source matcher and its comments name http(s) forms without fetching them.
-            if url.startswith("https://...") or "rollupjs.org" in url:
+            if url.startswith("https://...") or urlsplit(url).hostname == "rollupjs.org":
                 continue
             raise AssertionError(
                 f"{path.relative_to(REPO_ROOT)} references a remote URL: {url}"

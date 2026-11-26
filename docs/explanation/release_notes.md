@@ -2,6 +2,14 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.488)**
+
+#### Bug Fixes
+
+*   **CodeQL Findings in Functional Tests**
+    *   Two group connection API test assertions no longer contain the delete requests they check. The soft-deleted message test's Cosmos double reads `SELECT` clauses in linear time instead of with a pattern that could take seconds on whitespace-heavy input. The V2 inline image proposal test compares URL hosts exactly instead of searching URLs for a host name.
+    *   (Ref: `test_group_endpoint_apis.py`, `test_chat_soft_deleted_message_visibility_fix.py`, `test_v2_inline_image_proposals.py`, `cosmos_response_boundaries.json`, [CodeQL Alert and Contract Check Fix](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/CODEQL_ALERT_AND_CONTRACT_CHECK_FIX.md))
+
 ### **(v0.261.487)**
 
 #### Bug Fixes

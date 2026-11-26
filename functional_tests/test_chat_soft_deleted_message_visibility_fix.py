@@ -2,7 +2,7 @@
 # test_chat_soft_deleted_message_visibility_fix.py
 """
 Functional test for deleted chat messages that came back as masked messages.
-Version: 0.261.430
+Version: 0.261.488
 Implemented in: 0.261.257
 
 With conversation archiving enabled, deleting a chat message keeps its document with
@@ -180,7 +180,8 @@ class FakeContainer:
         else:
             documents.sort(key=lambda document: str(document.get("timestamp") or ""))
 
-        selected = re.search(r"SELECT\s+(?:TOP\s+(\d+)\s+)?(.+?)\s+FROM\s+c\b", query, re.DOTALL)
+        # Collapsed whitespace and the anchor leave one repeat and one start position, so this runs in linear time.
+        selected = re.search(r"^SELECT (?:TOP (\d+) )?(.+?) FROM c\b", " ".join(query.split()))
         top, fields = (selected.group(1), selected.group(2).strip()) if selected else (None, "*")
         if fields.startswith("VALUE MAX("):
             path = re.search(r"MAX\(c\.([\w.]+)\)", fields).group(1)
