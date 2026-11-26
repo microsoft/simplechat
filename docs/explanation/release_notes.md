@@ -2,6 +2,20 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.487)**
+
+#### Bug Fixes
+
+*   **Document Action Helpers Load Without App Settings**
+    *   The document action helpers no longer load configuration while they load. This removes an import cycle with the settings module that could fail when the helpers were imported first.
+    *   (Ref: `functions_document_actions.py`, `test_app_settings_import_boundaries.py`, [CodeQL Alert and Contract Check Fix](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/CODEQL_ALERT_AND_CONTRACT_CHECK_FIX.md))
+*   **Custom Anthropic Client Initialization**
+    *   The Custom Anthropic client now runs the standard Anthropic client's initialization, so it has the same attributes and version handling, while keeping its own URL mode and pinned transport.
+    *   (Ref: `model_endpoint_clients.py`)
+*   **Pull Request CodeQL Check Findings**
+    *   Two redundant plugin creation log lines that CodeQL reported as logging sensitive data were removed, and seven test assertions no longer contain the calls they check, so those calls also run under optimized Python.
+    *   (Ref: `semantic_kernel_loader.py`, `test_workspace_authoring_backend.py`, `test_workflow_durable_execution.py`)
+
 ### **(v0.261.486)**
 
 #### Bug Fixes

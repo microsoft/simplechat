@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.460
+Version: 0.261.487
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,
@@ -554,7 +554,8 @@ def test_every_action_type_create_edit_reload_delete(environment, kind):
     latest = update.get_json()
     assert latest["record"]["metadata"]["custom_configuration"] == {"enabled": False, "maximum": 0, "items": []}
     assert env.client.get(f"/api/user/plugins/{resource['record']['id']}?view=editor").get_json() == latest
-    assert env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 200
+    deleted = env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor")
+    assert deleted.status_code == 200
 
 
 @pytest.mark.parametrize("action_type", ["msgraph", "Microsoft Graph", "MSGraphPlugin"])
@@ -588,7 +589,8 @@ def test_editor_retains_owned_legacy_graph_editing_without_clone_or_type_convers
     })
     assert converted.status_code == 400
     assert len(env.services.writes) == writes
-    assert env.client.delete(f"/api/user/plugins/{stored['id']}?view=editor").status_code == 200
+    deleted = env.client.delete(f"/api/user/plugins/{stored['id']}?view=editor")
+    assert deleted.status_code == 200
     restored = env.client.post("/api/user/plugins?view=editor", json=write_payload(latest["record"]))
     assert restored.status_code == 400
 
@@ -788,7 +790,8 @@ def test_action_type_governance_checks_existing_type_before_change(environment):
     assert env.client.get("/api/user/plugins?view=editor").get_json() == []
     assert env.client.get(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 403
     assert patch_record(env, "plugins", resource, {"type": "http"}).status_code == 403
-    assert env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 403
+    denied_delete = env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor")
+    assert denied_delete.status_code == 403
 
 
 def test_preserves_unavailable_agent_references_and_capabilities(environment):
@@ -918,7 +921,8 @@ def test_delete_is_owned_conditional_and_cleans_only_unreferenced_secrets(enviro
     env.services.settings["enable_key_vault_secret_storage"] = True
     resource = create(env, "plugins", action_payload())
     foreign = env.services.add("actions", "personal", "other", {**action_payload(), "id": "foreign"})
-    assert env.client.delete(f"/api/user/plugins/{foreign['id']}?view=editor").status_code == 404
+    foreign_delete = env.client.delete(f"/api/user/plugins/{foreign['id']}?view=editor")
+    assert foreign_delete.status_code == 404
     response = env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor")
     assert response.status_code == 200 and response.get_json() == {"success": True}
     assert ("actor", resource["record"]["id"]) not in env.services.records["actions", "personal"]
@@ -1618,7 +1622,8 @@ def test_action_read_and_cleanup_do_not_require_authoring_flags(environment, dis
     assert deleted.status_code == 200 and deleted.get_json() == {"success": True}
     assert not env.services.vault
     assert env.services.records["actions", "global"][provided["id"], provided["id"]] == provided
-    assert env.client.delete("/api/user/plugins/provided-action?view=editor&scope=global").status_code == 403
+    global_delete = env.client.delete("/api/user/plugins/provided-action?view=editor&scope=global")
+    assert global_delete.status_code == 403
 
 
 def test_provided_actions_remain_readable_when_personal_action_governance_denies_authoring(environment):
@@ -1634,7 +1639,8 @@ def test_provided_actions_remain_readable_when_personal_action_governance_denies
     assert [record["id"] for record in listed.get_json()] == [provided["id"]]
     env.services.containers["actions", "personal"].query_items.assert_not_called()
     assert env.client.get(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 403
-    assert env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 403
+    denied_delete = env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor")
+    assert denied_delete.status_code == 403
     assert env.client.get("/api/user/plugins/provided?view=editor&scope=global").status_code == 200
     options = env.client.get("/api/user/agent/settings?view=editor")
     assert options.status_code == 200 and options.get_json()["settings"]["allow_user_plugins"] is False

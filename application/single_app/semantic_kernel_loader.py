@@ -1977,10 +1977,8 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                         print(f"[SK_LOADER] Created Tableau plugin: {name}")
                     elif plugin_type == YAMCS_PLUGIN_TYPE:
                         plugin = YamcsPluginFactory.create_from_config(manifest)
-                        print(f"[SK_LOADER] Created Yamcs plugin: {name}")
                     elif plugin_type == MICROSOFT_DECISION_PLUGIN_TYPE:
                         plugin = MicrosoftDecisionPluginFactory.create_from_config(manifest)
-                        print(f"[SK_LOADER] Created Microsoft Decision plugin: {name}")
                     elif plugin_type == MCP_PLUGIN_TYPE:
                         origin = get_action_origin(manifest)
                         if origin is None:

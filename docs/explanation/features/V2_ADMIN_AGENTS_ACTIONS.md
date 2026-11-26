@@ -270,9 +270,9 @@ Enable Agents  (enable_semantic_kernel, default off)
   **0.261.448** both lists also offer **Duplicate**, which opens the editor on an
   unsaved, disabled copy without the original's stored credentials (see
   [V2 Admin Global Agents and Actions](V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md#duplicate)).
-- `functions_document_actions` reaches `config.py` and a live Cosmos client, so
-  its normalizer is imported lazily and cannot be exercised in a test process.
-  The tests read its bounds from source and pin the delegation instead.
+- `functions_document_actions` is imported lazily, and the tests read its bounds
+  from source and pin the delegation instead of importing it. Until
+  **0.261.487** it reached `config.py` and a live Cosmos client at import time.
   `functions_mcp_server_config` needs only five constants from `config`, so its
   real behaviour is exercised through `stubbed_config`.
 - The V1 sidebar cannot render a section whose `condition` is not one of the two

@@ -1,7 +1,7 @@
 # test_workflow_durable_execution.py
 """
 Functional tests for restart-safe workflow operation boundaries.
-Version: 0.261.430
+Version: 0.261.487
 Implemented in: 0.261.111
 Definitive provider-failure terminal coverage added in: 0.261.429
 
@@ -185,18 +185,20 @@ def test_completed_units_survive_recreated_controller_without_reinvocation(durab
     store = new_store()
     with WorkflowRuntimeLease(store, owner_id="worker-one") as lease:
         execution = controller(store, lease, sections)
-        assert execution.run_unit(
+        extracted = execution.run_unit(
             "task:extract", lambda: calls.append("extract") or {"records": [{"id": 1}]},
             inputs={"prompt": "Extract all records."}, replay_safe=True,
-        ) == {"records": [{"id": 1}]}
+        )
+        assert extracted == {"records": [{"id": 1}]}
     clock.advance()
     store = new_store()
     with WorkflowRuntimeLease(store, owner_id="worker-two") as lease:
         execution = controller(store, lease, sections)
-        assert execution.run_unit(
+        replayed = execution.run_unit(
             "task:extract", lambda: pytest.fail("Completed task must not run again."),
             inputs={"prompt": "Extract all records."}, replay_safe=True,
-        ) == {"records": [{"id": 1}]}
+        )
+        assert replayed == {"records": [{"id": 1}]}
         execution.run_unit("task:synthesize", lambda: calls.append("synthesize") or {"reply": "One record."},
                            inputs={"producer": "extract"}, replay_safe=True)
     assert calls == ["extract", "synthesize"]

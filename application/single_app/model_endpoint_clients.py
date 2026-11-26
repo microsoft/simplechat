@@ -2111,21 +2111,28 @@ class CustomAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         url_mode="auto", allow_private=False, allow_insecure=False, ca_bundle_path="",
         client_cert=None, timeout=90, operation_url="",
     ):
-        self.endpoint = (
-            str(operation_url or "").strip()
-            or normalize_anthropic_messages_url(
-                endpoint, direct_custom=True, url_mode=url_mode
-            )
+        # The base class does not know the Custom URL mode, so the URL is resolved here.
+        super().__init__(
+            endpoint=endpoint,
+            extra_headers=dict(auth_headers),
+            timeout=timeout,
+            anthropic_version=anthropic_version,
+            direct_custom=True,
+            allow_private_custom_endpoints=allow_private,
+            allow_insecure_custom_endpoints=allow_insecure,
+            custom_endpoint_ca_bundle_path=ca_bundle_path,
+            operation_url=(
+                str(operation_url or "").strip()
+                or normalize_anthropic_messages_url(
+                    endpoint, direct_custom=True, url_mode=url_mode
+                )
+            ),
+            client_cert=client_cert,
         )
-        self.direct_custom = True
-        self.extra_headers = dict(auth_headers)
-        self.anthropic_version = anthropic_version
-        self.timeout = timeout
         self._transport_options = {
             "allow_private": allow_private, "allow_insecure": allow_insecure,
             "ca_bundle_path": ca_bundle_path, "client_cert": client_cert,
         }
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def _build_headers(self, *, stream=False):
         return {

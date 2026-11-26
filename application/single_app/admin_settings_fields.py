@@ -407,8 +407,7 @@ WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT = (
 )
 
 # Document action limits, mirrored from DOCUMENT_ACTION_LIMIT_BOUNDS and
-# DEFAULT_DOCUMENT_ACTION_CAPABILITIES in functions_document_actions.py, which
-# cannot be imported here for the same reason. Pinned by
+# DEFAULT_DOCUMENT_ACTION_CAPABILITIES in functions_document_actions.py. Pinned by
 # test_v2_admin_actions_parity.py rather than left to drift.
 DOCUMENT_ACTION_CHAT_MIN_LIMIT = 2
 DOCUMENT_ACTION_CHAT_MAX_LIMIT = 300
