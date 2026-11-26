@@ -2344,7 +2344,7 @@ export function loadMessages(conversationId) {
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
 
-  return fetch(`/conversation/${conversationId}/messages?ts=${Date.now()}`, {
+  return fetch(`/conversation/${encodeURIComponent(conversationId)}/messages?ts=${Date.now()}`, {
     cache: "no-store",
     headers: {
       "Cache-Control": "no-cache",

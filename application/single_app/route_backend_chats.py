@@ -4463,6 +4463,45 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
     return authorized_context
 
 
+# Action admission results that a stream worker, which runs with a fresh `g`, must keep.
+_ACTION_RECOVERY_ADMISSION_STATE = (
+    'action_recovery_admitted', 'action_recovery_claim', 'action_recovery_excluded_keys',
+)
+
+
+def _admit_chat_actions_before_saving(user_id, request_body):
+    """Check the selected agent's actions before a streamed question is saved.
+
+    /api/chat admits before it saves the user's turn. The stream route saves and
+    dispatches the question when it opens the response attempt, so an action recovery
+    pause has to happen first: the question stays unsent, and Continue can send it under
+    the same submission. Only recovery outcomes are raised here. Sign-in, approval,
+    credential and other failures are left to the stream worker, which repeats the check
+    after saving the question and reports them as before.
+
+    Returns the admission state to copy into the stream worker.
+    """
+    agent_selection = request_body.get('agent_info')
+    if agent_selection:
+        try:
+            validate_recovery_agent(
+                _resolve_canonical_chat_agent(user_id, get_settings(), agent_selection), request_body,
+            )
+            check_chat_actions(request_body, admit=True)
+            g.action_recovery_admitted = True
+        except (ActionRecoveryRequired, ActionRecoveryError):
+            raise
+        except Exception as exc:
+            log_event(
+                '[STREAMING] Action admission deferred to the stream worker.',
+                extra={'error_type': type(exc).__name__},
+                level=logging.DEBUG,
+            )
+    elif request_body.get('action_recovery') is not None:
+        raise ActionRecoveryError()
+    return {name: getattr(g, name) for name in _ACTION_RECOVERY_ADMISSION_STATE if hasattr(g, name)}
+
+
 def _attach_m365_citations(assistant_doc, raw_agent_citations, user_id, conversation_id, *, include_invocations=True):
     """Record the Microsoft 365 items this reply drew on, and which of them its text cites.
 
@@ -23701,6 +23740,7 @@ def register_route_backend_chats(bp):
             return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
         attempt_store = None
         attempt_record = None
+        action_recovery_admission = {}
         # Existing analysis/document owners have their own publication guards. Bind the
         # ordinary chat/Responses path here, using the same submission identity as retry.
         if not compatibility_mode and not (
@@ -23709,6 +23749,7 @@ def register_route_backend_chats(bp):
             try:
                 if is_new_stream_conversation:
                     g.m365_initial_conversation = _create_personal_conversation(user_id, finalized_conversation_id)
+                action_recovery_admission = _admit_chat_actions_before_saving(user_id, data)
                 submission_id = normalize_submission_id(data.get('submission_id')) or str(uuid.uuid4())
                 data['submission_id'] = submission_id
                 question = getattr(g, 'chat_retry_question', None) if is_retry else None
@@ -23749,6 +23790,14 @@ def register_route_backend_chats(bp):
                     data, question,
                     assistant_message_id=f"{finalized_conversation_id}_assistant_{uuid.uuid4().hex}",
                 )
+            except ActionRecoveryRequired as error:
+                # Nothing was saved, so Continue sends this question under the same submission.
+                _release_chat_destination_lease(destination_lease, finalized_conversation_id)
+                return Response(f"data: {json.dumps(error.event)}\n\n", mimetype="text/event-stream")
+            except ActionRecoveryError:
+                _release_chat_destination_lease(destination_lease, finalized_conversation_id)
+                payload = {'error': 'Action recovery changed or expired. Recheck the selected agent.', 'done': True}
+                return Response(f"data: {json.dumps(payload)}\n\n", mimetype="text/event-stream")
             except (ChatRetryError, SubmissionIdError) as error:
                 _release_chat_destination_lease(destination_lease, finalized_conversation_id)
                 return jsonify({
@@ -24021,6 +24070,10 @@ def register_route_backend_chats(bp):
                 user_message = data.get('message', '')
                 conversation_id = finalized_conversation_id
                 g.m365_new_conversation = is_new_stream_conversation
+                # This worker has a fresh `g`. Keep the admission that ran before the question
+                # was saved, so it isn't repeated and its one-time decision stays claimed.
+                for state_name, state_value in action_recovery_admission.items():
+                    setattr(g, state_name, state_value)
                 initialize_m365_chat_context(
                     user_id, conversation_id,
                     allow_new=is_new_stream_conversation,

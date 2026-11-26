@@ -1,13 +1,16 @@
 # test_classic_js_codeql_xss_redos_fixes.py
 """
 Functional test for the classic UI CodeQL XSS and ReDoS fixes.
-Version: 0.261.485
+Version: 0.261.486
 Implemented in: 0.261.485
+Read-aloud, message loading, and plugin field merge follow-ups added in: 0.261.486
 
 This test ensures the chat table unwrapping keeps the previous fence matching
-without exponential backtracking, and that conversation IDs, text-to-speech
-text, inline export labels, directory search terms, and directory users are
-rendered as inert text in the classic UI.
+without exponential backtracking, that conversation IDs, inline export labels,
+directory search terms, and directory users are rendered as inert text in the
+classic UI, that read-aloud never parses message text as HTML, that message
+loading encodes the conversation ID, and that plugin field merges skip
+prototype keys.
 """
 
 import json
@@ -24,6 +27,7 @@ STATIC_JS = ROOT / "application" / "single_app" / "static" / "js"
 CHAT_MESSAGES_JS = STATIC_JS / "chat" / "chat-messages.js"
 CHAT_EXPORT_JS = STATIC_JS / "chat" / "chat-export.js"
 CHAT_TTS_JS = STATIC_JS / "chat" / "chat-tts.js"
+PLUGIN_MODAL_STEPPER_JS = STATIC_JS / "plugin_modal_stepper.js"
 WORKSPACE_MANAGER_JS = STATIC_JS / "workspace-manager.js"
 CONTROL_CENTER_TEMPLATE = ROOT / "application" / "single_app" / "templates" / "control_center.html"
 
@@ -142,14 +146,67 @@ def test_export_selection_escapes_conversation_ids_in_attributes():
     print("Export wizard ID escaping passed!")
 
 
-def test_text_to_speech_strips_markup_with_an_inert_parser():
-    """Message text that looks like HTML must not be parsed into a live element."""
-    print("Testing text-to-speech markup stripping...")
+def test_text_to_speech_never_parses_message_text_as_html():
+    """Read-aloud speaks the rendered message or the given text as plain text, never parsed as HTML."""
+    print("Testing read-aloud text selection...")
     source = CHAT_TTS_JS.read_text(encoding="utf-8")
-    assert "tempDiv.innerHTML = text" not in source
-    assert "new DOMParser().parseFromString(text, 'text/html')" in source
-    assert "const plainText = parsed.body.textContent || '';" in source
-    print("Text-to-speech markup stripping passed!")
+    assert "DOMParser" not in source
+    assert "tempDiv.innerHTML" not in source
+    assert "const plainText = getSpeakableMessageText(messageId, text);" in source
+    start = source.index("function getSpeakableMessageText(messageId, text) {")
+    helper = source[start:source.index("\n/**", start)]
+    assert "innerHTML" not in helper
+
+    script = helper + r"""
+const CSS = { escape: value => value.replace(/["\\]/g, '\\$&') };
+const selectors = [];
+let rendered = null;
+const document = { querySelector(selector) { selectors.push(selector); return rendered; } };
+const markup = '<img src=x onerror=alert(1)> read <b>this</b>';
+const fallback = getSpeakableMessageText('a"b', markup);
+rendered = { innerText: 'Rendered reply', textContent: 'ignored' };
+const shown = getSpeakableMessageText('m1', markup);
+rendered = { innerText: '   ', textContent: '' };
+const blank = getSpeakableMessageText('m1', 'Given text');
+console.log(JSON.stringify({ fallback, shown, blank, selectors }));
+"""
+    result = subprocess.run([_node(), "-e", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    outcome = json.loads(result.stdout)
+    assert outcome["fallback"] == "<img src=x onerror=alert(1)> read <b>this</b>"
+    assert outcome["shown"] == "Rendered reply"
+    assert outcome["blank"] == "Given text"
+    assert outcome["selectors"][0] == '[data-message-id="a\\"b"] .message-text'
+    print("Read-aloud text selection passed!")
+
+
+def test_message_loading_encodes_the_conversation_id():
+    """A conversation ID from the page URL must stay one path segment when messages load."""
+    print("Testing message loading URL...")
+    source = CHAT_MESSAGES_JS.read_text(encoding="utf-8")
+    assert "fetch(`/conversation/${encodeURIComponent(conversationId)}/messages?ts=${Date.now()}`, {" in source
+    assert "fetch(`/conversation/${conversationId}/messages" not in source
+    print("Message loading URL passed!")
+
+
+def test_plugin_field_merge_skips_prototype_keys():
+    """Merging parsed additional-field JSON must not reach Object.prototype."""
+    print("Testing plugin field merge...")
+    source = PLUGIN_MODAL_STEPPER_JS.read_text(encoding="utf-8")
+    match = re.search(r"  deepMerge\(target, source\) \{.*?\n    return target;\n  \}\n", source, re.S)
+    assert match, "deepMerge was not found"
+    script = "const merger = {\n" + match.group(0) + "};\n" + r"""
+const parsed = JSON.parse('{"__proto__": {"polluted": "yes"}, "constructor": {"prototype": {"polluted": "yes"}},'
+  + ' "nested": {"__proto__": {"polluted": "yes"}, "keep": 1}, "plain": 2}');
+const merged = merger.deepMerge({ nested: { existing: true } }, parsed);
+console.log(JSON.stringify({ merged, polluted: ({}).polluted ?? null }));
+"""
+    result = subprocess.run([_node(), "-e", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    outcome = json.loads(result.stdout)
+    assert outcome["polluted"] is None
+    assert outcome["merged"] == {"nested": {"existing": True, "keep": 1}, "plain": 2}
+    print("Plugin field merge passed!")
 
 
 def test_inline_export_buttons_render_labels_as_text():

@@ -2,6 +2,20 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.486)**
+
+#### Bug Fixes
+
+*   **Streamed Chats Continue After a Late Action Check**
+    *   When an agent's action became unavailable after the pre-send check, a streamed chat saved the question before pausing for review, and choosing Continue failed with "This submission was used for another request." The stream now pauses before saving the question, as non-streamed chat does, and Continue sends it once.
+    *   (Ref: `route_backend_chats.py`, `test_action_runtime_recovery.py`, [Streamed Chat Action Recovery Continue Fix](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/STREAM_ACTION_RECOVERY_CONTINUE_FIX.md))
+*   **Read-Aloud No Longer Parses Message Text as HTML**
+    *   Read-aloud speaks the message as it appears on the page, or the reply as plain text when the message isn't shown. Text that looks like markup, such as `<div>` in a code sample, is read instead of dropped.
+    *   (Ref: `chat-tts.js`, `test_classic_js_codeql_xss_redos_fixes.py`)
+*   **Safer Message Loading and Action Field Merging**
+    *   Classic chat encodes the conversation ID when it loads messages, and the action configuration modal ignores `__proto__`, `constructor`, and `prototype` keys when it merges additional-field JSON.
+    *   (Ref: `chat-messages.js`, `plugin_modal_stepper.js`, `test_classic_js_codeql_xss_redos_fixes.py`, [CodeQL Alert and Contract Check Fix](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/CODEQL_ALERT_AND_CONTRACT_CHECK_FIX.md))
+
 ### **(v0.261.485)**
 
 #### Bug Fixes

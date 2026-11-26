@@ -9250,6 +9250,11 @@ export class PluginModalStepper {
   // Private deep merge utility
   deepMerge(target, source) {
     for (const key in source) {
+      // Merge only the source's own fields; never follow prototype keys from parsed JSON.
+      if (!Object.prototype.hasOwnProperty.call(source, key)
+        || key === '__proto__' || key === 'constructor' || key === 'prototype') {
+        continue;
+      }
       if (source[key] && typeof source[key] === 'object' &&
         !Array.isArray(source[key]) && target[key] && typeof target[key] === 'object' &&
         !Array.isArray(target[key])

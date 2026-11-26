@@ -22,6 +22,8 @@
 
 **Fixed in version: 0.261.485**
 
+Follow-up CodeQL fixes in version: **0.261.486**
+
 ## Technical details
 
 ### Files modified
@@ -37,6 +39,7 @@
 - `application/single_app/static/js/admin/admin_model_endpoints.js`
 - `application/single_app/static/js/chat/chat-streaming.js`, `chat-messages.js`, `chat-export.js`, and `chat-tts.js`
 - `application/single_app/static/js/control-center.js`, `workspace-manager.js`, and `templates/control_center.html`
+- `application/single_app/static/js/plugin_modal_stepper.js` (0.261.486)
 - `application/single_app/config.py`, `semantic_kernel_loader.py`, `model_endpoint_clients.py`, and import-only cleanups in other application modules
 - `functional_tests/test_support/cosmos_patch.py` (new), `functional_tests/test_support/offline_bootstrap.py`, and `functional_tests/test_support/app_stubs.py`
 - `functional_tests/test_classic_js_codeql_xss_redos_fixes.py` (new)
@@ -59,7 +62,8 @@
 - Legacy group connection tests resolve the active group once, after preview and explicit schema-v2 tests are dispatched, and use it for both the saved-endpoint lookup and payload resolution.
 - Routing previews leave an unset path order unset, so they resolve exactly as the saved connection does at runtime (`model_first`). An explicit order still applies. The classic admin modal keeps `model_first` when saving a connection that has no stored order; new connections still start `connection_first`.
 - `unwrapTablesFromCodeBlocks` scans lines once with precomputed pipe-line runs, separator-line runs, and fence positions. It reproduces the former expression's fences, greedy closing choice, optional blank line before the closing fence, separator-group bridges, and resume position. The table checks are unchanged.
-- Read-aloud strips markup with `DOMParser`, which builds an inert document. The export wizard escapes conversation IDs, including quotes. Inline export buttons build their icon and label with DOM nodes. Control Center toasts are built with DOM nodes and `textContent`, and the two ownership toasts use line breaks instead of markup. Directory user searches escape the search term and bind each Select button to its result object instead of an inline handler. A dead duplicate `GroupManager.deleteGroup` that the later modal flow always overrode was removed.
+- Read-aloud never parses message text as HTML. It reads the rendered, already sanitized message when it is on the page, and otherwise reads the given text as plain text. In 0.261.485 it used `DOMParser`, which builds an inert document, but CodeQL still treats HTML parsing of DOM text as a sink (alert 5493), so 0.261.486 removes the parsing. The export wizard escapes conversation IDs, including quotes. Inline export buttons build their icon and label with DOM nodes. Control Center toasts are built with DOM nodes and `textContent`, and the two ownership toasts use line breaks instead of markup. Directory user searches escape the search term and bind each Select button to its result object instead of an inline handler. A dead duplicate `GroupManager.deleteGroup` that the later modal flow always overrode was removed.
+- Message loading encodes the conversation ID as a single path segment (alert 489), and the action configuration modal skips `__proto__`, `constructor`, and `prototype` keys when it merges additional-field JSON, so parsed JSON cannot reach `Object.prototype` (alert 473). Both changes are in 0.261.486.
 - Stale harnesses bind the real code they exercise instead of outdated copies. The shared stubs and model endpoint suites bind the real CA trust resolver, timeout, profile, validation, and protocol helpers. The image chat route harness binds the chat retry, chat link, and public scope decorators, the exceptions its handlers catch, and the extracted metadata helpers. The MCP authorization harness wraps kernel functions with Semantic Kernel's qualified-name metadata, gives each action fixture a distinct ID, and models a claimed continue decision for an unavailable action. The inbound MCP shell test checks the header-attaching 202 response, and the V2 dependency snapshot includes the packages that workflow Flow inspection and Theme Cards added.
 
 ### Alerts intentionally not changed
@@ -69,18 +73,22 @@
 - `js/xss-through-dom` in `chat-messages.js` (image messages) and `MessageList.tsx`: the values only reach image `src` properties, which are never parsed as HTML. These alerts were dismissed as false positives with that justification.
 - Import cycles, star imports, a re-export facade, flag-selected return shapes, and source-review-only owners are design choices or would require new owner-runtime evidence unrelated to these fixes.
 
+### CodeQL check attribution
+
+The pull request's CodeQL check reported 260 new alerts, including 3 high-severity alerts. GitHub notes that the diff is too large to match alerts to changed lines, so the count includes alerts that are already open on Development. Comparing the alerts open on the pull request with those open on Development, the branch added one security alert (5493, fixed in 0.261.486), three `py/import-of-mutable-attribute` warnings for `from uuid import uuid4` and `from azure.cosmos import CosmosClient` imports, and 48 notes, mostly import cycles. Every other alert in the check's count is also open on Development.
+
 ## Validation
 
 - The three failing contract tests and all seven settings ingress tests pass. The real chat transport probe passes with the stream replay fallback active.
 - New regressions cover offline patch predicates and preconditions, linear CA scanning, legacy host inference, single-line fallback warnings, and the metadata refresh argument.
 - A Node differential test compares the table unwrapping with the former expression on 80,000 generated inputs, including separator-bridge cases, and requires crafted inputs of 40,000 lines to finish quickly. Session fuzzing compared 700,000 inputs with no differences.
-- The real MAI factory probe, Custom endpoint foundation, image runtime, image SDK, admin endpoint persistence, schema-v2 routing, content screening, image chat route, MCP authorization, inbound MCP shell, scope gate, and V2 inline image proposal suites pass. Each of the 98 test files that were updated or exercise the changed code was run in isolation on this branch and on the unmodified baseline: no test fails that passes on the baseline, and 172 tests that failed on the baseline now pass. The 32 files that still have failures fail the same way on the baseline.
+- The real MAI factory probe, Custom endpoint foundation, image runtime, image SDK, admin endpoint persistence, schema-v2 routing, content screening, image chat route, MCP authorization, inbound MCP shell, scope gate, and V2 inline image proposal suites pass. Each of the 98 test files that were updated or exercise the changed code was run in isolation on this branch and on the unmodified baseline: no test fails that passes on the baseline, and 172 tests that failed on the baseline now pass. The 32 files that still have failures fail the same way on the baseline. Compared with Development, 26 of those files fail the same way there. The other 6 are the streamed recovery bug below and five tests that the V2 merge or the workspace chat deep link change left stale.
 - The Cosmos response-boundary inventory has no review gaps after re-reviewing the changed doubles and owners. The changed content screening settings seam is now classified as fault injection with runtime evidence.
 - Swagger, XSS, broken-access-control, and whitespace checks report no new findings. Full-file XSS findings in the touched files drop by one compared with the unmodified baseline.
 
-### Open issue exposed by the offline double fix
+### Streamed action recovery
 
-`test_action_runtime_recovery.py::test_actual_chat_routes_pause_before_kernel_initialization_or_user_persistence[/api/chat/stream]` used to stop at the missing `patch_item`. It now reaches its assertions and shows that, when a selected agent has an unavailable action, the streaming route saves the user's question through `ChatAttemptStore.begin` before action recovery pauses the request. Choosing **Continue** then resends the same `submission_id` with the recovery decision, and the server rejects it with `submission_conflict`. The non-streaming route is not affected. The fix needs a decision on whether streaming should check actions before saving the question or accept the resumed request for the same submission, so this change does not alter that path.
+The offline double fix also let `test_action_runtime_recovery.py::test_actual_chat_routes_pause_before_kernel_initialization_or_user_persistence[/api/chat/stream]` reach its assertions, which exposed a streamed action recovery bug: the stream saved the question before pausing, so **Continue** failed with `submission_conflict`. It is fixed in 0.261.486; see [Streamed Chat Action Recovery Continue Fix](STREAM_ACTION_RECOVERY_CONTINUE_FIX.md).
 
 ## Before and after
 
