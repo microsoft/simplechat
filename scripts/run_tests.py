@@ -130,6 +130,8 @@ def main(argv=None):
     parser.add_argument("extra", nargs=argparse.REMAINDER, help="arguments after -- go to pytest or node")
     args = parser.parse_args(argv)
     extra = args.extra[1:] if args.extra[:1] == ["--"] else args.extra
+    # Test output can hold characters a Windows console code page cannot print.
+    sys.stdout.reconfigure(errors="replace")
 
     os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     if args.suite == "functional":

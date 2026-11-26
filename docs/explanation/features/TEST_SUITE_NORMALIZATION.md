@@ -97,18 +97,24 @@ $env:SIMPLECHAT_IGNORE_KNOWN_FAILURES = "1"; python -m pytest functional_tests/t
 
 ## Testing and Validation
 
-- Each of the 2,005 functional test files was run in its own pytest process
-  against this version, with no Azure resources configured. At that point
-  1,467 files passed. The list holds 1,827 tests from 527 files and 5 whole
-  Python files (3 that cannot be imported, 2 with a test that runs longer than
-  5 minutes).
-- Four files that GitHub workflows run fail on a Windows machine without a
+- Each of the 2,019 functional test files was run in its own pytest process
+  against this version, with no Azure resources configured. The list holds
+  2,607 tests from 573 files and 6 whole Python files (4 that cannot be
+  imported, 2 with a test that runs longer than 5 minutes).
+- 940 of those tests, in 97 files, passed before this change was rebased
+  onto Development 0.261.488 and fail the same way on that Development commit,
+  with or without per-file isolation. Their stubs and source checks predate
+  application changes merged there.
+- Seven files that GitHub workflows run fail on a Windows machine without a
   deployment (`test_export_evidence_cosmos_contract.py`,
-  `test_orchestration_deliverables.py`, `test_tabular_row_orchestration_scale.py`,
-  `test_workflow_configuration.py`). Two of them fail the same way on the
-  Development branch. They are not listed, for the reason above.
+  `test_global_identity_admin_routes.py`, `test_orchestration_deliverables.py`,
+  `test_orchestration_document_loader_reliability.py`,
+  `test_shared_agent_secret_responses.py`,
+  `test_tabular_row_orchestration_scale.py`, `test_workflow_configuration.py`).
+  On Development, without the in-memory Cosmos client, most of them cannot be
+  imported at all. They are not listed, for the reason above.
 - With the list active, every file was run again in its own process. Apart from
-  the four files above and the listed whole files (which a run that names them
+  the seven files above and the listed whole files (which a run that names them
   directly still collects), every file passed. Two timing tests
   (`test_source_review_chromium_startup.py` and
   `test_tabular_model_http_diagnostics.py`) failed only when 14 files ran at
@@ -119,8 +125,9 @@ $env:SIMPLECHAT_IGNORE_KNOWN_FAILURES = "1"; python -m pytest functional_tests/t
 - `test_functional_known_failures_list.py` and
   `test_functional_module_isolation.py` cover the list and the per-file
   isolation.
-- The JavaScript suite was run with `scripts/run_tests.py js`: 118 of 127 files
-  passed, and the 9 failing files are listed.
+- The JavaScript suite was run with `scripts/run_tests.py js`: 112 of 128 files
+  passed, and the 16 failing files are listed. The 7 that started failing after
+  the rebase fail the same way on Development.
 
 ### Known limitations
 
