@@ -1,7 +1,7 @@
 # v2_pending_action_stubs.py
 """
 The saved-action list request the V2 chat makes whenever a conversation is open.
-Version: 0.261.489
+Version: 0.261.491
 Implemented in: 0.261.307
 
 The chat reads a conversation's saved Microsoft 365 actions (an email or a calendar change
@@ -31,7 +31,7 @@ def is_pending_actions_list(method, path):
 
 
 # The other requests the V2 chat makes in the background while a conversation is open
-# (0.261.489): action credentials waiting for re-entry, guided user-input requests, and
+# (0.261.491): action credentials waiting for re-entry, guided user-input requests, and
 # orchestration questions. Each is answered as a user with nothing waiting would see it.
 BACKGROUND_POLL_PAYLOADS = {
     "/api/action-credentials/pending": lambda: {"requests": [], "csrf_token": "fixture-csrf"},

@@ -150,6 +150,8 @@ import {
     type PromptDraft,
 } from '../prompts/PromptEditorDialog';
 import { AiNotice } from './AiNotice';
+import { ContextUsageButton } from './ContextUsage';
+import { useContextUsageStore } from '../../stores/contextUsageStore';
 import { ActionRecoveryNotice } from './ActionRecoveryNotice';
 import { requestDesktopNotificationPermission } from '../../lib/desktopNotifications';
 import { appendDictatedText, revertDictatedSegments } from '../../lib/voice';
@@ -1184,6 +1186,21 @@ export function Composer({
         bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
         activeModelSelection,
     );
+
+    // The context ring measures against the model the next message will use. An agent runs
+    // on its own model, which the composer does not know, so nothing is published then.
+    const setContextModel = useContextUsageStore((state) => state.setSelectedModel);
+    const contextModelName = selectedModel?.deployment_name || '';
+    const contextModelLabel = selectedModel?.display_name || contextModelName;
+    const contextModelLimits = selectedModel?.context_limits;
+    useEffect(() => {
+        setContextModel(
+            agentActive || !contextModelName
+                ? null
+                : { model: contextModelName, label: contextModelLabel, limits: contextModelLimits },
+        );
+        return () => setContextModel(null);
+    }, [agentActive, contextModelName, contextModelLabel, contextModelLimits, setContextModel]);
 
     // Storage identity is deliberately separate from the authorized model's policy.
     const reasoningKey = reasoningModelKey(
@@ -2560,6 +2577,7 @@ export function Composer({
 
                         </DropdownScope>
                         <div className="composer-primary-actions ml-auto flex shrink-0 items-center gap-1.5">
+                            <ContextUsageButton />
                             {features.enable_speech_to_text_input && (
                                 <VoiceInput
                                     disabled={!canPost}

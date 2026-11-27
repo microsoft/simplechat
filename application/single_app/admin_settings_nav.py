@@ -65,6 +65,7 @@ ADMIN_NAV = [
                     {"id": "processing-thoughts-section", "label": "Processing Thoughts", "icon": "bi-stars"},
                     {"id": "chat-file-uploads-section", "label": "Chat File Uploads", "icon": "bi-paperclip"},
                     {"id": "conversation-contents-drawer-section", "label": "Conversation Contents Drawer", "icon": "bi-list-nested"},
+                    {"id": "context-usage-section", "label": "Context Usage", "icon": "bi-pie-chart"},
                     {"id": "workspace-scope-lock-section", "label": "Workspace Scope Lock", "icon": "bi-lock"},
                     {"id": "conversation-history-section", "label": "Conversation History", "icon": "bi-clock-history"},
                     {"id": "default-system-prompt-section", "label": "Default System Prompt", "icon": "bi-chat-square-quote"},

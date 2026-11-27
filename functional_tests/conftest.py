@@ -100,7 +100,7 @@ import sys  # noqa: E402
 
 
 # Let a test file import application modules and test_support when it is run alone.
-# Appended, so a path a test file inserts itself still wins. Before 0.261.489 many
+# Appended, so a path a test file inserts itself still wins. Before 0.261.491 many
 # files only imported because an earlier file had added the application folder.
 for _path in (
     os.path.dirname(os.path.abspath(__file__)),

@@ -2,8 +2,8 @@
 # test_functional_known_failures_list.py
 """
 Functional test for the functional suite's known-failures list.
-Version: 0.261.489
-Implemented in: 0.261.489
+Version: 0.261.491
+Implemented in: 0.261.491
 
 This test ensures that functional_tests/known_failures.txt parses, names only
 test files that exist, and that the plugin marks a listed failing test as

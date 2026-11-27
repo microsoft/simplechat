@@ -1,6 +1,6 @@
 # Admin Latest Features Visibility Fix
 
-Fixed/Implemented in version: **0.261.489**
+Fixed/Implemented in version: **0.261.491**
 
 ## Issue
 

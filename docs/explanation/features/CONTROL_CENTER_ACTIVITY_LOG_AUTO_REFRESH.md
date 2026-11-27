@@ -2,7 +2,7 @@
 
 Fixed/Implemented in version: **0.241.028**
 
-Restored in version: **0.261.489** (the controls had been dropped from the app while this page remained)
+Restored in version: **0.261.491** (the controls had been dropped from the app while this page remained)
 
 ## Overview and Purpose
 

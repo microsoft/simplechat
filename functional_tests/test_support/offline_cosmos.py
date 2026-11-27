@@ -1,8 +1,8 @@
 # offline_cosmos.py
 """Let functional tests import the real config.py when no Cosmos DB account is configured.
 
-Version: 0.261.489
-Implemented in: 0.261.489
+Version: 0.261.491
+Implemented in: 0.261.491
 
 config.py builds a Cosmos DB client and creates its containers while it is imported.
 With no account configured that import fails, so every test that reaches it errors

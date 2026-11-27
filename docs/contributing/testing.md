@@ -6,7 +6,7 @@ section: "Contributing"
 permalink: /contributing/testing/
 ---
 
-Implemented in version: **0.261.489** (`application/single_app/config.py`).
+Implemented in version: **0.261.491** (`application/single_app/config.py`).
 
 SimpleChat ships three test suites. All of them can run on a developer machine
 or in a fork's CI without access to the SimpleChat team's Azure resources.

@@ -122,6 +122,8 @@ export interface ActivityFilters {
     workspace_id: string;
     search: string;
     token_type: string;
+    /** Chat, plan or workflow: where a token usage record came from. */
+    token_source: string;
     model: string;
     status: string;
     usage_kind?: string;
@@ -137,7 +139,13 @@ export interface ActivityFilters {
 export const USAGE_FILTER_KEYS = ['usage_kind', 'usage_entity_id', 'usage_scope_type', 'usage_scope_id',
     'usage_host', 'usage_auth', 'usage_operation', 'usage_outcome'] as const;
 
-export const TEXT_FILTER_KEYS = ['user_id', 'workspace_id', 'search', 'token_type', 'model', 'status'] as const;
+export const TEXT_FILTER_KEYS = ['user_id', 'workspace_id', 'search', 'token_type', 'token_source', 'model', 'status'] as const;
+
+export const TOKEN_SOURCES = [
+    { value: 'chat', label: 'Chat' },
+    { value: 'plan', label: 'Plan' },
+    { value: 'workflow', label: 'Workflow' },
+];
 
 export const TOKEN_TYPES = [
     { value: 'chat', label: 'Chat' },
@@ -195,6 +203,7 @@ export function defaultFilters(now: Date = new Date()): ActivityFilters {
         workspace_id: '',
         search: '',
         token_type: '',
+        token_source: '',
         model: '',
         status: '',
     };
@@ -246,7 +255,7 @@ function appendShared(params: URLSearchParams, filters: ActivityFilters) {
     if (filters.user_id) params.set('user_id', filters.user_id);
     if (filters.workspace_type) params.set('workspace_type', filters.workspace_type);
     if (filters.workspace_type && filters.workspace_id) params.set('workspace_id', filters.workspace_id);
-    for (const key of ['search', 'token_type', 'model', 'status'] as const) {
+    for (const key of ['search', 'token_type', 'token_source', 'model', 'status'] as const) {
         if (filters[key]) params.set(key, filters[key]);
     }
     for (const key of USAGE_FILTER_KEYS) {

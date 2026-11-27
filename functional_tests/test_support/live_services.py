@@ -1,8 +1,8 @@
 # live_services.py
 """Skip tests that need a live SimpleChat deployment when none is configured.
 
-Version: 0.261.489
-Implemented in: 0.261.489
+Version: 0.261.491
+Implemented in: 0.261.491
 
 Importing the real ``config.py`` (directly, through ``app``, or through any
 module that reaches it) builds an Azure Cosmos DB client, and the Cosmos SDK

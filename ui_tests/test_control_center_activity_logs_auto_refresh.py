@@ -2,8 +2,8 @@
 """
 UI test for Control Center Activity Logs auto-refresh.
 
-Version: 0.261.489
-Implemented in: 0.241.028; restored in 0.261.489
+Version: 0.261.491
+Implemented in: 0.241.028; restored in 0.261.491
 
 This test ensures that admins can enable Activity Logs auto-refresh, adjust the
 interval, keep the choice across reloads, and that polling pauses when the tab is

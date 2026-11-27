@@ -1,8 +1,8 @@
 # run_tests.py
 """Run the SimpleChat test suites with the flags each one needs.
 
-Version: 0.261.489
-Implemented in: 0.261.489
+Version: 0.261.491
+Implemented in: 0.261.491
 
 Usage (from the repository root, with the app and dev requirements installed):
 

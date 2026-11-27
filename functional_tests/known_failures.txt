@@ -1,6 +1,6 @@
 # known_failures.txt
 # Functional tests that are known to fail against the current application.
-# Version: 0.261.489
+# Version: 0.261.491
 #
 # Each line is `file::test  # reason` or `file  # reason`, relative to functional_tests/.
 # Listed tests run as expected failures (xfail, strict): a listed test that passes fails

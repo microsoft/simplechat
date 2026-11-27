@@ -744,6 +744,8 @@ def register_route_frontend_admin_settings(bp):
             settings['enable_desktop_notifications'] = False
         if 'enable_conversation_contents_drawer' not in settings:
             settings['enable_conversation_contents_drawer'] = True
+        if 'enable_context_usage_display' not in settings:
+            settings['enable_context_usage_display'] = True
         if 'require_member_of_chat_file_upload_user' not in settings:
             settings['require_member_of_chat_file_upload_user'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
@@ -2683,6 +2685,7 @@ def register_route_frontend_admin_settings(bp):
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_chat_file_uploads': form_data.get('enable_chat_file_uploads') == 'on',
                 'enable_conversation_contents_drawer': form_data.get('enable_conversation_contents_drawer') == 'on',
+                'enable_context_usage_display': form_data.get('enable_context_usage_display') == 'on',
                 'require_member_of_chat_file_upload_user': require_member_of_chat_file_upload_user,
                 'allow_user_workflows': form_data.get('allow_user_workflows') == 'on',
                 'require_member_of_workflow_user': require_member_of_workflow_user,

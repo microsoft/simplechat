@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Control Center Activity Logs auto-refresh.
-Version: 0.261.489
-Implemented in: 0.241.028; restored in 0.261.489
+Version: 0.261.491
+Implemented in: 0.241.028; restored in 0.261.491
 
 This test ensures that the Activity Logs tab exposes browser-side auto-refresh
 controls, persists refresh settings, and guards the polling loop from running
@@ -17,7 +17,7 @@ from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "application" / "single_app"
-CURRENT_VERSION = "0.261.489"
+CURRENT_VERSION = "0.261.491"
 IMPLEMENTED_VERSION = "0.241.028"
 
 if str(APP_DIR) not in sys.path:

@@ -10,6 +10,8 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from io import StringIO
 
+from functions_control_center_dashboard import normalize_token_source, token_source_clause
+
 
 ACTIVITY_PAGE_MAX = 200
 ACTIVITY_SUMMARY_MAX = 5000
@@ -139,6 +141,9 @@ def parse_activity_filters(args, now=None):
         raise ValueError("Invalid workspace type")
     if result["workspace_id"] and not result["workspace_type"]:
         raise ValueError("Workspace ID needs a workspace type")
+    result["token_source"] = (args.get("token_source") or "").strip().lower()
+    if result["token_source"] and not normalize_token_source(result["token_source"]):
+        raise ValueError("Invalid token source")
     if result["usage_kind"] not in ("", "agent", "action", "workflow"):
         raise ValueError("Invalid usage kind")
     if result["usage_outcome"] not in ("", "succeeded", "failed", "cancelled", "timeout", "partial", "unknown"):
@@ -184,6 +189,10 @@ def activity_query_context(filters, search_user_ids=()):
     add(f"({_either(GROUP_REFERENCE_FIELDS, '{path} = @group')})", "@group", group_id)
     add(f"({_either(PUBLIC_REFERENCE_FIELDS, '{path} = @public')})", "@public", public_id)
     add("c.token_type = @token_type", "@token_type", filters["token_type"])
+    source_clause = token_source_clause(filters.get("token_source"))
+    if source_clause:
+        # Only token usage records have a source; the filter narrows to them.
+        clauses.append(f"(c.activity_type = 'token_usage' AND {source_clause})")
     add("c.usage.model = @model", "@model", filters["model"])
     if filters["status"] == "failed":
         add("(CONTAINS(c.status, @status, true) OR CONTAINS(c.status, 'error', true) "

@@ -2,8 +2,8 @@
 # test_functional_module_isolation.py
 """
 Functional test for per-test-file sys.modules isolation.
-Version: 0.261.489
-Implemented in: 0.261.489
+Version: 0.261.491
+Implemented in: 0.261.491
 
 This test ensures that a stub one test file installs in sys.modules does not
 leak into the next file, and that modules a stubbing file's module-scoped

@@ -65,7 +65,7 @@ from functions_orchestration_visuals import gathering_visual_addendum, instructi
 from functions_workflow_document_selection import selected_document_sources
 from native_document_evidence import (
     NATIVE_INSPECTION_ERROR_MESSAGES, NativeInspectionRequestError,
-    native_report_sections, validate_native_report_sections,
+    native_report_sections, validate_native_report_request,
 )
 
 
@@ -890,8 +890,14 @@ async def invoke_action(
                                 )
                             if function == DOCUMENT_NATIVE_INSPECTION_FUNCTION:
                                 try:
-                                    validate_native_report_sections(
+                                    # An argument the model did not supply is absent here, which
+                                    # is the same request as that argument's default.
+                                    validate_native_report_request(
                                         profile['source_format'], invocation.arguments.get('sections'),
+                                        native_section=invocation.arguments.get('native_section'),
+                                        native_cursor=invocation.arguments.get('native_cursor'),
+                                        sheet_name=invocation.arguments.get('sheet_name'),
+                                        cell_range=invocation.arguments.get('cell_range'),
                                     )
                                 except NativeInspectionRequestError as error:
                                     calls += 1
@@ -905,6 +911,8 @@ async def invoke_action(
                                         'error': error.public_message, 'error_code': error.code,
                                         'validation_rule': error.validation_rule,
                                         'supported_sections': profile['native_report_sections'],
+                                        **({'unsupported_arguments': list(error.refused_arguments)}
+                                           if error.refused_arguments else {}),
                                         'source_read_performed': False,
                                     }
                                     trace_document_read(invocation, 'rejected', call_index, payload=correction)

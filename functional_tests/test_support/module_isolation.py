@@ -1,8 +1,8 @@
 # module_isolation.py
 """Keep one test file's ``sys.modules`` stubs from leaking into the next file.
 
-Version: 0.261.489
-Implemented in: 0.261.489
+Version: 0.261.491
+Implemented in: 0.261.491
 
 Many functional tests install stand-in modules in ``sys.modules`` at import
 time (``functions_appinsights``, ``semantic_kernel.connectors.mcp``,

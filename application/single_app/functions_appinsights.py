@@ -168,6 +168,9 @@ LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     # The check that stopped an action or a model call, a refused selection's code, the cause a
     # calculation ended on, and where a model's input limit came from.
     "failurerule", "executionrule", "errorcode", "calculationcause", "limitsource", "limitstatus",
+    # How a request that did not fit was sized and refused: whether its response length was
+    # requested or automatic, the budget's decision, and the estimator behind the counts.
+    "outputreservation", "budgetdecision", "sizeestimator",
 })
 # Comma-separated output names from a capability contract; any other text is dropped.
 LOGGER_WORKFLOW_CODE_LIST_KEYS = frozenset({

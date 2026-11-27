@@ -98,7 +98,7 @@ def pytest_pyfunc_call(pyfuncitem):
 # Import paths every UI test can rely on, however pytest is started and whichever
 # file runs first: the repository root (for "from ui_tests.fixtures.x import ..."),
 # ui_tests/fixtures (for "from playwright_connection import ..."), and
-# functional_tests (for "from test_support.x import ..."). Before 0.261.489 some
+# functional_tests (for "from test_support.x import ..."). Before 0.261.491 some
 # files only imported because an earlier file had added one of these.
 import sys as _sys  # noqa: E402
 from pathlib import Path as _Path  # noqa: E402

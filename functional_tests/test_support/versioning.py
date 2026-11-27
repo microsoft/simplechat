@@ -1,8 +1,8 @@
 # versioning.py
 """Shared SimpleChat version helpers for functional tests.
 
-Version: 0.261.489
-app_version_is_at_least added in: 0.261.489
+Version: 0.261.491
+app_version_is_at_least added in: 0.261.491
 """
 
 import re

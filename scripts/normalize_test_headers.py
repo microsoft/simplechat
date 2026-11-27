@@ -1,8 +1,8 @@
 # normalize_test_headers.py
 """Normalize the header of every SimpleChat test file to the repository standard.
 
-Version: 0.261.489
-Implemented in: 0.261.489
+Version: 0.261.491
+Implemented in: 0.261.491
 
 The standard, from CLAUDE.md "Functional Tests":
 

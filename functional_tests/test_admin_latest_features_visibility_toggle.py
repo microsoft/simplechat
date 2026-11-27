@@ -2,8 +2,8 @@
 # test_admin_latest_features_visibility_toggle.py
 """
 Functional test for the Latest Features settings visibility fix.
-Version: 0.261.489
-Implemented in: 0.261.489
+Version: 0.261.491
+Implemented in: 0.261.491
 
 This test ensures that the Latest Features hint and its settings have different
 element IDs, and that the admin toggle shows and hides both of them.

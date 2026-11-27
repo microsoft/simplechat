@@ -2638,6 +2638,14 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
             {'agent': record.get('target'), 'model': record.get('model'), 'usage': record['usage']}
             for record in new_records if record.get('usage')
         )
+        # An agent runs on its own configured model, not the plan's. Its usage is a sum over
+        # however many requests it made, so it names the model without claiming a request size.
+        from functions_orchestration_usage import observe_model_request
+
+        observations = _ctx(context, 'model_observations', None)
+        observe_model_request(observations, result.get('model'), result.get('usage'), single_request=False)
+        for record in new_records:
+            observe_model_request(observations, record.get('model'), record.get('usage'), single_request=False)
     citations = list(result.get('citations') or []) + [
         citation for citation in delegation_citations(budget)
         if citation['delegation']['invocation_id'] not in prior_ids

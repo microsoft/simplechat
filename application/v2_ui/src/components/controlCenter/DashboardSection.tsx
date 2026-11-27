@@ -88,6 +88,7 @@ type TokenFilterOptions = {
         models: FilterOption[];
         workspace_types: FilterOption[];
         token_types: FilterOption[];
+        token_sources?: FilterOption[];
     };
 };
 
@@ -98,6 +99,8 @@ type TokenFilters = {
     public_workspace_id: string;
     model: string;
     token_type: string;
+    /** Chat, plan or workflow: where the usage came from. */
+    token_source: string;
 };
 
 const EMPTY_FILTERS: TokenFilters = {
@@ -107,6 +110,7 @@ const EMPTY_FILTERS: TokenFilters = {
     public_workspace_id: '',
     model: '',
     token_type: '',
+    token_source: '',
 };
 
 type ChartElement = { index: number; datasetIndex: number };
@@ -507,6 +511,7 @@ export function DashboardSection() {
         if (filters.public_workspace_id) described.push(`public workspace ${optionLabel(filterOptions?.public_workspaces, filters.public_workspace_id)}`);
         if (filters.model) described.push(`model ${filters.model}`);
         if (filters.token_type) described.push(`${optionLabel(filterOptions?.token_types, filters.token_type).toLowerCase()} tokens`);
+        if (filters.token_source) described.push(`from ${optionLabel(filterOptions?.token_sources, filters.token_source).toLowerCase()}`);
         return described;
     }, [filters, filterOptions]);
 
@@ -912,6 +917,8 @@ export function DashboardSection() {
                                     options={filterOptions?.models ?? []} onChange={(value) => updateFilter('model', value)} />
                                 <TokenFilterSelect id="dashboard-filter-token-type" label="Token type" value={filters.token_type}
                                     options={filterOptions?.token_types ?? []} onChange={(value) => updateFilter('token_type', value)} />
+                                <TokenFilterSelect id="dashboard-filter-token-source" label="Source" value={filters.token_source}
+                                    options={filterOptions?.token_sources ?? []} onChange={(value) => updateFilter('token_source', value)} />
                                 {filtersActive ? (
                                     <button type="button" onClick={() => setFilters(EMPTY_FILTERS)} className={secondaryButtonClass}>
                                         Clear filters

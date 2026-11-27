@@ -1,8 +1,8 @@
 # known_failures.py
 """Expect the failures listed in ``functional_tests/known_failures.txt``.
 
-Version: 0.261.489
-Implemented in: 0.261.489
+Version: 0.261.491
+Implemented in: 0.261.491
 
 Many functional tests fell behind the application before the suite was
 normalized. Until each is fixed, the list keeps the suite usable: a run passes
