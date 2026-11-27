@@ -212,6 +212,7 @@ TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
     'tabular_analyze_parity_rollout_state',
     'tabular_background_handoff_mode',
     'tabular_request_planner_mode',
+    'request_intent_check_mode',
     'enable_tabular_search_shared_preflight',
     'enable_tabular_analyze_durable_preflight',
     'enable_tabular_mixed_deferred_composition_planning',
@@ -1641,6 +1642,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'tabular_analyze_parity_rollout_state': 'active',
         'tabular_background_handoff_mode': 'legacy',
         'tabular_request_planner_mode': 'active',
+        # Keywords nominate file exports and background runs; this decides whether a model
+        # confirms them first. 'off' keeps keyword behavior, 'shadow' only logs the verdict.
+        'request_intent_check_mode': 'active',
         'enable_tabular_search_shared_preflight': True,
         'enable_tabular_analyze_durable_preflight': True,
         'enable_tabular_mixed_deferred_composition_planning': False,

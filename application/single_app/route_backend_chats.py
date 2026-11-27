@@ -130,6 +130,18 @@ from functions_mixed_source_orchestration import (
     raise_if_mixed_source_cancelled,
     should_run_tabular_evidence,
 )
+from functions_request_intent import (
+    ACTION_BACKGROUND_RUN,
+    ACTION_FILE_EXPORT,
+    RequestIntentWithheldError,
+    action_withheld,
+    bind_request_intent,
+    build_request_intent_system_message,
+    build_request_intent_withheld_notice,
+    current_request_intent,
+    normalize_request_intent_check_mode,
+    resolve_request_intent,
+)
 from functions_tabular_analysis import (
     get_new_plugin_invocations as _shared_get_new_plugin_invocations,
     orchestrate_tabular_request as _shared_orchestrate_tabular_request,
@@ -140,6 +152,7 @@ from functions_tabular_orchestration import (
     build_tabular_legacy_post_tool_fallback_decision as _shared_build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
     get_tabular_generated_output_task_type as _shared_get_tabular_generated_output_task_type,
+    nominate_side_effect_actions as _shared_nominate_side_effect_actions,
     question_requests_tabular_exhaustive_row_output as _shared_question_requests_tabular_exhaustive_row_output,
     question_requests_tabular_generated_output as _shared_question_requests_tabular_generated_output,
     question_requests_tabular_hierarchical_analysis as _shared_question_requests_tabular_hierarchical_analysis,
@@ -3446,6 +3459,8 @@ def maybe_create_generated_file_output(
     analysis_result=None,
 ):
     """Save a requested CSV, DOCX, or PDF artifact from response and action evidence."""
+    if action_withheld(user_question, ACTION_FILE_EXPORT, conversation_id=conversation_id):
+        return None
     raise_if_mixed_source_cancelled(
         cancel_requested,
         'artifact_publication',
@@ -3532,6 +3547,8 @@ def maybe_create_generated_file_output(
             return background_metadata
         except MixedSourceCancellationError:
             raise
+        except RequestIntentWithheldError:
+            return None
         except Exception as exc:
             log_event(
                 '[GENERATED_FILE_EXPORT] Failed to queue large CSV export',
@@ -3755,6 +3772,8 @@ def maybe_create_assistant_file_generated_output(
     analysis_result=None,
 ):
     """Save assistant-generated JSON/XML content as a downloadable chat artifact."""
+    if action_withheld(user_question, ACTION_FILE_EXPORT, conversation_id=conversation_id):
+        return None
     output_format = get_tabular_generated_output_format(user_question)
     if output_format not in {'json', 'xml'}:
         return None
@@ -7121,6 +7140,8 @@ def maybe_queue_direct_tabular_generated_output(
     planner_metadata=None,
 ):
     """Queue an exhaustive tabular generated-output run directly from an authorized source."""
+    if action_withheld(user_question, ACTION_BACKGROUND_RUN, conversation_id=conversation_id):
+        return None
     parity_classifier = globals().get('classify_tabular_parity_request')
     parity_emitter = globals().get('emit_tabular_parity_event')
     parity_result_builder = globals().get('build_tabular_parity_planner_result')
@@ -7266,6 +7287,8 @@ def maybe_queue_direct_tabular_generated_output(
         return background_metadata
     except MixedSourceCancellationError:
         raise
+    except RequestIntentWithheldError:
+        return None
     except Exception as exc:
         emit_direct_parity_event(
             'durable_preflight_failed',
@@ -7558,6 +7581,9 @@ def _build_failed_tabular_generated_output_metadata(source_candidate, output_for
     }
 
 
+REQUEST_INTENT_MODEL_TIMEOUT_SECONDS = 12.0
+
+
 def _is_active_tabular_background_handoff(output_metadata):
     """Return True when metadata represents a queued or running background tabular handoff."""
     if not isinstance(output_metadata, dict) or not output_metadata.get('background_export'):
@@ -7593,7 +7619,11 @@ def _format_tabular_background_handoff_row_phrase(row_count):
 
 
 def _build_tabular_background_handoff_content(output_metadata):
-    """Build the concise user-facing acknowledgment for an accepted background tabular run."""
+    """Build the user-facing status for an accepted background tabular run.
+
+    The text is saved as the reply for the turn, so it is worded as an application status.
+    Worded as the assistant agreeing, it reads in later turns as something the model promised.
+    """
     if not _is_active_tabular_background_handoff(output_metadata):
         return ''
 
@@ -7605,32 +7635,32 @@ def _build_tabular_background_handoff_content(output_metadata):
     if task_type == TABULAR_RUN_TASK_COMBINED:
         if has_preview:
             return (
-                f'Understood. I am generating the complete {output_format} and analysis for {row_phrase}. '
+                f'The app started a background job to generate the complete {output_format} and analysis for {row_phrase}. '
                 'The rows shown here are a sample; both completed results will appear in this chat when ready.'
             )
         return (
-            f'Understood. I am generating the complete {output_format} and analysis for {row_phrase}. '
+            f'The app started a background job to generate the complete {output_format} and analysis for {row_phrase}. '
             'Both completed results will appear in this chat when ready.'
         )
 
     if task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
         if has_preview:
             return (
-                f'Understood. I am analyzing {row_phrase}. '
+                f'The app started a background job to analyze {row_phrase}. '
                 'Any content shown here is a sample; the complete analysis is continuing in the background and will appear in this chat when ready.'
             )
         return (
-            f'Understood. I am analyzing {row_phrase}. '
+            f'The app started a background job to analyze {row_phrase}. '
             'The complete analysis is continuing in the background and will appear in this chat when ready.'
         )
 
     if has_preview:
         return (
-            f'Understood. I am generating the complete {output_format} for {row_phrase}. '
+            f'The app started a background job to generate the complete {output_format} for {row_phrase}. '
             'The rows shown here are a sample; the rest is being generated in the background, and the complete file will appear in this chat when ready.'
         )
     return (
-        f'Understood. I am generating the complete {output_format} for {row_phrase}. '
+        f'The app started a background job to generate the complete {output_format} for {row_phrase}. '
         'Processing continues in the background, and the complete file will appear in this chat when ready.'
     )
 
@@ -8038,7 +8068,12 @@ async def maybe_create_tabular_generated_output(
         'export',
         request_correlation_id=request_correlation_id,
     )
-    generated_output_requested = question_requests_tabular_generated_output(user_question)
+    if action_withheld(user_question, ACTION_BACKGROUND_RUN, conversation_id=conversation_id):
+        return None
+    generated_output_requested = (
+        not action_withheld(user_question, ACTION_FILE_EXPORT, conversation_id=conversation_id)
+        and question_requests_tabular_generated_output(user_question)
+    )
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
     durable_task_type = _get_tabular_generated_output_task_type(
         generated_output_requested,
@@ -8348,6 +8383,8 @@ async def maybe_create_tabular_generated_output(
             )
         except MixedSourceCancellationError:
             raise
+        except RequestIntentWithheldError:
+            return None
         except Exception as exc:
             log_event(
                 '[TABULAR_GENERATED_OUTPUT] Durable source-backed export queueing failed',
@@ -8734,6 +8771,103 @@ def maybe_append_diagram_system_message(conversation_history, user_message, sele
         conversation_history,
         build_diagram_system_message(),
     )
+
+
+def maybe_append_request_intent_system_message(conversation_history, user_message, conversation_id=None):
+    """Tell the answering model which side-effect actions this turn withheld."""
+    system_message = build_request_intent_system_message(
+        current_request_intent(user_message, conversation_id=conversation_id)
+    )
+    if not system_message:
+        return conversation_history
+    return insert_system_message_after_existing_system_messages(conversation_history, system_message)
+
+
+def append_request_intent_withheld_notice(content, user_message, conversation_id=None):
+    """Append the visible note for actions the app, rather than the user, held back."""
+    notice = build_request_intent_withheld_notice(
+        current_request_intent(user_message, conversation_id=conversation_id)
+    )
+    normalized_content = str(content or '').rstrip()
+    if not notice or not normalized_content or notice in normalized_content:
+        return content
+    return f'{normalized_content}\n\n{notice}'
+
+
+def _normalize_suppressed_side_effects(request_data):
+    raw_value = (request_data or {}).get('suppress_side_effects') if isinstance(request_data, dict) else None
+    if raw_value is True:
+        return {ACTION_FILE_EXPORT, ACTION_BACKGROUND_RUN}
+    if isinstance(raw_value, (list, tuple, set)):
+        return {
+            str(item).strip().lower()
+            for item in raw_value
+            if str(item).strip().lower() in {ACTION_FILE_EXPORT, ACTION_BACKGROUND_RUN}
+        }
+    return set()
+
+
+def resolve_chat_turn_request_intent(
+    user_message,
+    conversation_id,
+    user_id,
+    settings,
+    gpt_client=None,
+    gpt_model=None,
+    request_data=None,
+):
+    """Decide once per chat turn which side-effect actions the user asked for, and record it.
+
+    Never raises: a failure here leaves the turn on the existing keyword behavior.
+    """
+    try:
+        create_completion = None
+        completions_create = getattr(getattr(getattr(gpt_client, 'chat', None), 'completions', None), 'create', None)
+        if (
+            callable(completions_create)
+            and gpt_model
+            and normalize_request_intent_check_mode(settings) != 'off'
+        ):
+            create_completion = guard_model_callable(
+                bind_callable_with_timeout(
+                    gpt_client,
+                    completions_create,
+                    timeout_seconds=REQUEST_INTENT_MODEL_TIMEOUT_SECONDS,
+                    max_retries=0,
+                ),
+                [{'role': 'user', 'content': user_message}],
+            )
+
+        def read_prior_assistant_text():
+            try:
+                _authorize_personal_conversation_access(
+                    str(user_id or '').strip(),
+                    str(conversation_id or '').strip(),
+                )
+                recent_messages = _read_recent_assistant_messages(str(conversation_id or '').strip(), 1)
+            except Exception:
+                return ''
+            return str((recent_messages[0].get('content') if recent_messages else '') or '')
+
+        decision = resolve_request_intent(
+            user_message,
+            nominate_actions=_shared_nominate_side_effect_actions,
+            settings=settings,
+            create_completion=create_completion,
+            model=gpt_model,
+            prior_assistant_text=read_prior_assistant_text,
+            suppressed_actions=_normalize_suppressed_side_effects(request_data),
+        )
+        bind_request_intent(decision, conversation_id=conversation_id)
+        return decision
+    except Exception as exc:
+        bind_request_intent(None)
+        log_event(
+            '[REQUEST_INTENT] Could not resolve side-effect permissions for the turn',
+            {'conversation_id': conversation_id, 'error_type': exc.__class__.__name__},
+            level=logging.WARNING,
+        )
+        return None
 
 
 MULTI_FILE_TABULAR_DISTINCT_URL_EXTRACT_PATTERN = (
@@ -19964,6 +20098,11 @@ def register_route_backend_chats(bp):
             if input_check.blocked:
                 return jsonify(_reject_chat_submission(conversation_item, user_id, input_check)), 200
 
+            resolve_chat_turn_request_intent(
+                user_message, conversation_id, user_id, settings,
+                gpt_client=gpt_client, gpt_model=gpt_model, request_data=data,
+            )
+
             if image_gen_enabled:
                 raw_image_references = chat_image_reference_request.get('raw_references')
                 if raw_image_references is None and is_retry:
@@ -22641,6 +22780,11 @@ def register_route_backend_chats(bp):
                     user_message,
                     selected_agent,
                 )
+                conversation_history_for_api = maybe_append_request_intent_system_message(
+                    conversation_history_for_api,
+                    user_message,
+                    conversation_id,
+                )
 
                 def build_agent_message_history(context_agent):
                     nonlocal conversation_history_for_api
@@ -23070,6 +23214,11 @@ def register_route_backend_chats(bp):
                 user_message,
                 selected_agent,
             )
+            conversation_history_for_api = maybe_append_request_intent_system_message(
+                conversation_history_for_api,
+                user_message,
+                conversation_id,
+            )
 
             thought_tracker.add_thought('generation', f"Sending to '{gpt_model}'")
             def invoke_gpt_fallback():
@@ -23436,6 +23585,8 @@ def register_route_backend_chats(bp):
             )
             if tabular_background_handoff_content:
                 ai_message = tabular_background_handoff_content
+            else:
+                ai_message = append_request_intent_withheld_notice(ai_message, user_message, conversation_id)
             generated_analysis_metadata = _build_generated_analysis_metadata(
                 generated_analysis_artifacts=generated_analysis_artifacts_list,
                 generated_tabular_outputs=generated_tabular_outputs_list,
@@ -24804,6 +24955,11 @@ def register_route_backend_chats(bp):
                     )
                     yield build_stream_error_event('Failed to initialize AI model')
                     return
+
+                resolve_chat_turn_request_intent(
+                    user_message, conversation_id, user_id, settings,
+                    gpt_client=gpt_client, gpt_model=gpt_model, request_data=data,
+                )
 
                 # Load or create conversation (simplified)
                 if is_new_stream_conversation:
@@ -27057,6 +27213,11 @@ def register_route_backend_chats(bp):
                     user_message,
                     selected_agent,
                 )
+                conversation_history_for_api = maybe_append_request_intent_system_message(
+                    conversation_history_for_api,
+                    user_message,
+                    conversation_id,
+                )
                 conversation_history_for_api, _ = _prepare_conversation_context_for_invocation(
                     conversation_history_for_api,
                     agent_citations_list,
@@ -28059,6 +28220,10 @@ def register_route_backend_chats(bp):
                     )
                     if tabular_background_handoff_content:
                         accumulated_content = tabular_background_handoff_content
+                    else:
+                        accumulated_content = append_request_intent_withheld_notice(
+                            accumulated_content, user_message, conversation_id,
+                        )
                     if mixed_source_manifest:
                         fresh_finalization_manifest = resolve_authorized_source_manifest(
                             [source.get('document_id') for source in mixed_source_manifest],

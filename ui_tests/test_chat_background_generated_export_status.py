@@ -142,7 +142,7 @@ def test_chat_background_generated_export_status_card_auto_refreshes_to_download
                 window.currentConversationId = 'conversation-ui-test';
                 module.appendMessage(
                     'AI',
-                    'Understood. I am generating the complete JSON for all 3,539 rows. The rows shown here are a sample; the rest is being generated in the background, and the complete file will appear in this chat when ready.',
+                    'The app started a background job to generate the complete JSON for all 3,539 rows. The rows shown here are a sample; the rest is being generated in the background, and the complete file will appear in this chat when ready.',
                     null,
                     'message-ui-test',
                     false,
@@ -182,7 +182,7 @@ def test_chat_background_generated_export_status_card_auto_refreshes_to_download
         )
 
         message = page.locator('[data-message-id="message-ui-test"]')
-        expect(message.get_by_text("Understood. I am generating the complete JSON for all 3,539 rows.")).to_be_visible()
+        expect(message.get_by_text("The app started a background job to generate the complete JSON for all 3,539 rows.")).to_be_visible()
         expect(message.get_by_text("The rows shown here are a sample")).to_be_visible()
         expect(message.get_by_text("Preview", exact=True)).to_be_hidden()
         expect(message.get_by_text("Background export")).to_be_visible()

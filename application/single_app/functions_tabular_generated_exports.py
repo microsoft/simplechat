@@ -107,6 +107,7 @@ from model_endpoint_clients import (
     resolve_model_inference_endpoint,
 )
 from public_source_access import get_public_source_workspace_ids
+from functions_request_intent import ACTION_BACKGROUND_RUN, ACTION_FILE_EXPORT, enforce_action_permitted
 from functions_settings import get_settings
 from functions_simplechat_operations import (
     commit_generated_chat_artifact_publication_for_user,
@@ -11752,6 +11753,12 @@ def queue_tabular_generated_output_run(
 
     if execution_policy not in {'publish', 'data_only'}:
         raise ValueError('The native execution policy is invalid.')
+    if execution_policy == 'publish':
+        # Last line of defense: a chat turn that withheld this action must not start the run,
+        # whatever an earlier detector concluded. Runs with no recorded decision are unaffected.
+        enforce_action_permitted(user_question, ACTION_BACKGROUND_RUN, conversation_id=normalized_conversation_id)
+        if _normalize_tabular_run_task_type(task_type) != TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
+            enforce_action_permitted(user_question, ACTION_FILE_EXPORT, conversation_id=normalized_conversation_id)
     if compute_context is not None and execution_policy != 'data_only':
         raise ValueError('Native compute ownership requires a data-only policy.')
     if execution_policy == 'data_only':

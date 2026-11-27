@@ -30,6 +30,12 @@ from functions_generated_file_exports import get_requested_artifact_formats
 from functions_generated_file_exports import get_requested_structured_artifact_format
 from functions_generated_file_exports import get_requested_structured_artifact_formats
 from functions_native_analysis_results import NativeTabularResultReader
+from functions_request_intent import (
+    ACTION_BACKGROUND_RUN,
+    ACTION_FILE_EXPORT,
+    action_withheld,
+    request_intent_gating_suspended,
+)
 
 
 TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION = "tabular-orchestration-v1"
@@ -239,6 +245,8 @@ def get_tabular_generated_output_formats(user_question):
 
 def question_requests_tabular_generated_output(user_question):
     """Return True when the prompt asks for a downloadable structured tabular export."""
+    if action_withheld(user_question, ACTION_BACKGROUND_RUN):
+        return False
     normalized_question = str(user_question or "").strip().lower()
     requested_format = get_tabular_generated_output_format(user_question)
     if not normalized_question or not requested_format:
@@ -282,6 +290,8 @@ def question_requests_tabular_generated_output(user_question):
 
 def question_requests_tabular_hierarchical_analysis(user_question):
     """Return True when the prompt asks for whole-dataset row-level synthesis."""
+    if action_withheld(user_question, ACTION_BACKGROUND_RUN):
+        return False
     normalized_question = str(user_question or "").strip().lower()
     if not normalized_question:
         return False
@@ -330,6 +340,8 @@ def question_requests_tabular_hierarchical_analysis(user_question):
 
 def question_requests_tabular_exhaustive_row_output(user_question):
     """Return True when the user requires one narrative result per source row."""
+    if action_withheld(user_question, ACTION_BACKGROUND_RUN):
+        return False
     normalized_question = str(user_question or "").strip().lower()
     if not normalized_question:
         return False
@@ -356,6 +368,33 @@ def question_requests_tabular_exhaustive_row_output(user_question):
         "one markdown section per line",
     )
     return any(marker in normalized_question for marker in row_output_markers)
+
+
+def nominate_side_effect_actions(user_question):
+    """Report which side-effect actions the keyword detectors would start for this message.
+
+    Runs the detectors with any recorded decision ignored, so the result is what keywords
+    alone suggest. The request-intent decision is then made from this nomination.
+    """
+    if not str(user_question or "").strip():
+        return {}
+
+    with request_intent_gating_suspended():
+        formats = list(get_requested_artifact_formats(user_question) or [])
+        export_run = bool(question_requests_tabular_generated_output(user_question))
+        analysis_run = bool(question_requests_tabular_hierarchical_analysis(user_question))
+        row_output_run = bool(question_requests_tabular_exhaustive_row_output(user_question))
+
+    nominated = {}
+    if formats:
+        nominated[ACTION_FILE_EXPORT] = {"formats": formats}
+    if export_run or analysis_run or row_output_run:
+        nominated[ACTION_BACKGROUND_RUN] = {
+            "full_export": export_run,
+            "full_analysis": analysis_run,
+            "per_row_output": row_output_run,
+        }
+    return nominated
 
 
 def extract_tabular_row_analysis_questions(user_question, max_questions=20):
