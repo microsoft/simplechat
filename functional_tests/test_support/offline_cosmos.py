@@ -26,7 +26,12 @@ def install_offline_cosmos():
     if not missing_live_cosmos_settings():
         return False
 
-    import azure.cosmos
+    try:
+        import azure.cosmos
+    except ModuleNotFoundError:
+        # Workflows that run only a few tests do not install the Azure SDK; nothing
+        # in such a run imports config.py, so there is no client to replace.
+        return False
 
     from test_support.offline_bootstrap import OfflineCosmos
 
