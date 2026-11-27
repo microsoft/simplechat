@@ -1,7 +1,7 @@
 # test_admin_custom_connections.py
 """
 Custom global connection editor browser regressions.
-Version: 0.261.392
+Version: 0.261.436
 Implemented in: 0.261.107
 
 Cover real classic/React forms, credential staging, explicit API types, metadata,
@@ -90,7 +90,6 @@ def test_react_custom_oauth_and_mtls_configuration(page):
     dialog = page.get_by_role("dialog")
     dialog.get_by_label("Name", exact=True).fill("Gemini gateway")
     dialog.get_by_label("Provider", exact=True).select_option("custom")
-    dialog.get_by_label("Custom API type", exact=True).select_option("gemini")
     dialog.get_by_label("Endpoint URL", exact=True).fill("https://gateway.example.test/v1beta/openai")
     dialog.get_by_label("Method", exact=True).select_option("oauth2_client_credentials")
     expect(dialog.get_by_label("Management cloud", exact=True)).to_have_count(0)
@@ -102,11 +101,13 @@ def test_react_custom_oauth_and_mtls_configuration(page):
     dialog.get_by_label("Client certificate path", exact=True).fill("mounted-cert.pem")
     dialog.get_by_label("Client private key path", exact=True).fill("mounted-key.pem")
     dialog.get_by_role("button", name="Add manually", exact=True).click()
+    dialog.get_by_label("Request API", exact=True).select_option("gemini:chat_completions")
     dialog.get_by_label("Model name", exact=True).fill("gemini-model")
     dialog.get_by_role("button", name="Create connection", exact=True).click()
     expect(dialog).to_have_count(0)
     saved = fixture.connection_writes[-1]
-    assert saved["api_type"] == "gemini"
+    assert saved["models"][0]["api_type"] == "gemini"
+    assert saved["routing_schema_version"] == 2
     assert "api_version" not in saved["connection"] and "openai_api_version" not in saved["connection"]
     assert saved["auth"]["client_secret"] == "fixture-secret"
     assert saved["connection"]["client_key_path"] == "mounted-key.pem"
@@ -115,7 +116,60 @@ def test_react_custom_oauth_and_mtls_configuration(page):
 
 
 @pytest.mark.parametrize("width", [1440, 390])
-def test_classic_custom_edit_is_staged_and_keeps_canonical_model_name(page, width):
+def test_react_create_reopen_preview_and_test_explicit_mixed_routes(page, width):
+    fixture = CustomConnectionsFixture(page)
+    fixture.open(width)
+    page.get_by_role("button", name="Add connection", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    dialog.get_by_label("Name", exact=True).fill("Mixed gateway")
+    dialog.get_by_label("Provider", exact=True).select_option("custom")
+    dialog.get_by_label("Endpoint URL", exact=True).fill("https://gateway.example.test/shared")
+    dialog.get_by_label("API key", exact=True).fill("synthetic-key-for-save-only")
+    add = dialog.get_by_role("button", name="Add manually", exact=True)
+    add.click()
+    dialog.get_by_label("Model name", exact=True).first.fill("example-responses")
+    first = dialog.get_by_test_id("model-request-routing").first
+    first.get_by_label("Request API", exact=True).select_option("azure_openai_v1:responses")
+    first.get_by_label("API Path", exact=True).fill("foundry;rev=2")
+    first_row = dialog.locator("li").filter(has=page.get_by_test_id("model-request-routing")).first
+    first_row.get_by_text("Capability metadata", exact=True).click()
+    first_row.get_by_label("Text output support", exact=True).select_option("true")
+    first_row.get_by_label("Enable example-responses", exact=True).check()
+    first.get_by_role("button", name="Preview Route", exact=True).click()
+    resolved = "POST https://gateway.example.test/shared/foundry;rev=2/openai/v1/responses"
+    expect(first.get_by_label("Resolved request route preview")).to_have_text(resolved)
+    assert "auth" not in fixture.previews[0]
+    assert "synthetic-key-for-save-only" not in json.dumps(fixture.previews[0])
+    assert fixture.connection_writes == [] and fixture.model_tests == []
+    add.click()
+    dialog.get_by_label("Model name", exact=True).last.fill("example-messages")
+    second = dialog.get_by_test_id("model-request-routing").last
+    second.get_by_label("Request API", exact=True).select_option("anthropic:messages")
+    second.get_by_label("URL Handling", exact=True).select_option("full")
+    second.get_by_label("API Path", exact=True).fill("custom/v1/messages")
+    dialog.get_by_role("button", name="Create connection", exact=True).click()
+    expect(dialog).to_have_count(0)
+    assert len(fixture.connection_writes) == 1 and len(fixture.previews) == 1
+    saved = fixture.connection_writes[0]
+    assert saved["enabled"] is False
+    assert [(item["api_type"], item["inference_api"]) for item in saved["models"]] == [
+        ("azure_openai_v1", "responses"), ("anthropic", "messages"),
+    ]
+    page.get_by_role("button", name="Edit Mixed gateway", exact=True).click()
+    expect(first.get_by_label("Request API", exact=True)).to_have_value("azure_openai_v1:responses")
+    expect(second.get_by_label("URL Handling", exact=True)).to_have_value("full")
+    first.get_by_role("button", name="Preview Route", exact=True).click()
+    expect(first.get_by_label("Resolved request route preview")).to_have_text(resolved)
+    dialog.get_by_role("button", name="Test Connection", exact=True).first.click()
+    expect(page.get_by_text("example-responses answered a chat request. Image inference was not tested.", exact=True)).to_be_visible()
+    assert fixture.model_tests[0]["id"] == "new-custom"
+    assert fixture.model_tests[0]["model"]["id"] == saved["models"][0]["id"]
+    assert "auth" not in fixture.model_tests[0]
+    fixture.assert_clean()
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_classic_custom_edit_saves_once_and_keeps_canonical_model_name(page, width):
     fixture = CustomConnectionsFixture(page, classic=True)
     fixture.open(width)
     page.locator("#model-endpoints-tbody tr").filter(has_text="Saved Gateway").get_by_role("button", name="Edit", exact=True).click()
@@ -133,7 +187,8 @@ def test_classic_custom_edit_is_staged_and_keeps_canonical_model_name(page, widt
     assert staged["models"][0]["vendorOptions"] == {"future": [1, 2]}
     assert staged["has_bearer_token"] is True
     assert "openai_api_version" not in staged["connection"]
-    assert fixture.connection_writes == []
+    assert len(fixture.connection_writes) == 1
+    assert not fixture.connection_writes[0]["auth"].get("bearer_token")
     fixture.assert_clean()
 
 
@@ -179,7 +234,8 @@ def test_classic_custom_duplicate_requires_new_credentials_and_starts_disabled(p
     staged = json.loads(page.locator("#model_endpoints_json").input_value())
     duplicate = next(item for item in staged if item["id"] != "stable-endpoint")
     assert duplicate["enabled"] is False
-    assert duplicate["auth"]["bearer_token"] == "fresh-fixture-token"
+    assert "bearer_token" not in duplicate["auth"] and duplicate["has_bearer_token"] is True
     assert duplicate["models"][0]["id"] != "stable-model"
-    assert fixture.connection_writes == []
+    assert len(fixture.connection_writes) == 1
+    assert fixture.connection_writes[0]["auth"]["bearer_token"] == "fresh-fixture-token"
     fixture.assert_clean()

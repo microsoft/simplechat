@@ -80,6 +80,7 @@ WORKFLOW_ALERT_FIELDS = ('alert_priority', 'alert_mode', 'alert_rules', 'alert_e
 
 WORKFLOW_AUTHORED_FIELDS = (
     'name', 'description', 'runner_type', 'selected_agent', 'model_endpoint_id', 'model_id',
+    'model_scope_type', 'model_scope_id',
     'chat_capabilities_enabled', 'chat_execution', 'results_delivery',
     'trigger_type', 'schedule', 'is_enabled', 'error_handling', 'm365_run_as_user_id',
     'tasks', 'reference_inputs', 'conversation_reference_inputs', 'durable_execution', 'flow', 'limits', 'file_sync', *WORKFLOW_ALERT_FIELDS,
@@ -842,7 +843,7 @@ def workflow_for_save(draft, original, scope=None):
     next_record['selected_agent'] = (
         draft['selected_agent'] if runner_type == 'agent' and _js_truthy(draft.get('selected_agent')) else UNDEFINED
     )
-    for field in ('model_endpoint_id', 'model_id'):
+    for field in ('model_endpoint_id', 'model_id', 'model_scope_type', 'model_scope_id'):
         value = draft.get(field, UNDEFINED)
         next_record[field] = (value if _js_truthy(value) else '') if runner_type == 'model' else ''
     next_record['m365_run_as_user_id'] = _text(run_as)

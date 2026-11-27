@@ -7,7 +7,12 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 
 from azure.core import MatchConditions
+from azure.core.exceptions import AzureError
+from requests import RequestException
 
+from app_settings_cache import (
+    COSMOS_REPLAY_INDEX_PATH, COSMOS_REPLAY_INDEX_SETTING, cosmos_replay_index_policy_state,
+)
 import config as app_config
 from config import (
     cosmos_activity_logs_container,
@@ -458,3 +463,92 @@ def run_cosmos_indexing_policy_maintenance(apply_changes=False):
 def get_cosmos_indexing_policy_status():
     """Return report-only Cosmos indexing policy status for admin diagnostics."""
     return run_cosmos_indexing_policy_maintenance(apply_changes=False)
+
+
+def _index_policy_json(value):
+    if isinstance(value, Mapping):
+        return {key: _index_policy_json(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list):
+        return [_index_policy_json(item) for item in value]
+    return value
+
+
+def _read_replay_index_status(settings):
+    status = {
+        'enabled': settings.get(COSMOS_REPLAY_INDEX_SETTING) is True,
+        'redis_enabled': bool(settings.get('enable_redis_cache')),
+        'database': app_config.cosmos_database_name,
+        'container': app_config.cosmos_settings_container_name,
+        'excluded_path': COSMOS_REPLAY_INDEX_PATH,
+        'policy_state': 'unavailable',
+        'proposed_policy': None,
+    }
+    try:
+        properties = app_config.cosmos_settings_container.read()
+        policy = properties['indexingPolicy']
+        status['policy_state'] = cosmos_replay_index_policy_state(policy)
+    except (AzureError, AttributeError, KeyError, TypeError) as error:
+        log_event('[COSMOS_INDEXING] Replay index status unavailable.',
+                  extra={'error_type': type(error).__name__}, level=logging.WARNING)
+        return status, None
+    if status['policy_state'] == 'missing':
+        desired = _index_policy_json(policy)
+        desired['excludedPaths'] = [*(desired.get('excludedPaths') or []), {'path': COSMOS_REPLAY_INDEX_PATH}]
+        status['proposed_policy'] = desired
+    return status, properties
+
+
+def _apply_replay_exclusion(settings, properties, desired):
+    from functions_cosmos_throughput import (
+        CosmosThroughputError, _arm_request, build_cosmos_container_resource_ids, build_cosmos_resource_ids,
+    )
+
+    ids = build_cosmos_container_resource_ids(build_cosmos_resource_ids(settings), app_config.cosmos_settings_container_name)
+    current = _arm_request('GET', ids['container_id'])
+    resource = current.get('properties', {}).get('resource', {})
+    etag = resource.get('_etag')
+    if (
+        ids['database_name'] != app_config.cosmos_database_name
+        or resource.get('id') != app_config.cosmos_settings_container_name
+        or not etag or etag != properties.get('_etag')
+        or not resource.get('_rid') or resource['_rid'] != properties.get('_rid')
+        or resource.get('partitionKey') != properties.get('partitionKey')
+        or not isinstance(resource.get('indexingPolicy'), Mapping)
+    ):
+        raise CosmosThroughputError("The management target or current container revision could not be verified.")
+    arm_policy = _index_policy_json(resource['indexingPolicy'])
+    data_policy = _index_policy_json(properties['indexingPolicy'])
+    if arm_policy != data_policy:
+        raise CosmosThroughputError("Azure and the data endpoint disagree on the current indexing policy.")
+    updated = _index_policy_json({
+        key: value for key, value in resource.items() if not key.startswith('_') and key != 'statistics'
+    })
+    updated['indexingPolicy'] = desired
+    payload = {
+        **{key: current[key] for key in ('location', 'tags') if current.get(key) is not None},
+        'properties': {'resource': updated, 'options': {}},
+    }
+    _arm_request('PUT', ids['container_id'], payload=payload, if_match=etag)
+
+
+def get_cosmos_replay_index_status(settings, *, apply=False):
+    """Read or add only the replay text exclusion on the app's settings container."""
+    from functions_cosmos_throughput import CosmosThroughputError
+
+    status, properties = _read_replay_index_status(settings)
+    if not apply or status['redis_enabled'] or status['policy_state'] != 'missing':
+        return status
+    try:
+        _apply_replay_exclusion(settings, properties, status['proposed_policy'])
+    except (AzureError, CosmosThroughputError, RequestException) as error:
+        log_event('[COSMOS_INDEXING] Replay exclusion could not be applied automatically.',
+                  extra={'error_type': type(error).__name__, 'status_code': getattr(error, 'status_code', None)},
+                  level=logging.WARNING)
+        fresh, _ = _read_replay_index_status(settings)
+        if fresh['policy_state'] == 'missing':
+            fresh['policy_state'] = 'manual'
+        return fresh
+    verified, _ = _read_replay_index_status(settings)
+    if verified['policy_state'] == 'missing':
+        verified['policy_state'] = 'pending'
+    return verified

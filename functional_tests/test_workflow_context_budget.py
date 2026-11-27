@@ -1,8 +1,9 @@
 # test_workflow_context_budget.py
 """
 Functional tests for workflow provider-boundary context budgets.
-Version: 0.261.122
+Version: 0.261.461
 Implemented in: 0.261.106
+Model persona budget accounting added in: 0.261.461
 
 These tests cover complete requests, selected-model limits, tool-result rounds,
 and isolation from ordinary chat. Model metadata and provider responses are
@@ -29,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "si
 # Import the app only after adding the worktree's module directory.
 import functions_workflow_context as context
 from functions_model_capabilities import ModelTokenBudgetError, resolve_model_token_budget
+from model_endpoint_clients import bind_model_endpoint_request_policy
 
 
 @pytest.fixture
@@ -82,6 +84,30 @@ def test_complete_input_above_old_character_cap_is_not_clipped(limits):
     assert sent[0]["messages"][0]["content"] == text
     assert workflow["context_budget"]["decision"] == "full_input"
     assert workflow["context_budget"]["truncated"] is False
+
+
+def test_model_persona_is_included_in_workflow_request_budget(limits):
+    sent = []
+    client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=lambda **kwargs: sent.append(kwargs) or "done"),
+    ))
+    bind_model_endpoint_request_policy(
+        client, None, persona_markdown="Prefer concise factual answers. " * 80
+    )
+    guarded = context.WorkflowModelClient(client, "fixture-model", "aoai")
+    workflow = {}
+    with context.workflow_context_budget_scope(workflow):
+        guarded.chat.completions.create(
+            model="fixture-model",
+            messages=[{"role": "user", "content": "Summarize this input."}],
+        )
+
+    baseline = context.calculate_workflow_context_budget(
+        [{"role": "user", "content": "Summarize this input."}],
+        "fixture-model",
+    )
+    assert workflow["context_budget"]["input_tokens"] > baseline["input_tokens"]
+    assert sent[0]["messages"][0]["role"] == "system"
 
 
 def test_instructions_and_tools_share_the_input_budget(limits):

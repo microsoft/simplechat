@@ -1,12 +1,16 @@
 # test_app_settings_import_boundaries.py
 """
-Regression coverage for CodeQL py/cyclic-import and py/side-effect-in-assert.
-Version: 0.261.027
+Regression coverage for CodeQL py/cyclic-import, py/unsafe-cyclic-import, and
+py/side-effect-in-assert.
+Version: 0.261.487
 Implemented in: 0.261.027
+Document action import boundary added in: 0.261.487
 
 Import real cache/logging modules in fresh interpreters with configuration imports
 and network access blocked. Exercise initialization from supplied settings in both
 normal and optimized Python; module stubs cannot mask the dependency boundary.
+functions_settings imports functions_document_actions while it loads, so that module
+must load without configuration or settings imports.
 """
 
 import ast
@@ -173,9 +177,36 @@ with patch.object(builtins, "__import__", guarded_import), patch.object(socket.s
     check(not any(name in sys.modules for name in forbidden), "Bootstrap loaded a forbidden module")
 print("PASS: cold imports and settings-driven configuration; no reverse imports or network")
 '''
+DOCUMENT_ACTIONS_PROBE = r'''
+import builtins
+import importlib
+import socket
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+settings_modules = {"config", "functions_settings"}
+real_import = builtins.__import__
+
+def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+    # Relative imports such as Flask's own ".config" are not the application's modules.
+    if level == 0 and name.removeprefix("application.").removeprefix("single_app.") in settings_modules:
+        raise AssertionError("functions_document_actions imported " + name + " while loading")
+    return real_import(name, globals, locals, fromlist, level)
+
+def no_network(*args, **kwargs):
+    raise AssertionError("Network access during import")
+
+with patch.object(builtins, "__import__", guarded_import), patch.object(socket.socket, "connect", no_network):
+    actions = importlib.import_module("functions_document_actions")
+capabilities = actions.get_default_document_action_capabilities()
+if not capabilities:
+    raise AssertionError("Default document action capabilities are empty")
+print("PASS: document actions load without settings")
+'''
 
 
-@pytest.mark.parametrize("first_module", ["app_settings_cache", "functions_appinsights"])
+@pytest.mark.parametrize("first_module", ["app_settings_cache", "functions_appinsights", "functions_terms_of_use_config"])
 @pytest.mark.parametrize("optimized", [False, True])
 def test_real_imports_and_bootstrap_do_not_reenter_config(first_module, optimized):
     command = [sys.executable, "-B"]
@@ -192,9 +223,22 @@ def test_real_imports_and_bootstrap_do_not_reenter_config(first_module, optimize
     assert "PASS: cold imports" in result.stdout
 
 
+def test_document_actions_load_without_reentering_settings():
+    """Loading this module first must not re-enter functions_settings, which imports names it has not defined yet."""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", DOCUMENT_ACTIONS_PROBE, str(APP)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS: document actions load without settings" in result.stdout
+
+
 def test_cache_dependency_graph_has_no_reverse_imports():
     """Inspect function-local imports too: deferring an edge does not remove it."""
-    pending = ["app_settings_cache"]
+    pending = ["app_settings_cache", "functions_terms_of_use_config"]
     inspected = set()
     while pending:
         name = pending.pop()

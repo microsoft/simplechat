@@ -1,8 +1,9 @@
 # test_v2_chat_picker_search.py
 """
 Browser regressions for Documents-style search in V2 chat catalog pickers.
-Version: 0.261.395
+Version: 0.261.465
 Implemented in: 0.261.395
+Model persona inspection added in: 0.261.465
 
 Runs the real Composer, Dropdown, stores, and production theme CSS; only HTTP is
 synthetic. Reuses local Chromium or configured Azure Playwright through the shared
@@ -83,6 +84,57 @@ def search_box(page, name=MODEL_SEARCH):
 
 def flush_settings(page):
     page.evaluate("async () => await window.OrchHarness.stores.userSettings.useUserSettingsStore.getState().flush()")
+
+
+def test_model_persona_indicator_inspects_without_changing_selection(approval_ui):
+    visible = dict(MODELS[0])
+    visible["profile"] = copy.deepcopy(visible["profile"])
+    visible.update(
+        persona_enabled=True,
+        persona_markdown="## Technical guide\n\n"
+        + "\n\n".join(f"Guideline {index}: prefer concise, grounded answers." for index in range(30)),
+    )
+    hidden = dict(MODELS[1])
+    hidden["profile"] = copy.deepcopy(hidden["profile"])
+    hidden.update(persona_enabled=True, persona_markdown="")
+    page, api = prepare(approval_ui, models=(visible, hidden))
+    trigger = page.get_by_role("button", name="Daily writer", exact=True)
+    writes_before = len(api.writes)
+    trigger.click()
+    listbox = page.get_by_role("listbox", name="Model options")
+
+    inspect = listbox.get_by_role("button", name="View persona for Daily writer", exact=True)
+    expect(inspect).to_have_attribute(
+        "title", re.compile(r"Persona enabled:.*Technical guide.*prefer concise, grounded answers")
+    )
+    inspect.click()
+    expect(listbox.get_by_role("dialog", name="Persona for Daily writer")).to_be_visible()
+    expect(listbox.get_by_role("heading", name="Technical guide")).to_be_visible()
+    expect(trigger).to_have_text("Daily writer")
+    assert len(api.writes) == writes_before
+
+    listbox.get_by_role("option", name="Daily writer", exact=True).focus()
+    page.keyboard.press("ArrowDown")
+    expect(inspect).to_be_focused()
+    inspect.press("Enter")
+    expect(listbox.get_by_role("dialog", name="Persona for Daily writer")).to_have_count(0)
+    inspect.press("Space")
+    expect(listbox.get_by_role("dialog", name="Persona for Daily writer")).to_be_visible()
+    inspect.press("Tab")
+    dialog = listbox.get_by_role("dialog", name="Persona for Daily writer")
+    expect(dialog).to_be_focused()
+    dialog.press("ArrowDown")
+    expect(dialog).to_be_focused()
+
+    inspect_hidden = listbox.get_by_role("button", name="View persona for Review model", exact=True)
+    inspect_hidden.click()
+    hidden_dialog = listbox.get_by_role("dialog", name="Persona for Review model")
+    expect(hidden_dialog).to_be_in_viewport()
+    expect(hidden_dialog).to_contain_text(
+        "The persona text is not visible to you."
+    )
+    expect(trigger).to_have_text("Daily writer")
+    assert len(api.writes) == writes_before
 
 
 @pytest.mark.parametrize("orchestrating", [False, True])
@@ -200,7 +252,12 @@ def test_search_keyboard_editing_navigation_and_no_accidental_send(approval_ui):
     expect(page.get_by_role("button", name="Review model", exact=True)).to_be_focused()
     page.get_by_role("button", name="Review model", exact=True).click()
     search.press("Tab")
+    expect(page.get_by_role("option", name="Daily writer", exact=True)).to_be_focused()
+    expect(page.locator(".composer-picker-panel")).to_be_visible()
+    page.get_by_role("option", name="Local reasoning", exact=True).focus()
+    page.keyboard.press("Tab")
     expect(page.locator(".composer-picker-panel")).to_have_count(0)
+    expect(page.get_by_role("button", name="Agent", exact=True)).to_be_focused()
     assert not api.chats and not api.plans
 
 

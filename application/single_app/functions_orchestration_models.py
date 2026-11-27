@@ -31,7 +31,10 @@ from model_endpoint_clients import (
 
 
 REASONING_COMPLETION_BUDGET = 8192
-MODEL_IDENTITY_FIELDS = ('model_deployment', 'model_id', 'model_endpoint_id', 'model_provider')
+MODEL_IDENTITY_FIELDS = (
+    'model_deployment', 'model_id', 'model_endpoint_id', 'model_provider',
+    'model_scope_type', 'model_scope_id',
+)
 PLANNER_MODEL_FIELDS = {
     'model_deployment': 'chat_orchestration_planner_deployment',
     'model_id': 'chat_orchestration_planner_model_id',
@@ -156,12 +159,16 @@ class OrchestrationModel:
     provider: str = 'aoai'
     endpoint_id: str = ''
     model_id: str = ''
+    model_scope_type: str = ''
+    model_scope_id: str = ''
+    apply_model_persona: bool = False
     behavior_name: str = ''
     response_length: int | None = None
     reasoning_effort: str = ''
     source: str = 'legacy'
     model_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
     _answer_selection: dict[str, str] | None = field(default=None, repr=False)
+    _answer_apply_model_persona: bool | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
     reasoning_resolution: dict[str, Any] = field(default_factory=dict, init=False)
     _reasoning_rejected_efforts: set[str] = field(default_factory=set, init=False, repr=False)
@@ -186,8 +193,17 @@ class OrchestrationModel:
                 'model_provider': self.provider,
                 'model_endpoint_id': self.endpoint_id,
                 'model_id': self.model_id,
+                'model_scope_type': self.model_scope_type,
+                'model_scope_id': self.model_scope_id,
             }.items() if value
         }
+
+    def answer_model_persona_enabled(self):
+        return (
+            self.apply_model_persona
+            if self._answer_apply_model_persona is None
+            else self._answer_apply_model_persona
+        )
 
     def metadata(self):
         return {
@@ -196,6 +212,8 @@ class OrchestrationModel:
                 'model_provider': self.provider,
                 'model_endpoint_id': self.endpoint_id,
                 'model_id': self.model_id,
+                'model_scope_type': self.model_scope_type,
+                'model_scope_id': self.model_scope_id,
             }.items() if value
         }
 
@@ -290,11 +308,18 @@ def has_planner_model_override(settings):
     return any(_text((settings or {}).get(key)) for key in PLANNER_MODEL_FIELDS.values())
 
 
-def _resolve_planner_binding(settings, *, user_id, seeds, identity_context, answer_selection):
+def _resolve_planner_binding(
+    settings, *, user_id, seeds, identity_context, answer_selection,
+    answer_apply_model_persona=False,
+):
     selection = {
         field: _text(settings.get(key)) for field, key in PLANNER_MODEL_FIELDS.items()
     }
     if selection['model_endpoint_id'] or selection['model_id']:
+        selection.update({
+            'model_scope_type': 'global',
+            'model_scope_id': 'global',
+        })
         binding = resolve_orchestration_model(
             settings, user_id=user_id,
             seeds={**seeds, 'model': selection, 'reasoning_effort': ''},
@@ -302,12 +327,15 @@ def _resolve_planner_binding(settings, *, user_id, seeds, identity_context, answ
         )
         binding.source = 'planner_override'
         binding._answer_selection = dict(answer_selection)
+        binding._answer_apply_model_persona = answer_apply_model_persona
         return binding
     if not selection['model_deployment'] or selection['model_provider'].lower() not in ('', 'aoai'):
         raise OrchestrationModelError()
-    return _resolve_legacy_binding(
+    binding = _resolve_legacy_binding(
         settings, source='planner_override', answer_selection=answer_selection,
     )
+    binding._answer_apply_model_persona = answer_apply_model_persona
+    return binding
 
 
 def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False, identity_context=None):
@@ -342,6 +370,8 @@ def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False,
                 'model_endpoint_id': _text(default['endpoint_id']),
                 'model_id': _text(default['model_id']),
                 'model_provider': _text(default.get('provider')),
+                'model_scope_type': 'global',
+                'model_scope_id': 'global',
             })
             source = 'default'
 
@@ -360,6 +390,8 @@ def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False,
             'model_id': selection['model_id'],
             'model_deployment': selection['model_deployment'],
             'provider': selection['model_provider'],
+            'scope_type': selection['model_scope_type'],
+            'scope_id': selection['model_scope_id'],
             'user_id': user_id,
             'active_group_ids': seeds.get('active_group_ids') or [],
         }
@@ -393,16 +425,29 @@ def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False,
         answer_selection = {
             'model_deployment': deployment, 'model_provider': provider,
             'model_endpoint_id': selection['model_endpoint_id'], 'model_id': _text(model.get('id')),
+            'model_scope_type': selection['model_scope_type'],
+            'model_scope_id': selection['model_scope_id'],
         }
+        apply_persona = (
+            bool(selection['model_id'])
+            and _text(model.get('id')) == selection['model_id']
+            and bool(selection['model_scope_type'])
+            and seeds.get('apply_model_persona', True) is not False
+            and supplied.get('apply_model_persona', True) is not False
+            and not isinstance(seeds.get('agent'), dict)
+        )
         if override:
             return _resolve_planner_binding(
                 settings, user_id=user_id, seeds=seeds, identity_context=identity_context,
                 answer_selection=answer_selection,
+                answer_apply_model_persona=apply_persona,
             )
         client, constructed_protocol = build_model_endpoint_sync_chat_client(
             endpoint.get('auth') or {}, provider, address, api_version, deployment,
             settings=settings, endpoint_config=endpoint,
             identity_context={**(identity_context or {}), 'user_id': user_id},
+            model_id=_text(model.get('id')),
+            apply_model_persona=apply_persona,
         )
         response_length = model.get('responseLength')
         if not isinstance(response_length, int) or isinstance(response_length, bool) or response_length <= 0:
@@ -410,6 +455,9 @@ def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False,
         return _record_construction(OrchestrationModel(
             client, deployment, provider=provider, endpoint_id=selection['model_endpoint_id'],
             model_id=_text(model.get('id')), behavior_name=_text(model.get('modelName')) or deployment,
+            model_scope_type=selection['model_scope_type'],
+            model_scope_id=selection['model_scope_id'],
+            apply_model_persona=apply_persona,
             response_length=response_length, reasoning_effort=reasoning_effort, source=source,
             model_metadata=model,
         ), endpoint=address, api_version=api_version, protocol=constructed_protocol)
@@ -434,6 +482,7 @@ def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False,
         return _resolve_planner_binding(
             settings, user_id=user_id, seeds=seeds, identity_context=identity_context,
             answer_selection={'model_deployment': deployment, 'model_provider': 'aoai'},
+            answer_apply_model_persona=False,
         )
     # Legacy models share one connection; the answer must not inherit a planner override.
     return _resolve_legacy_binding(

@@ -1,12 +1,13 @@
 # test_ai_connection_image_runtime.py
 """
 Functional tests for shared image bindings, persistence, proposals, editing, and admin tests.
-Version: 0.261.192
+Version: 0.261.485
 Implemented in: 0.261.105
 
 Application storage, secret retrieval, and credentials are isolated before runtime imports.
 No Azure inference, provisioning, or Cosmos initialization is performed.
 Provider-qualified Custom image runtime coverage was added in 0.261.107.
+Custom runtime seams (CA trust, timeouts, endpoint profiles) updated in 0.261.485.
 """
 
 import ast
@@ -50,6 +51,7 @@ with stubbed_config(cognitive_services_scope="https://cognitiveservices.azure.co
     import functions_model_endpoint_types as endpoint_types
     import functions_model_endpoint_validation as endpoint_validation
     import model_endpoint_clients as endpoint_clients
+    import model_endpoint_profiles as endpoint_profiles
 
 
 generation = import_app_module("functions_image_generation")
@@ -184,6 +186,9 @@ class ImageRuntimeTestCase(unittest.TestCase):
             "MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE": endpoint_providers.MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
             "resolve_custom_azure_openai_base_url": endpoint_clients.resolve_custom_azure_openai_base_url,
             "resolve_custom_openai_base_url": endpoint_clients.resolve_custom_openai_base_url,
+            "build_openai_client_timeout_options": endpoint_clients.build_openai_client_timeout_options,
+            "GENAI_MIL_PROFILE": endpoint_profiles.GENAI_MIL_PROFILE,
+            "get_custom_endpoint_profile": endpoint_profiles.get_custom_endpoint_profile,
             "build_custom_openai_sync_http_client": self.custom_http_factory,
             "build_custom_openai_async_http_client": Mock(side_effect=AssertionError("Unexpected async image client")),
         })
@@ -286,7 +291,7 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
             "resolve_streaming_multi_endpoint_gpt_config": Mock(),
             "build_model_endpoint_context": Mock(return_value={"model_deployment": "text-deployment"}),
             "_resolve_legacy_chat_reasoning_model_name": Mock(return_value="gpt-4o"),
-            "AzureOpenAI": Mock(return_value="text-client"),
+            "build_legacy_chat_client": Mock(return_value="text-client"),
             "debug_print": Mock(), "log_event": self.logs,
             "build_json_error_response": Mock(return_value="initialization-failed"),
         }
@@ -294,7 +299,7 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         for chat_switch in (False, True):
             namespace["settings"]["enable_multi_model_endpoints"] = chat_switch
             self.assertEqual(namespace["run_setup"](), (None, "", None))
-        namespace["AzureOpenAI"].assert_not_called()
+        namespace["build_legacy_chat_client"].assert_not_called()
         namespace["resolve_streaming_multi_endpoint_gpt_config"].assert_not_called()
         namespace["build_model_endpoint_context"].assert_not_called()
         namespace["_resolve_legacy_chat_reasoning_model_name"].assert_not_called()
@@ -308,13 +313,16 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
             namespace["run_setup"](),
             ("text-client", "text-deployment", {"model_deployment": "text-deployment"}),
         )
-        namespace["AzureOpenAI"].assert_called_once()
+        namespace["build_legacy_chat_client"].assert_called_once_with(
+            namespace["settings"], "text-deployment", identity_context={"user_id": "user-1"},
+        )
         namespace["_resolve_legacy_chat_reasoning_model_name"].assert_called_once()
         namespace["settings"]["enable_multi_model_endpoints"] = True
         namespace["resolve_streaming_multi_endpoint_gpt_config"].return_value = (
             "shared-text-client", "text-deployment", "aoai", "https://chat.example.test",
             {"type": "api_key"}, "2025-04-01-preview", "aoai", None,
-            "text-endpoint", "text-model", None, None, None, "gpt-5.6-luna",
+            "text-endpoint", "text-model", None, None, None,
+            None, "global", None, "gpt-5.6-luna",
         )
         self.assertEqual(
             namespace["run_setup"](),
@@ -823,7 +831,9 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.assertEqual(settings, before)
         self.assertEqual(constructor.call_args.kwargs["api_key"], "resolved-connection-key")
         self.assertNotIn("forged.example", constructor.call_args.kwargs["base_url"])
-        self.assertEqual(set(response.get_json()), {"message"})
+        self.assertEqual(response.get_json(), {
+            "success": True, "message": "Image generation connection successful",
+        })
         namespace["resolve_admin_settings_secret_value"].assert_not_called()
 
     def test_admin_legacy_draft_keeps_redacted_secret_resolution_and_gateway_path(self):

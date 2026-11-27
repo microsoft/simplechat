@@ -70,6 +70,7 @@ This deployer keeps you in the repo's container-based deployment model while giv
 ## Main files
 
 - `deployers/azurecli/deploy-simplechat.ps1`
+- `deployers/azurecli/publish-simplechat.ps1`
 - `deployers/azurecli/upgrade-simplechat.ps1`
 - `deployers/azurecli/destroy-simplechat.ps1`
 
@@ -84,9 +85,50 @@ cd deployers/azurecli
 ./deploy-simplechat.ps1
 ```
 
-## Code-only upgrades
+## Interactive container publishing
+
+For routine updates to an existing Linux single-container app, use
+`publish-simplechat.ps1` (deployer **1.0.35**, introduced alongside application
+**0.261.042**). It prompts for subscription, ACR, and web app, uploads local source
+for an ACR-hosted build, then pins the app to the resulting image digest.
+It preserves existing registry authentication and does not require local Docker.
+
+```powershell
+pwsh -NoProfile -File ./deployers/azurecli/publish-simplechat.ps1
+```
+
+VS Code's **Tasks: Run Task** offers **SimpleChat: Publish container (interactive)**
+and a read-only preview task. Deployer **1.0.35** includes prefilled
+**SimpleChat: Publish beta container (confirm)** and
+**SimpleChat: Publish dev container (confirm)** tasks. Every task prompts for an
+image reference with `simplechat:latest` as the default. All selections also accept parameters;
+`-NonInteractive -Yes` supports automation and `-WhatIf` previews without mutations.
+Uncommitted source requires separate approval or `-AllowDirty`.
+
+Use `-ImageName simplechat:latest` for the same image choice from PowerShell, or
+choose a distinct tag. Direct script calls without an image tag retain generated
+timestamp/revision tags. New builds use `az acr build --no-logs` and wait for the
+CLI's status polling to finish, avoiding Windows Unicode build-log crashes.
+Beta and dev tasks use `-UseWebhook`: they require an enabled push hook matching
+the requested tag and leave the already-configured app image unchanged. The ACR
+push webhook triggers the app to pull that tag. This mode does not pin the app to
+a digest or verify webhook delivery. Ordinary publishing instead updates App
+Service to the successful run's output digest, even when another build overwrites
+`latest`.
+
+Authenticate with Azure CLI in the desired cloud first. The app must already pull
+from the selected registry. Sidecar/Compose apps and registry authentication
+changes are not supported. Configuration verification is not proof of startup:
+verify the running app version and workflows after publishing.
+See the [publisher reference](https://github.com/microsoft/simplechat/blob/main/deployers/azurecli/README.md#interactive-container-publishing)
+for parameters, permissions, build-only operation, and rollback.
+
+## Legacy code-only upgrades
 
 For container-only releases where infrastructure does not change, use `upgrade-simplechat.ps1`.
+
+This legacy script enables registry admin credentials. Prefer the publisher above
+when preserving an existing managed-identity pull configuration.
 
 This script builds the image in ACR, updates the current App Service container image, verifies the updated image reference, and restarts the site. It gives the Azure CLI deployer a PowerShell-first equivalent to the normal `azd deploy` container rollout path without invoking the AZD post-configuration Python flow.
 

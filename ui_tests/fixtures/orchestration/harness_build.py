@@ -19,7 +19,6 @@ tests keep.
 import os
 import socket
 import subprocess
-import sys
 from contextlib import contextmanager
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +31,7 @@ REPO_ROOT = HERE.parents[2]
 V2_UI = REPO_ROOT / "application" / "v2_ui"
 V2_SRC = V2_UI / "src"
 NODE_MODULES = V2_UI / "node_modules"
+ESBUILD = NODE_MODULES / "esbuild" / "bin" / "esbuild"
 ENTRY = HERE / "harness_entry.tsx"
 BUNDLE = HERE / "harness.bundle.js"
 HARNESS_HTML_REL = "ui_tests/fixtures/orchestration/harness.html"
@@ -62,6 +62,10 @@ def ensure_bundle():
         raise HarnessUnavailable(
             "application/v2_ui/node_modules is missing; run `npm install` in application/v2_ui"
         )
+    if not ESBUILD.exists():
+        raise HarnessUnavailable(
+            "application/v2_ui/node_modules/esbuild is missing; run `npm install` in application/v2_ui"
+        )
 
     if BUNDLE.exists() and BUNDLE.stat().st_mtime >= _newest_source_mtime():
         return BUNDLE
@@ -72,8 +76,8 @@ def ensure_bundle():
     env["NODE_PATH"] = str(NODE_MODULES)
 
     command = [
-        "npx",
-        "esbuild",
+        "node",
+        str(ESBUILD),
         str(ENTRY),
         "--bundle",
         "--format=iife",
@@ -90,14 +94,17 @@ def ensure_bundle():
         f"--outfile={BUNDLE}",
         "--log-level=warning",
     ]
-    result = subprocess.run(
-        command,
-        cwd=str(V2_UI),
-        env=env,
-        capture_output=True,
-        text=True,
-        shell=(sys.platform == "win32"),
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(V2_UI),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError("esbuild timed out while bundling the orchestration harness") from exc
     if result.returncode != 0:
         raise AssertionError(
             "esbuild failed to bundle the orchestration harness:\n"

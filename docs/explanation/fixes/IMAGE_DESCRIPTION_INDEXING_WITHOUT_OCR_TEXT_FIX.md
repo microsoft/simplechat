@@ -198,7 +198,9 @@ suites.
   `analyze_image_with_content_understanding` to that existing import statement but no new module
   dependency, so CodeQL reports the same `py/cyclic-import` finding at the statement's new
   location. Breaking the cycle means changing the settings bootstrap chain and is left for separate
-  work.
+  work. Since 0.261.487, `functions_document_actions` imports `normalize_search_id_list` from
+  `search_scope_utils` instead of `functions_search`, which removes this path; see
+  [CodeQL Alert and Contract Check Fix](CODEQL_ALERT_AND_CONTRACT_CHECK_FIX.md).
 
 ## Validation
 

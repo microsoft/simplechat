@@ -1,7 +1,13 @@
 // CustomConnectionFields.tsx
 
-import type { CustomApiTypeDescriptor } from '../../lib/customModelConnections';
-import type { ModelConnection } from '../../lib/modelConnections';
+import { useState } from 'react';
+import { Loader2 } from 'lucide-react';
+import {
+    connectionRequestModel, usesExplicitModelRouting,
+    type CustomApiTypeDescriptor, type ModelInferenceOperation, type ModelPathOrder, type ModelRouteMode,
+} from '../../lib/customModelConnections';
+import { modelRoutePreviewPayload, previewModelRoute, type ConnectionModel, type ModelConnection, type ModelConnectionsScope } from '../../lib/modelConnections';
+import { GlassButton } from '../ui/primitives';
 
 interface Props {
     draft: ModelConnection;
@@ -42,9 +48,11 @@ function TextField({ label, field, value, secret = false, help, ...props }: Prop
 
 export function CustomConnectionFields(props: Props) {
     const { draft, descriptors, errors, busy, inputClass, onChange } = props;
+    const explicit = usesExplicitModelRouting(draft);
     const descriptor = descriptors.find((option) => option.value === draft.api_type);
     return (
         <div data-testid="custom-connection-fields">
+            {!explicit ? <>
             <div className="py-2">
                 <label htmlFor="custom-api-type" className="mb-1.5 block text-sm font-medium text-text-1">Custom API type</label>
                 <select
@@ -87,6 +95,7 @@ export function CustomConnectionFields(props: Props) {
             ) : (
                 <p className="py-2 text-xs text-text-3">This API type does not use an Azure api-version query parameter.</p>
             )}
+            </> : null}
             <details className="my-2 text-xs text-text-3">
                 <summary className="cursor-pointer py-1 text-text-2">Client certificate (mTLS)</summary>
                 <p>Optional deployment-mounted PEM files. Do not paste certificates or private keys. TLS verification cannot be disabled.</p>
@@ -106,7 +115,9 @@ export function CustomAuthenticationFields(props: Props) {
             {auth.type === 'api_key' ? (
                 <details className="my-2 text-xs text-text-3">
                     <summary className="cursor-pointer py-1 text-text-2">Gateway API key header</summary>
-                    <p>Default: {descriptor?.defaultApiKeyHeader || 'Authorization'}{descriptor?.defaultApiKeyPrefix ? `: ${descriptor.defaultApiKeyPrefix} …` : ''}. A named override with an empty prefix sends the key without a prefix.</p>
+                    <p>{usesExplicitModelRouting(draft)
+                        ? 'The default header and prefix follow each model’s Request API.'
+                        : `Default: ${descriptor?.defaultApiKeyHeader || 'Authorization'}${descriptor?.defaultApiKeyPrefix ? `: ${descriptor.defaultApiKeyPrefix} …` : ''}.`} A named override with an empty prefix sends the key without a prefix.</p>
                     <TextField {...props} label="API key header override" field="auth.api_key_header" value={auth.api_key_header || ''} />
                     <TextField {...props} label="API key prefix" field="auth.api_key_prefix" value={auth.api_key_prefix ?? (auth.api_key_header ? '' : descriptor?.defaultApiKeyPrefix ?? '')} />
                 </details>
@@ -126,5 +137,110 @@ export function CustomAuthenticationFields(props: Props) {
                 </>
             ) : null}
         </>
+    );
+}
+
+export function ModelRequestRouteFields({
+    connection, model, descriptors, scope, canPreview, disabled, inputClass, error, onChange,
+}: {
+    connection: ModelConnection;
+    model: ConnectionModel;
+    descriptors: CustomApiTypeDescriptor[];
+    scope: ModelConnectionsScope;
+    canPreview: boolean;
+    disabled: boolean;
+    inputClass: string;
+    error?: string;
+    onChange: (model: ConnectionModel) => void;
+}) {
+    const payload = modelRoutePreviewPayload(connection, model);
+    const key = JSON.stringify(payload);
+    const [preview, setPreview] = useState<{ key: string; text: string; failed: boolean } | null>(null);
+    const [loading, setLoading] = useState(false);
+    const custom = connection.provider === 'custom';
+    const selected = `${model.api_type || ''}:${model.inference_api || ''}`;
+    const options = descriptors.flatMap((descriptor) => (descriptor.requestApiOptions ?? []).map((option) => ({ ...option, descriptor })))
+        .filter((item) => connection.profile !== 'genai_mil' || item.value === 'openai:chat_completions');
+    const descriptor = descriptors.find((item) => item.value === model.api_type);
+    const versionField = descriptor?.versionField === 'api_version' || descriptor?.versionField === 'anthropic_version' ? descriptor.versionField : null;
+    const runPreview = async () => {
+        setLoading(true);
+        setPreview(null);
+        try {
+            setPreview({ key, text: await previewModelRoute(scope, payload), failed: false });
+        } catch (error) {
+            setPreview({ key, text: error instanceof Error ? error.message : 'The route could not be previewed.', failed: true });
+        } finally {
+            setLoading(false);
+        }
+    };
+    return (
+        <div className="mt-3 space-y-2 border-t border-edge pt-2" data-testid="model-request-routing">
+            <div className="grid gap-2 sm:grid-cols-2">
+                {custom ? <label className="block text-xs text-text-3">
+                    Request API
+                    <select aria-label="Request API" className={inputClass} value={selected} disabled={disabled || !options.length}
+                        onChange={(event) => {
+                            const item = options.find((option) => option.value === event.target.value);
+                            if (!item) return;
+                            const operation = item.descriptor.supportedInferenceApis?.find((value: ModelInferenceOperation) => item.value.endsWith(`:${value}`));
+                            if (!operation) return;
+                            const identifier = connectionRequestModel(connection, model);
+                            const next: ConnectionModel = {
+                                ...model, api_type: item.descriptor.value, inference_api: operation,
+                                [item.descriptor.usesModelName ? 'modelName' : 'deploymentName']: identifier,
+                            };
+                            delete next.capability_status;
+                            if (item.descriptor.versionField === 'anthropic_version') {
+                                next.anthropic_version ||= item.descriptor.defaultVersion;
+                            }
+                            onChange(next);
+                        }}>
+                        {!options.some((option) => option.value === selected) ? <option value={selected}>
+                            {model.api_type ? 'Unsupported saved Request API' : 'Choose a Request API'}
+                        </option> : null}
+                        {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                </label> : null}
+                <label className="block text-xs text-text-3">
+                    URL Handling
+                    <select aria-label="URL Handling" className={inputClass} value={model.url_mode || 'auto'} disabled={disabled}
+                        onChange={(event) => onChange({ ...model, url_mode: event.target.value as ModelRouteMode })}>
+                        <option value="auto">Automatic (protocol default)</option>
+                        <option value="api_base">Use API base as entered</option>
+                        <option value="full">Use full request URL</option>
+                        <option value="exact">Legacy exact API base</option>
+                    </select>
+                </label>
+                <label className="block text-xs text-text-3">
+                    API Path
+                    <input className={inputClass} value={model.api_path ?? ''} disabled={disabled} spellCheck={false}
+                        onChange={(event) => onChange({ ...model, api_path: event.target.value.trim() })} />
+                </label>
+                <label className="block text-xs text-text-3">
+                    API Path Order
+                    <select aria-label="API Path Order" className={inputClass} value={model.api_path_order || connection.routing_path_order || 'model_first'} disabled={disabled}
+                        onChange={(event) => onChange({ ...model, api_path_order: event.target.value as ModelPathOrder })}>
+                        <option value="connection_first">Connection path first</option>
+                        <option value="model_first">Model path first</option>
+                    </select>
+                </label>
+                {versionField ? <label className="block text-xs text-text-3">
+                    {versionField === 'anthropic_version' ? 'Anthropic Version' : 'API Version'}
+                    <input className={inputClass} value={model[versionField] ?? descriptor?.defaultVersion ?? ''} disabled={disabled}
+                        onChange={(event) => onChange({ ...model, [versionField]: event.target.value.trim() })} />
+                </label> : null}
+            </div>
+            {error ? <p role="alert" className="text-xs text-danger">{error}</p> : null}
+            {canPreview ? <>
+                <GlassButton type="button" size="sm" variant="subtle" disabled={disabled || loading} onClick={() => void runPreview()}>
+                    Preview Route {loading ? <Loader2 className="animate-spin" size={14} aria-hidden="true" /> : null}
+                </GlassButton>
+                <output aria-live="polite" aria-label="Resolved request route preview"
+                    className={preview?.failed ? 'block break-all text-xs text-danger' : 'block break-all text-xs text-text-2'}>
+                    {loading ? 'Resolving route…' : preview?.key === key ? preview.text : ''}
+                </output>
+            </> : null}
+        </div>
     );
 }

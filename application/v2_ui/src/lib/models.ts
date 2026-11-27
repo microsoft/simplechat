@@ -32,6 +32,9 @@ export interface ModelCatalogEntry {
     provider?: string;
     display_name?: string;
     option_value?: string;
+    persona_enabled?: boolean;
+    persona_text_visible?: boolean;
+    persona_markdown?: string;
     profile?: {
         displayName?: string;
         publisher?: string;
@@ -46,6 +49,8 @@ export interface ModelIdentity {
     model_id?: string;
     model_endpoint_id?: string;
     model_provider?: string;
+    model_scope_type?: string;
+    model_scope_id?: string;
 }
 
 function text(value: unknown): string {
@@ -66,6 +71,7 @@ export function modelSearchText(model: ModelCatalogEntry): string {
         publisher,
         publisher ? publisherLabel(publisher) : '',
         providerName,
+        model.persona_enabled ? 'persona enabled' : '',
     ].filter(Boolean).join(' ');
 }
 
@@ -116,6 +122,8 @@ export function buildModelIdentity(model: ModelCatalogEntry | undefined): ModelI
     const modelId = text(model.model_id);
     const endpointId = text(model.endpoint_id);
     const provider = text(model.provider);
+    const scopeType = text(model.scope_type);
+    const scopeId = text(model.scope_id);
 
     const identity: ModelIdentity = {};
 
@@ -130,6 +138,12 @@ export function buildModelIdentity(model: ModelCatalogEntry | undefined): ModelI
         }
         if (provider) {
             identity.model_provider = provider;
+        }
+        if (scopeType) {
+            identity.model_scope_type = scopeType;
+        }
+        if (scopeId) {
+            identity.model_scope_id = scopeId;
         }
     } else if (!deployment && modelId) {
         // No endpoint to pair it with, so the id can only be used as the deployment.

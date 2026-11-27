@@ -1,8 +1,9 @@
 # test_orchestration_harness_routes.py
 """
 Real authenticated routes and bootstrap for orchestration file admission.
-Version: 0.261.415
+Version: 0.261.482
 Implemented in: 0.261.127
+Paused run continued by the request that started it: 0.261.482
 Initial-claim timing coverage added in: 0.261.129
 Auto-routing admission and content-review file visibility added in: 0.261.131
 Single plan contract, no admission switch, legacy runs refused: 0.261.139
@@ -602,6 +603,130 @@ def test_saved_run_execution_uses_the_headless_path(runtime, monkeypatch):
     assert available.call_args.kwargs["request_context"]["rendering_service"] is services.rendering
     native_factory.assert_not_called()
     route_models.assert_not_called()
+
+
+def _paused_run(**changes):
+    return {
+        "id": "paused-run", "status": "waiting", "continuation_requires_session": True,
+        "execution_deadline_at": "2999-01-01T00:00:00+00:00",
+        "execution_steps": [{"step_id": "compute", "status": "waiting", "wait": {"kind": "native_tabular_compute"}}],
+        **changes,
+    }
+
+
+@pytest.mark.parametrize("changes", [
+    {"status": "failed"}, {"status": "completed"}, {"continuation_requires_session": False},
+    {"continuation_requires_session": "true"}, {"cancellation_requested_at": "2026-11-22T00:00:00+00:00"},
+    {"execution_deadline_at": "2000-01-01T00:00:00+00:00"}, {"execution_deadline_at": "2999-01-01T00:00:00"},
+    {"execution_deadline_at": None},
+    {"execution_steps": [{"step_id": "ask", "status": "waiting", "wait": {"kind": "user_input"}}]},
+    {"execution_steps": [{"step_id": "act", "status": "waiting", "wait": {"kind": "action_credentials"}}]},
+])
+def test_only_a_paused_run_that_needs_this_session_is_continued_by_its_request(runtime, changes):
+    route = runtime.modules.route
+    assert route._session_continuation_due(_paused_run()) is True
+    assert route._session_continuation_due(_paused_run(**changes)) is False
+    assert route._session_continuation_due(None) is False
+
+
+def test_the_request_continues_its_own_paused_run_until_it_is_no_longer_paused(runtime, monkeypatch):
+    """0.261.482: the worker of the signed-in request, not the scheduler, runs the rest."""
+    route = runtime.modules.route
+    continuation = importlib.import_module("functions_orchestration_continuation")
+    execution_module = importlib.import_module("functions_orchestration_execution")
+    events, pauses = [], []
+    # Paused; claimed by nobody yet (None); claimed and run but its work is still pending; done.
+    states = [_paused_run(), _paused_run(), _paused_run(), _paused_run(status="completed")]
+    claims = [None, "owned", "owned"]
+
+    class Lease:
+        def close(self):
+            events.append("lease_closed")
+
+    class Execution:
+        def execute(self, emit=None):
+            events.append("executed")
+            yield "data: {}\n\n"
+
+        def close(self):
+            events.append("closed")
+
+    def claim(run_id, user_id, conversation_id, *, authorize, message_container, **options):
+        assert (run_id, user_id, conversation_id, options) == ("paused-run", "owner", "conversation", {})
+        assert authorize() == {"id": "conversation"}
+        events.append("claim")
+        return None if claims.pop(0) is None else (_paused_run(), Lease())
+
+    def prepare(record, **options):
+        assert record["conversation_context"] == {"messages": []}
+        assert options["identity_context"] == {"user_roles": ["User"]}
+        assert options["execution_identity"] == "captured-identity"
+        assert options["checkpoint_factory"] is continuation.ContinuationCheckpoints
+        assert isinstance(options["lease"], Lease)
+        return Execution()
+
+    monkeypatch.setattr(route, "get_orchestration_run", lambda *args, **kwargs: states.pop(0))
+    monkeypatch.setattr(route, "_authorize_context_conversation", lambda *args: {"id": "conversation"})
+    monkeypatch.setattr(route, "_conversation_context_for_run", lambda *args: {"messages": []})
+    monkeypatch.setattr(route, "_request_identity", lambda user_id: {"user_roles": ["User"]})
+    monkeypatch.setattr(route, "capture_execution_identity", lambda *args: "captured-identity")
+    monkeypatch.setattr(route.time, "sleep", pauses.append)
+    monkeypatch.setattr(continuation, "claim_run_continuation", claim)
+    monkeypatch.setattr(execution_module, "prepare_harness_execution", prepare)
+    route._continue_waiting_run("paused-run", "conversation", "owner")
+    assert events == ["claim", "claim", "executed", "closed", "claim", "executed", "closed"]
+    # The pause grows with each try and never exceeds its bound.
+    assert pauses == [5.0, 10.0, 15.0] and states == []
+    assert min(route._SESSION_CONTINUATION_PAUSE_SECONDS * 100, route._SESSION_CONTINUATION_MAX_PAUSE_SECONDS) == 30.0
+
+    # A run that is not paused on this session costs one read and nothing else.
+    states[:] = [_paused_run(continuation_requires_session=False)]
+    events.clear()
+    pauses.clear()
+    route._continue_waiting_run("paused-run", "conversation", "owner")
+    assert events == [] and pauses == []
+
+    # A refused claim ends it; a preparation that saved its own outcome ends it without a run.
+    states[:] = [_paused_run()]
+    monkeypatch.setattr(continuation, "claim_run_continuation", Mock(
+        side_effect=route.CheckpointError("context_unavailable"),
+    ))
+    route._continue_waiting_run("paused-run", "conversation", "owner")
+    assert events == []
+    states[:] = [_paused_run()]
+    claims[:] = ["owned"]
+    monkeypatch.setattr(continuation, "claim_run_continuation", claim)
+    monkeypatch.setattr(execution_module, "prepare_harness_execution", Mock(
+        side_effect=execution_module.HarnessExecutionError("context_unavailable"),
+    ))
+    route._continue_waiting_run("paused-run", "conversation", "owner")
+    assert events == ["claim"]
+    # Anything else releases the claim it holds before it is raised.
+    states[:] = [_paused_run()]
+    claims[:] = ["owned"]
+    events.clear()
+    monkeypatch.setattr(execution_module, "prepare_harness_execution", Mock(side_effect=RuntimeError("lost")))
+    with pytest.raises(RuntimeError):
+        route._continue_waiting_run("paused-run", "conversation", "owner")
+    assert events == ["claim", "lease_closed"]
+
+
+def test_the_request_hook_continues_a_paused_run_before_following_a_failed_one():
+    source = (APP / "route_backend_orchestration.py").read_text(encoding="utf-8")
+    hook = source[source.index("        @copy_current_request_context\n        def after():"):]
+    hook = hook[:hook.index("return _prepare_execution_stream(")]
+    assert hook.index("_continue_waiting_run(run_id, conversation_id or record[") < hook.index(
+        "_continue_failed_run(run_id, conversation_id or record["
+    )
+    # The paused run is continued whether or not next attempts are; a failure there is logged
+    # and does not stop a failed attempt from being followed.
+    assert hook.index("except Exception as exc:") < hook.index("if reactive_loop_enabled(settings):")
+    assert "after=after," in source[source.index(hook[:60]):]
+    scheduler_source = (APP / "functions_orchestration_scheduler.py").read_text(encoding="utf-8")
+    deferral = scheduler_source.index('"state": "session_required"')
+    assert scheduler_source.index("terminal = self.terminal_condition(record)") < deferral < scheduler_source.index(
+        "owned = self.claim(selector, mode)"
+    )
 
 
 def test_unknown_saved_contract_is_neither_run_nor_called_legacy(runtime):

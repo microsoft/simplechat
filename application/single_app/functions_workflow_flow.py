@@ -224,7 +224,8 @@ def compile_workflow_flow(workflow):
         if not isinstance(runner, dict) or runner.get("type", "inherit") not in ("inherit", "model", "agent"):
             raise WorkflowDefinitionError("A task requires an existing workflow runner.")
         _object(runner, {
-            "type", "selected_agent", "model_endpoint_id", "model_id", "model_provider", "model_binding_summary",
+            "type", "selected_agent", "model_endpoint_id", "model_id", "model_scope_type",
+            "model_scope_id", "model_provider", "model_binding_summary",
         }, "Task runner")
         identifier = _id(task.get("id"))
         if identifier in catalogue:

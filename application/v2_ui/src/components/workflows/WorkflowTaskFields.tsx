@@ -156,6 +156,8 @@ export function WorkflowAgentPicker({
 export function WorkflowModelPicker({
     endpointId,
     modelId,
+    scopeType,
+    scopeId,
     options,
     onChange,
     label = 'Model',
@@ -164,15 +166,20 @@ export function WorkflowModelPicker({
 }: {
     endpointId?: string;
     modelId?: string;
+    scopeType?: string;
+    scopeId?: string;
     options: WorkflowEditorOptions;
-    onChange: (endpointId: string, modelId: string) => void;
+    onChange: (endpointId: string, modelId: string, scopeType: string, scopeId: string) => void;
     label?: string;
     localOnly?: boolean;
     variant?: RunnerPickerVariant;
 }) {
     const id = useId();
     const selected = options.models.findIndex((model) =>
-        model.endpoint_id === (endpointId ?? '') && model.model_id === (modelId ?? ''));
+        model.endpoint_id === (endpointId ?? '')
+        && model.model_id === (modelId ?? '')
+        && (!scopeType || model.scope_type === scopeType)
+        && (!scopeId || model.scope_id === scopeId));
     const selectedKey = selected >= 0 ? String(selected) : '';
     const defaultLabel = options.default_model?.label || 'App default model';
     const defaultInvalid = options.default_model?.valid === false;
@@ -184,7 +191,12 @@ export function WorkflowModelPicker({
             value={selectedKey}
             onChange={(event) => {
                 const model = options.models[Number(event.target.value)];
-                onChange(model?.endpoint_id ?? '', model?.model_id ?? '');
+                onChange(
+                    model?.endpoint_id ?? '',
+                    model?.model_id ?? '',
+                    model?.scope_type ?? '',
+                    model?.scope_id ?? '',
+                );
             }}
         >
             <option value="" disabled={localOnly && options.default_model?.loop_eligible === false}>
@@ -599,9 +611,17 @@ function TaskRunnerFields({
                     label="Task model"
                     endpointId={runner.model_endpoint_id}
                     modelId={runner.model_id}
+                    scopeType={runner.model_scope_type}
+                    scopeId={runner.model_scope_id}
                     options={options}
                     localOnly={localOnly}
-                    onChange={(endpointId, modelId) => onChange({ type: 'model', model_endpoint_id: endpointId, model_id: modelId })}
+                    onChange={(endpointId, modelId, scopeType, scopeId) => onChange({
+                        type: 'model',
+                        model_endpoint_id: endpointId,
+                        model_id: modelId,
+                        model_scope_type: scopeType,
+                        model_scope_id: scopeId,
+                    })}
                 />
             ) : null}
             {localOnly ? <p className="text-xs text-text-3">Loops and saved-record reports require locally metered models or eligible local agents. Hosted agents are unavailable; model context limits are checked per task, not a total-run token cap.</p> : null}

@@ -368,6 +368,8 @@ class AIConnectionsFixture(AdminSettingsFixture):
         elif path == "/api/models/test-model":
             self.chat_tests.append(request.post_data_json)
             route.fulfill(json={"success": True})
+        elif path == "/api/models/ca-bundle-options" and request.method == "GET":
+            route.fulfill(json={"bundles": []})
         elif path == "/api/models/vision-capability":
             route.fulfill(json={"models": {}})
         else:
@@ -385,10 +387,10 @@ class AIConnectionsFixture(AdminSettingsFixture):
         expect(self.page.get_by_label("Default embedding model", exact=True)).to_be_enabled()
 
     def assert_clean(self):
+        assert not self.unexpected_requests, self.unexpected_requests
         resource_errors = [
             error for error in self.errors
             if error.startswith("Failed to load resource:") and any(str(status) in error for status in (400, 409, 503))
         ]
         assert len(resource_errors) <= self.expected_http_errors
         assert not [error for error in self.errors if error not in resource_errors], self.errors
-        assert not self.unexpected_requests, self.unexpected_requests

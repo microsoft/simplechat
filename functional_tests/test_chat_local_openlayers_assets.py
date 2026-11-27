@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for local chat OpenLayers assets.
-Version: 0.261.458
+Version: 0.261.460
 Implemented in: 0.241.116
 CSP allowlist regression fixed in: 0.242.053
 

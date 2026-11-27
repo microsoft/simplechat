@@ -1,8 +1,9 @@
 # test_v2_admin_model_catalog_workbench.py
 """
 Browser coverage for the native V2 Model Catalog workbench.
-Version: 0.261.258
+Version: 0.261.438
 Implemented in: 0.261.258
+Native Connections filter contrast regression added in: 0.261.438
 
 Exercise the built application with the real catalog profiles, field schema, and
 intercepted APIs. Check that each profile reads as one line -- name, vendor, and
@@ -17,6 +18,8 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import expect
+
+from ui_tests.fixtures.color_contrast import assert_readable_native_menu
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 
@@ -69,6 +72,23 @@ def _row(page, profile):
     return page.get_by_role("list", name="Catalog profiles").get_by_role(
         "button", name=profile["displayName"], exact=True
     )
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_connections_filter_native_menu_is_readable(catalog_ui, theme):
+    catalog_ui.open(theme=theme, ready_region="Model Catalog")
+    page = catalog_ui.page
+    connections = page.get_by_role("region", name="Model Catalog", exact=True).get_by_label(
+        "Connections", exact=True,
+    )
+    expect(connections.locator("option")).to_have_text(["All profiles", "Linked globally", "Not linked globally"])
+    assert_readable_native_menu(connections)
+    expect(connections).to_have_value("")
+    connections.press("ArrowDown")
+    expect(connections).to_have_value("linked")
+    expect(_row(page, catalog_ui.linked[0])).to_be_visible()
+    expect(_row(page, catalog_ui.unlinked)).to_have_count(0)
+    assert not catalog_ui.catalog_writes
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

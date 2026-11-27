@@ -572,6 +572,7 @@ def _unverified_source_review_runtime(playwright_available: bool, message: str) 
         "js_rendering_available": False,
         "playwright_available": playwright_available,
         "chromium_launch_available": False,
+        "runtime_verified": True,
         "sandbox_disabled": _is_chromium_no_sandbox_enabled(),
         "browser_path": os.getenv("PLAYWRIGHT_BROWSERS_PATH", ""),
         "max_render_concurrency": _get_source_review_render_max_concurrency(),
@@ -648,6 +649,29 @@ def get_source_review_runtime_capabilities(force_refresh: bool = False) -> Dict[
                     True, "Playwright is installed, but the Chromium runtime check timed out."
                 )
             return dict(_SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE)
+
+
+def peek_source_review_runtime_capabilities() -> Dict[str, Any]:
+    """Return non-blocking browser-runtime facts for an admin request."""
+    global _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE
+    if _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE is not None:
+        return dict(_SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE)
+    playwright_available = importlib.util.find_spec("playwright") is not None
+    return {
+        "js_rendering_available": False,
+        "playwright_available": playwright_available,
+        "chromium_launch_available": False,
+        "runtime_verified": not playwright_available,
+        "sandbox_disabled": _is_chromium_no_sandbox_enabled(),
+        "browser_path": os.getenv("PLAYWRIGHT_BROWSERS_PATH", ""),
+        "max_render_concurrency": _get_source_review_render_max_concurrency(),
+        "message": (
+            "Playwright is installed; launch support is verified by the source-review "
+            "runtime rather than the admin settings request."
+            if playwright_available
+            else "Playwright is not installed in this app runtime."
+        ),
+    }
 
 
 def _get_chromium_launch_args() -> List[str]:

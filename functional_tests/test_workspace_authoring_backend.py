@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.435
+Version: 0.261.487
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,
@@ -148,7 +148,10 @@ def _install_conditional_cosmos(services):
 @pytest.fixture
 def environment(monkeypatch):
     monkeypatch.syspath_prepend(str(APP_ROOT))
-    with delegation_environment() as (delegation, services), ExitStack() as stack:
+    with ExitStack() as stack:
+        # Load the SDK-backed validation dependency before the delegation fixture stubs Azure.
+        _load_module(stack, "model_endpoint_ca_bundles")
+        delegation, services = stack.enter_context(delegation_environment())
         services.settings.update({
             "per_user_semantic_kernel": True, "enable_user_workspace": True,
             "allow_personal_ai_foundry_agents": True, "allow_personal_new_foundry_agents": True,
@@ -252,7 +255,7 @@ def environment(monkeypatch):
         for name in (
             "functions_mcp_operations", "functions_mcp_tool_pinning", "functions_snowflake_operations", "functions_yamcs_operations",
             "functions_databricks_operations", "functions_tableau_operations", "functions_blob_storage_operations",
-            "functions_chart_operations", "functions_msgraph_operations",
+            "functions_chart_operations", "functions_microsoft_decision_operations", "functions_msgraph_operations",
             "functions_azure_endpoint_validation", "functions_icon_utils",
         ):
             modules.append(_load_module(stack, name))
@@ -345,7 +348,7 @@ def environment(monkeypatch):
         for module in modules:
             namespace.update({key: value for key, value in vars(module).items() if not key.startswith("_")})
         namespace.update({"log_event": services.appinsights.log_event, "logging": logging})
-        namespace["build_combined_model_endpoints"] = Mock(return_value=[])
+        namespace["collect_agent_model_endpoints"] = Mock(return_value=[])
         namespace["get_global_agent_settings"] = Mock(return_value="classic settings")
         namespace["get_plugin_types"] = lambda allowed_type_filter: jsonify([
             {"type": name, "display": name.replace("_", " ").title(), "description": f"Configure {name}"}
@@ -551,7 +554,8 @@ def test_every_action_type_create_edit_reload_delete(environment, kind):
     latest = update.get_json()
     assert latest["record"]["metadata"]["custom_configuration"] == {"enabled": False, "maximum": 0, "items": []}
     assert env.client.get(f"/api/user/plugins/{resource['record']['id']}?view=editor").get_json() == latest
-    assert env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 200
+    deleted = env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor")
+    assert deleted.status_code == 200
 
 
 @pytest.mark.parametrize("action_type", ["msgraph", "Microsoft Graph", "MSGraphPlugin"])
@@ -585,7 +589,8 @@ def test_editor_retains_owned_legacy_graph_editing_without_clone_or_type_convers
     })
     assert converted.status_code == 400
     assert len(env.services.writes) == writes
-    assert env.client.delete(f"/api/user/plugins/{stored['id']}?view=editor").status_code == 200
+    deleted = env.client.delete(f"/api/user/plugins/{stored['id']}?view=editor")
+    assert deleted.status_code == 200
     restored = env.client.post("/api/user/plugins?view=editor", json=write_payload(latest["record"]))
     assert restored.status_code == 400
 
@@ -785,7 +790,8 @@ def test_action_type_governance_checks_existing_type_before_change(environment):
     assert env.client.get("/api/user/plugins?view=editor").get_json() == []
     assert env.client.get(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 403
     assert patch_record(env, "plugins", resource, {"type": "http"}).status_code == 403
-    assert env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 403
+    denied_delete = env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor")
+    assert denied_delete.status_code == 403
 
 
 def test_preserves_unavailable_agent_references_and_capabilities(environment):
@@ -852,7 +858,7 @@ def test_editor_settings_are_allowlisted_and_global_endpoint_governance_applies(
         "key_vault_secret_expiration_default_contact_email": "owner@example.test",
     })
     env.services.denied_endpoints.add("blocked")
-    env.namespace["build_combined_model_endpoints"].return_value = [
+    env.namespace["collect_agent_model_endpoints"].return_value = [
         {"id": "allowed", "scope": "global", "models": [{"id": "model"}]},
         {"id": "blocked", "scope": "global", "models": [{"id": "private"}]},
         {"id": "personal", "scope": "user", "models": []},
@@ -915,7 +921,8 @@ def test_delete_is_owned_conditional_and_cleans_only_unreferenced_secrets(enviro
     env.services.settings["enable_key_vault_secret_storage"] = True
     resource = create(env, "plugins", action_payload())
     foreign = env.services.add("actions", "personal", "other", {**action_payload(), "id": "foreign"})
-    assert env.client.delete(f"/api/user/plugins/{foreign['id']}?view=editor").status_code == 404
+    foreign_delete = env.client.delete(f"/api/user/plugins/{foreign['id']}?view=editor")
+    assert foreign_delete.status_code == 404
     response = env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor")
     assert response.status_code == 200 and response.get_json() == {"success": True}
     assert ("actor", resource["record"]["id"]) not in env.services.records["actions", "personal"]
@@ -1166,7 +1173,7 @@ def test_action_only_authors_can_read_reminder_defaults_without_agent_access(env
     env.services.settings["key_vault_secret_expiration_default_lead_days"] = 45
     env.services.settings["semantic_kernel_agents"] = [{"instructions": "private-global-agent"}]
     env.services.settings["gpt_model"] = {"selected": [{"deploymentName": "private-agent-model"}]}
-    env.namespace["build_combined_model_endpoints"].side_effect = AssertionError("Do not load an unavailable agent catalogue.")
+    env.namespace["collect_agent_model_endpoints"].side_effect = AssertionError("Do not load an unavailable agent catalogue.")
     response = env.client.get("/api/user/agent/settings?view=editor")
     assert response.status_code == 200, response.get_json()
     options = response.get_json()
@@ -1176,7 +1183,7 @@ def test_action_only_authors_can_read_reminder_defaults_without_agent_access(env
     assert options["model_endpoints"] == options["builtin_actions"] == []
     assert "private-agent" not in json.dumps(options)
     assert "private-global-agent" not in json.dumps(options)
-    env.namespace["build_combined_model_endpoints"].assert_not_called()
+    env.namespace["collect_agent_model_endpoints"].assert_not_called()
     for method, path in (
         ("get", "/api/user/agents"),
         ("get", f"/api/user/agents/{stored_agent['id']}"),
@@ -1615,7 +1622,8 @@ def test_action_read_and_cleanup_do_not_require_authoring_flags(environment, dis
     assert deleted.status_code == 200 and deleted.get_json() == {"success": True}
     assert not env.services.vault
     assert env.services.records["actions", "global"][provided["id"], provided["id"]] == provided
-    assert env.client.delete("/api/user/plugins/provided-action?view=editor&scope=global").status_code == 403
+    global_delete = env.client.delete("/api/user/plugins/provided-action?view=editor&scope=global")
+    assert global_delete.status_code == 403
 
 
 def test_provided_actions_remain_readable_when_personal_action_governance_denies_authoring(environment):
@@ -1631,7 +1639,8 @@ def test_provided_actions_remain_readable_when_personal_action_governance_denies
     assert [record["id"] for record in listed.get_json()] == [provided["id"]]
     env.services.containers["actions", "personal"].query_items.assert_not_called()
     assert env.client.get(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 403
-    assert env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 403
+    denied_delete = env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor")
+    assert denied_delete.status_code == 403
     assert env.client.get("/api/user/plugins/provided?view=editor&scope=global").status_code == 200
     options = env.client.get("/api/user/agent/settings?view=editor")
     assert options.status_code == 200 and options.get_json()["settings"]["allow_user_plugins"] is False

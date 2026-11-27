@@ -66,6 +66,18 @@ export function isTTSAutoplayEnabled() {
 }
 
 /**
+ * Text to read aloud: the rendered, sanitized message when it is on the page,
+ * otherwise the given text as plain text.
+ */
+function getSpeakableMessageText(messageId, text) {
+    const messageTextDiv = document.querySelector(
+        `[data-message-id="${CSS.escape(String(messageId))}"] .message-text`
+    );
+    const renderedText = messageTextDiv?.innerText || messageTextDiv?.textContent || '';
+    return renderedText.trim() ? renderedText : String(text);
+}
+
+/**
  * Play text-to-speech for a message with chunked delivery for faster start
  */
 export async function playTTS(messageId, text) {
@@ -81,10 +93,9 @@ export async function playTTS(messageId, text) {
         // Update button to show loading state
         updateTTSButton(messageId, 'loading');
         
-        // Strip HTML tags and get plain text
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = text;
-        const plainText = tempDiv.textContent || tempDiv.innerText || '';
+        // Never parse message text as HTML: a detached element would still load images
+        // and run event handlers from markup in it.
+        const plainText = getSpeakableMessageText(messageId, text);
         
         // Split text into word-based chunks
         // Group 1: Progressive chunks (10, 15, 20, 25, 30 words)

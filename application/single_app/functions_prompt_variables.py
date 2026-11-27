@@ -35,6 +35,7 @@ from model_endpoint_clients import (
     AnthropicChatCompletionClient,
     ModelEndpointBehavior,
     OpenAIStyleChatCompletionClient,
+    bind_callable_with_timeout,
 )
 
 
@@ -736,6 +737,7 @@ def resolve_fill_client(settings, user_id):
             endpoint.get("auth") or {}, endpoint.get("provider"), connection.get("endpoint"),
             connection.get("openai_api_version") or connection.get("api_version"), deployment,
             settings=settings, endpoint_config=endpoint, identity_context=context,
+            model_id=str(model.get("id") or "").strip(),
         )
         model_name = model.get("modelName") or model.get("name") or deployment
         return client, deployment, model_name
@@ -956,11 +958,13 @@ def _extract_values(data, evidence, client, deployment, model_name):
         if isinstance(client, AnthropicChatCompletionClient):
             # This adapter uses one requests.post call rather than OpenAI SDK retries.
             client.timeout = MODEL_TIMEOUT_SECONDS
-            bounded_client = client
-        else:
-            sdk_client = client._client if isinstance(client, OpenAIStyleChatCompletionClient) else client
-            bounded_client = sdk_client.with_options(max_retries=0, timeout=MODEL_TIMEOUT_SECONDS)
-        response = bounded_client.chat.completions.create(**params)
+        bounded_create = bind_callable_with_timeout(
+            client,
+            client.chat.completions.create,
+            timeout_seconds=MODEL_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
+        response = bounded_create(**params)
     except Exception as exc:
         _log_failure("model_request", exc)
         raise PromptKnowledgeFillError("The model could not fill these variables. Please try again.", 502) from exc

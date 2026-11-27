@@ -67,7 +67,7 @@ A save error leaves you on the current page so you can retry.
 
 Admins can require one interface. The switch then disappears, but your preference
 is retained for when both become available again. See
-[Interface selection]({{ '/explanation/features/UI_INTERFACE_SELECTION/' | relative_url }}).
+[Interface selection](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/UI_INTERFACE_SELECTION.md).
 
 ### Personal preferences
 

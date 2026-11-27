@@ -1494,22 +1494,27 @@ class ControlCenter {
         this.showToast(message, 'danger');
     }
     
-    showToast(message, type = 'info', allowHtml = false) {
-        const safeMessage = allowHtml
-            ? String(message ?? '')
-            : this.escapeHtml(String(message ?? ''));
+    showToast(message, type = 'info') {
+        // Toasts always render text; callers use "\n" for line breaks instead of markup.
+        const toastElement = document.createElement('div');
+        toastElement.className = `toast align-items-center text-bg-${String(type).replace(/[^a-z-]/gi, '')} border-0`;
+        toastElement.setAttribute('role', 'alert');
+        toastElement.setAttribute('aria-live', 'assertive');
+        toastElement.setAttribute('aria-atomic', 'true');
 
-        // Create toast HTML
-        const toastHtml = `
-            <div class="toast align-items-center text-bg-${type} border-0" role="alert" aria-live="assertive" aria-atomic="true">
-                <div class="d-flex">
-                    <div class="toast-body">
-                        ${safeMessage}
-                    </div>
-                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-                </div>
-            </div>
-        `;
+        const toastLayout = document.createElement('div');
+        toastLayout.className = 'd-flex';
+        const toastBody = document.createElement('div');
+        toastBody.className = 'toast-body';
+        toastBody.style.whiteSpace = 'pre-line';
+        toastBody.textContent = String(message ?? '');
+        const closeButton = document.createElement('button');
+        closeButton.type = 'button';
+        closeButton.className = 'btn-close btn-close-white me-2 m-auto';
+        closeButton.setAttribute('data-bs-dismiss', 'toast');
+        closeButton.setAttribute('aria-label', 'Close');
+        toastLayout.append(toastBody, closeButton);
+        toastElement.append(toastLayout);
         
         // Get or create toast container
         let toastContainer = document.getElementById('toastContainer');
@@ -1521,11 +1526,8 @@ class ControlCenter {
             document.body.appendChild(toastContainer);
         }
         
-        // Add toast to container
-        toastContainer.insertAdjacentHTML('beforeend', toastHtml);
-        
-        // Show toast
-        const toastElement = toastContainer.lastElementChild;
+        // Add and show the toast
+        toastContainer.appendChild(toastElement);
         const toast = new bootstrap.Toast(toastElement);
         toast.show();
         
@@ -2790,6 +2792,8 @@ class ControlCenter {
     formatActivityType(activityType) {
         const typeMap = {
             'user_login': 'User Login',
+            'terms_of_use_accepted': 'Terms of Use Accepted',
+            'terms_of_use_declined': 'Terms of Use Declined',
             'chat_activity': 'Chat Activity',
             'conversation_creation': 'Conversation Created',
             'conversation_deletion': 'Conversation Deleted',
@@ -2836,6 +2840,10 @@ class ControlCenter {
         const activityType = log.activity_type;
         
         switch (activityType) {
+            case 'terms_of_use_accepted':
+            case 'terms_of_use_declined':
+                return `Terms version: ${this.escapeHtml(this.formatTermsOfUseVersion(log.terms_version))}<br><small class="text-muted">Frequency: ${this.escapeHtml(this.formatActivityValue(log.frequency))} · Source: ${this.escapeHtml(this.formatActivityValue(log.source))}</small>`;
+
             case 'user_login':
                 return `Login method: ${log.login_method || log.details?.login_method || 'N/A'}`;
 
@@ -3208,10 +3216,18 @@ class ControlCenter {
         }
     }
 
+    formatTermsOfUseVersion(version) {
+        return Number.isSafeInteger(version) && version > 0 ? `v${version}` : 'Legacy';
+    }
+
     getActivityDetailsForCSV(log) {
         const activityType = log.activity_type;
         
         switch (activityType) {
+            case 'terms_of_use_accepted':
+            case 'terms_of_use_declined':
+                return `Terms version: ${this.formatTermsOfUseVersion(log.terms_version)}, Frequency: ${log.frequency || 'Not recorded'}, Source: ${log.source || 'Not recorded'}`;
+
             case 'user_login':
                 return `Login method: ${this.escapeHtml(log.login_method || log.details?.login_method || 'N/A')}`;
                 
@@ -3452,6 +3468,26 @@ class ControlCenter {
         const summaryFields = [];
 
         switch (log.activity_type) {
+            case 'terms_of_use_accepted':
+            case 'terms_of_use_declined':
+                summaryFields.push(
+                    {
+                        label: 'Terms version',
+                        value: this.formatTermsOfUseVersion(log.terms_version),
+                        columnClass: 'col-12'
+                    },
+                    {
+                        label: 'Frequency',
+                        value: this.formatActivityValue(log.frequency),
+                        columnClass: 'col-md-6'
+                    },
+                    {
+                        label: 'Source',
+                        value: this.formatActivityValue(log.source),
+                        columnClass: 'col-md-6'
+                    }
+                );
+                break;
             case 'token_usage':
                 summaryFields.push(
                     {

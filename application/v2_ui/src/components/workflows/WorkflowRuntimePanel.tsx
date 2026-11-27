@@ -26,6 +26,7 @@ import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
 import { WorkflowPublicationDetails } from './WorkflowPublicationDetails';
 import { WorkflowRepeatProgress } from './WorkflowRepeatProgress';
+import { WorkflowFailureDetails } from './WorkflowFailureDetails';
 
 function runtimeTone(state: string): 'ok' | 'warn' | 'danger' | 'neutral' | 'accent' {
     if (state === 'completed') {
@@ -575,6 +576,7 @@ export function WorkflowRuntimePanel({
                         </div>
                         {gateReference(gate) ? <p className="break-words text-xs text-text-3">{gateReference(gate)}</p> : null}
                         {gate.reason ? <p className="text-xs text-text-2">{gate.reason}</p> : null}
+                        <WorkflowFailureDetails failure={gate} />
                         {repeatGate ? <div className="space-y-2">
                             <p className="rounded-lg bg-warn-soft p-3 text-xs text-warn">
                                 The stop condition is still unmet. The latest validated state is retained, but final Repeat outputs are not available.

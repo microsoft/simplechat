@@ -50,5 +50,5 @@ chat request. Changed permissions or an uncertain checkpoint stop continuation.
 An answer does not replace credential, consent, or outgoing-action approval.
 
 See [Answer an agent's follow-up questions]({{ '/guides/answer-agent-questions/' | relative_url }})
-for the user workflow and [Guided user input]({{ '/explanation/features/GUIDED_USER_INPUT/' | relative_url }})
+for the user workflow and [Guided user input](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/GUIDED_USER_INPUT.md)
 for implementation details.

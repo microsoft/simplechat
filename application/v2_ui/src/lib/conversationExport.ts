@@ -63,6 +63,8 @@ export function summaryModelFields(
     | 'summary_model_endpoint_id'
     | 'summary_model_id'
     | 'summary_model_provider'
+    | 'summary_model_scope_type'
+    | 'summary_model_scope_id'
 > {
     // Reuses the chat picker's own mapping rather than repeating it, so a model selected for
     // a summary resolves to the same endpoint it would have resolved to in the composer.
@@ -73,6 +75,8 @@ export function summaryModelFields(
         summary_model_endpoint_id: identity.model_endpoint_id ?? null,
         summary_model_id: identity.model_id ?? null,
         summary_model_provider: identity.model_provider ?? null,
+        summary_model_scope_type: identity.model_scope_type ?? null,
+        summary_model_scope_id: identity.model_scope_id ?? null,
     };
 }
 

@@ -13,6 +13,7 @@ from azure.cosmos.exceptions import (
     CosmosResourceExistsError,
     CosmosResourceNotFoundError,
 )
+from functions_model_persona import validate_model_persona_settings_document
 from redis.exceptions import RedisError
 
 
@@ -190,6 +191,7 @@ class AppSettingsStore:
                     }
                     candidate["id"] = SETTINGS_ID
                     candidate[SETTINGS_REVISION_FIELD] = int(current.get(SETTINGS_REVISION_FIELD, 0)) + 1
+                    validate_model_persona_settings_document(candidate)
                     if marker is not None:
                         # A guard may wait for another resource's fence. Recheck
                         # ownership after that wait, before issuing the Cosmos CAS.

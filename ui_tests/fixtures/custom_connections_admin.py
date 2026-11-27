@@ -40,7 +40,7 @@ class CustomConnectionsFixture(AdminSettingsFixture):
             "custom_model_endpoint_ca_bundle_path": "",
         })
         self.payload.update({"admin_nav": [group], "field_schema": self.schema, "settings": self.settings})
-        self.descriptors = import_app_module("functions_model_endpoint_providers").get_model_endpoint_provider_ui_options()
+        self.descriptors = import_app_module("functions_model_endpoint_providers").get_model_endpoint_provider_ui_options(routing_schema_version=2)
         self.endpoints = [{
             "id": "stable-endpoint", "name": "Saved Gateway", "provider": "custom", "api_type": "openai",
             "enabled": True, "connection": {"endpoint": "https://gateway.example.test/prefix", "url_mode": "exact"},
@@ -56,6 +56,7 @@ class CustomConnectionsFixture(AdminSettingsFixture):
         }]
         self.connection_writes = []
         self.model_tests = []
+        self.previews = []
 
     def _route(self, route):
         request = route.request
@@ -88,8 +89,22 @@ class CustomConnectionsFixture(AdminSettingsFixture):
                 "capability": capability, "reason": None,
             })
         elif path == "/api/models/test-model":
-            self.model_tests.append(request.post_data_json)
-            route.fulfill(json={"success": True})
+            body = request.post_data_json
+            if body.get("preview_only") is True:
+                from functions_model_endpoint_urls import resolve_model_endpoint_route
+
+                self.previews.append(body)
+                try:
+                    resolved = resolve_model_endpoint_route({**body, "id": body.get("id") or "draft"}, body["model"])
+                except ValueError:
+                    route.fulfill(status=400, json={"error": "Invalid model routing."})
+                else:
+                    route.fulfill(json={"preview_only": True, "resolved": {"method": "POST", "operation_url": resolved["operation_url"]}})
+            else:
+                self.model_tests.append(body)
+                route.fulfill(json={"success": True})
+        elif path == "/api/models/ca-bundle-options" and request.method == "GET":
+            route.fulfill(json={"bundles": []})
         elif path == "/api/models/vision-capability":
             route.fulfill(json={"models": {}})
         elif path == "/custom-classic-admin":
@@ -107,9 +122,12 @@ class CustomConnectionsFixture(AdminSettingsFixture):
             autoescape=select_autoescape(["html"]),
         )
         environment.globals["url_for"] = lambda endpoint, **values: "/static/" + values.get("filename", "")
+        providers = import_app_module("functions_model_endpoint_providers")
         pane = environment.get_template("admin/_panes/model-endpoints.html").render(
             settings={**self.settings, "gpt_model": {"selected": [], "all": []}},
             admin_landing_tab="model-endpoints", custom_model_endpoint_api_types=self.descriptors,
+            model_endpoint_api_types=providers.get_model_endpoint_provider_ui_options(),
+            model_endpoint_routing_api_types=self.descriptors,
         )
         return (
             '<!doctype html><html lang="en"><head><meta charset="UTF-8">'
@@ -130,11 +148,12 @@ class CustomConnectionsFixture(AdminSettingsFixture):
             )
             self.page.goto(f"{ORIGIN}/custom-classic-admin", wait_until="networkidle")
             expect(self.page.locator("#model-endpoints-wrapper")).to_be_visible()
+            assert not self.errors, self.errors
         else:
             assert SPA_INDEX.is_file(), "Build the V2 UI before running this test."
             self.page.goto(f"{ORIGIN}/v2/admin", wait_until="networkidle")
             expect(self.page.get_by_role("region", name="AI Connections", exact=True)).to_be_visible()
 
     def assert_clean(self):
-        assert not self.errors, self.errors
         assert not self.unexpected_requests, self.unexpected_requests
+        assert not self.errors, self.errors

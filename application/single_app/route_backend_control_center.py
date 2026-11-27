@@ -11,6 +11,7 @@ from flask import Response, make_response, stream_with_context
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from config import *
+from flask import make_response
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_control_center_schedule import (
@@ -60,8 +61,10 @@ from functions_control_center_activity_display import (
     search_activity_workspaces,
 )
 from functions_settings import *
+from functions_terms_of_use_config import format_terms_of_use_version
 from functions_logging import *
 from functions_activity_logging import *
+from functions_chat_links import ChatLinkError, ChatLinkServiceError, list_chat_links, revoke_chat_link
 from functions_approvals import *
 from functions_approvals import (
     APPROVAL_STATS_SCAN_LIMIT,
@@ -638,6 +641,13 @@ def build_activity_log_user_map(logs):
 def format_activity_log_details_for_csv(log_record):
     """Format activity log details as a plain string suitable for CSV export."""
     activity_type = log_record.get('activity_type', '')
+
+    if activity_type in {'terms_of_use_accepted', 'terms_of_use_declined'}:
+        return (
+            f"Terms version: {format_terms_of_use_version(log_record.get('terms_version'))}, "
+            f"Frequency: {log_record.get('frequency') or 'Not recorded'}, "
+            f"Source: {log_record.get('source') or 'Not recorded'}"
+        )
 
     if activity_type == 'user_login':
         return f"Login method: {log_record.get('login_method') or log_record.get('details', {}).get('login_method', 'N/A')}"
@@ -3170,6 +3180,73 @@ def get_raw_activity_trends_data(start_date, end_date, charts, token_filters=Non
 
 
 def register_route_backend_control_center(bp):
+    @bp.route('/api/v2/control-center/chat-links', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_chat_links():
+        try:
+            try:
+                page_size = int(request.args.get('page_size', '25'))
+            except ValueError as error:
+                raise ChatLinkError(
+                    'chat_link_invalid',
+                    'Choose a valid page size.',
+                    400,
+                ) from error
+            result = list_chat_links(
+                page_size=page_size,
+                continuation_token=request.args.get('continuation_token') or None,
+            )
+            response = make_response(jsonify(result))
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except ChatLinkError as error:
+            return jsonify({
+                'error': error.code,
+                'message': error.public_message,
+            }), error.status_code
+        except Exception as error:
+            log_event(
+                '[CHAT_LINKS] Control Center could not list chat links.',
+                extra={'error_type': type(error).__name__},
+                level=logging.ERROR,
+            )
+            failure = ChatLinkServiceError()
+            return jsonify({
+                'error': failure.code,
+                'message': failure.public_message,
+            }), failure.status_code
+
+    @bp.route('/api/v2/control-center/chat-links/<reference>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_revoke_chat_link(reference):
+        try:
+            revoke_chat_link(
+                reference,
+                get_current_user_id(),
+                allow_admin=True,
+            )
+            return '', 204
+        except ChatLinkError as error:
+            return jsonify({
+                'error': error.code,
+                'message': error.public_message,
+            }), error.status_code
+        except Exception as error:
+            log_event(
+                '[CHAT_LINKS] Control Center could not revoke a chat link.',
+                extra={'error_type': type(error).__name__},
+                level=logging.ERROR,
+            )
+            failure = ChatLinkServiceError()
+            return jsonify({
+                'error': failure.code,
+                'message': failure.public_message,
+            }), failure.status_code
+
     @bp.route('/api/v2/control-center/activity-logs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required

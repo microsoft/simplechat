@@ -1906,7 +1906,7 @@ def get_global_agent_settings_for_users():
             can_manage_agents = ensure_editor_options_access(user_id, settings)
             result = build_agent_editor_options(
                 user_id, settings,
-                build_combined_model_endpoints(settings, user_id=user_id) if can_manage_agents else [],
+                collect_agent_model_endpoints(settings, user_id=user_id) if can_manage_agents else [],
             )
             response = jsonify(result)
             response.headers['Cache-Control'] = 'no-store'
@@ -2600,7 +2600,8 @@ def orchestration_settings():
             log_event(f"Error updating orchestration settings: {e}", level=logging.ERROR, exceptionTraceback=True)
             return jsonify({'error': 'Failed to update orchestration settings.'}), 500
 
-def build_combined_model_endpoints(settings, user_id=None, group_id=None):
+def collect_agent_model_endpoints(settings, user_id=None, group_id=None):
+    """Collect scoped saved records for server-side projection, not serialization."""
     endpoints = []
     global_endpoints = settings.get("model_endpoints", []) or []
     if user_id:
@@ -2632,6 +2633,7 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
                     enriched["group_id"] = group_id
                     endpoints.append(enriched)
             except PermissionError:
+                # Governance blocks group endpoints for this user; omit them from the picker.
                 pass
     elif user_id:
         if allow_user_custom_endpoints:
@@ -2648,12 +2650,17 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
                     enriched["scope"] = "user"
                     endpoints.append(enriched)
             except PermissionError:
+                # Governance blocks personal endpoints for this user; omit them from the picker.
                 pass
 
-    return sanitize_model_endpoints_for_frontend(
-        filter_model_endpoints_by_capability(endpoints, preserve_empty=True),
-        include_connection_details=False,
-    )
+    return endpoints
+
+
+def build_combined_model_endpoints(settings, user_id=None, group_id=None):
+    # Validate complete saved routes before producing a picker projection that may have no models.
+    endpoints = collect_agent_model_endpoints(settings, user_id=user_id, group_id=group_id)
+    sanitized = sanitize_model_endpoints_for_frontend(endpoints, include_connection_details=False)
+    return filter_model_endpoints_by_capability(sanitized, preserve_empty=True)
 
 
 def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id=None):    

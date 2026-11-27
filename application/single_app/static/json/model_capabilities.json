@@ -1,6 +1,11 @@
 {
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 4,
+  "editorRoutingProfiles": {
+    "default": {"api_type": "openai", "url_mode": "auto"},
+    "anthropic": {"api_type": "anthropic", "url_mode": "auto"},
+    "google": {"api_type": "gemini", "url_mode": "auto"}
+  },
   "lastUpdated": "2026-11-05",
   "description": "SimpleChat model capability, reasoning-policy, embedding-policy, and token-capacity catalog. Published chat/generation limits retain independently verified evidence and hosting profiles. Embedding input, dimension, and batch policies are separate operation contracts and never supply a chat-token budget.",
   "capabilityFields": {
@@ -1385,6 +1390,27 @@
       "title": "Azure OpenAI exact model/version specifications: gpt-6",
       "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#gpt-6",
       "verifiedAt": "2026-10-01"
+    },
+    {
+      "id": "azure-spec-gpt-6-1",
+      "provider": "azure",
+      "title": "Azure OpenAI exact model/version specifications: GPT-6.1",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#gpt-61",
+      "verifiedAt": "2026-11-17"
+    },
+    {
+      "id": "openai-spec-gpt-6-luna",
+      "provider": "openai",
+      "title": "OpenAI GPT-6 Luna reasoning and Chat Completions tool-calling contract",
+      "url": "https://developers.openai.com/api/docs/models/gpt-6-luna",
+      "verifiedAt": "2026-11-18"
+    },
+    {
+      "id": "openai-spec-gpt-6-1-terra",
+      "provider": "openai",
+      "title": "OpenAI GPT-6.1 Terra reasoning and Responses-only tool-calling contract",
+      "url": "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+      "verifiedAt": "2026-11-18"
     },
     {
       "id": "gpt-6-astra-deployed-contract",
@@ -12783,6 +12809,229 @@
         "default_effort": "low",
         "sourceIds": [
           "openai-spec-gpt-6-sol"
+        ]
+      }
+    },
+    {
+      "id": "gpt-6-luna",
+      "provider": "openai",
+      "displayName": "GPT-6 Luna",
+      "aliases": [],
+      "family": "gpt-6",
+      "lifecycle": "current",
+      "releaseDate": "2026-09-22",
+      "foundryChatApi": "openai",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true,
+        "imageGenerationTool": true
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
+      },
+      "notes": [
+        "Azure documents GPT-6 Luna with Chat Completions, Responses, structured outputs, text and image input, text output, function and tool calling, streaming, reasoning and computer use.",
+        "The verified Azure capacity applies to the 2026-09-22 model version currently deployed for staging."
+      ],
+      "sourceIds": [
+        "azure-spec-gpt-6",
+        "azure-reasoning"
+      ],
+      "contextWindow": 1050000,
+      "inputTokenLimit": 922000,
+      "outputTokenLimit": 128000,
+      "verifiedAliases": [],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "azure-spec-gpt-6"
+          ],
+          "verifiedAt": "2026-11-17",
+          "note": "Azure documents 1,050,000 shared-context tokens for gpt-6-luna (2026-09-22)."
+        },
+        "inputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "azure-spec-gpt-6"
+          ],
+          "verifiedAt": "2026-11-17",
+          "note": "Azure documents a 922,000-token maximum input for gpt-6-luna (2026-09-22)."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "azure-spec-gpt-6"
+          ],
+          "verifiedAt": "2026-11-17",
+          "note": "Azure documents 128,000 maximum output tokens for gpt-6-luna (2026-09-22)."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "azure-reasoning"
+          ],
+          "verifiedAt": "2026-11-17",
+          "note": "Input, generated visible output and reasoning share the documented model context. Generation accounting includes reasoning once."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "openai-chat-completions-tools",
+          "provider": "openai",
+          "protocol": "chat_completions",
+          "toolReasoningEfforts": [
+            "none"
+          ],
+          "tokenLimitEvidence": {
+            "toolReasoningEfforts": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-spec-gpt-6-luna"
+              ],
+              "verifiedAt": "2026-11-18",
+              "note": "OpenAI documents Chat Completions function calling for GPT-6 Luna only with reasoning_effort none. The application applies none only when tools are present and no explicit effort was supplied."
+            }
+          }
+        },
+        {
+          "id": "azure-chat-completions-tools",
+          "provider": "azure",
+          "protocol": "chat_completions",
+          "toolReasoningEfforts": [
+            "none"
+          ],
+          "tokenLimitEvidence": {
+            "toolReasoningEfforts": {
+              "status": "verified",
+              "sourceIds": [
+                "openai-spec-gpt-6-luna"
+              ],
+              "verifiedAt": "2026-11-18",
+              "note": "Azure-hosted GPT-6 Luna uses the same reviewed Chat Completions tool and reasoning contract when addressed through the compatible APIM route."
+            }
+          }
+        }
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "medium",
+        "sourceIds": [
+          "openai-spec-gpt-6-luna"
+        ]
+      }
+    },
+    {
+      "id": "gpt-6.1-terra",
+      "provider": "openai",
+      "displayName": "GPT-6.1 Terra",
+      "aliases": [],
+      "family": "gpt-6.1",
+      "lifecycle": "current",
+      "releaseDate": "2026-10-26",
+      "foundryChatApi": "openai",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true,
+        "imageGenerationTool": true
+      },
+      "imageProfiles": {
+        "openai": "openai-responses"
+      },
+      "notes": [
+        "Azure documents GPT-6.1 Terra with Chat Completions, Responses, structured outputs, text and image processing, function and tool calling, reasoning and computer use.",
+        "The verified Azure capacity applies to the 2026-10-26 model version currently deployed for staging."
+      ],
+      "sourceIds": [
+        "azure-spec-gpt-6-1",
+        "azure-reasoning",
+        "openai-spec-gpt-6-1-terra"
+      ],
+      "contextWindow": 1050000,
+      "inputTokenLimit": 922000,
+      "outputTokenLimit": 128000,
+      "verifiedAliases": [],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "azure-spec-gpt-6-1"
+          ],
+          "verifiedAt": "2026-11-17",
+          "note": "Azure documents 1,050,000 shared-context tokens for gpt-6.1-terra (2026-10-26)."
+        },
+        "inputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "azure-spec-gpt-6-1"
+          ],
+          "verifiedAt": "2026-11-17",
+          "note": "Azure documents a 922,000-token maximum input for gpt-6.1-terra (2026-10-26)."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "azure-spec-gpt-6-1"
+          ],
+          "verifiedAt": "2026-11-17",
+          "note": "Azure documents 128,000 maximum output tokens for gpt-6.1-terra (2026-10-26)."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "azure-reasoning"
+          ],
+          "verifiedAt": "2026-11-17",
+          "note": "Input, generated visible output and reasoning share the documented model context. Generation accounting includes reasoning once."
+        }
+      },
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "medium",
+        "sourceIds": [
+          "openai-spec-gpt-6-1-terra"
         ]
       }
     },

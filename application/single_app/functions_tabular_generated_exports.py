@@ -3092,6 +3092,17 @@ def _authorize_tabular_export_run_execution(
     elif run.get('execution_policy') not in (None, 'publish'):
         raise ValueError('The native execution policy is invalid.')
 
+    for context_field in ('model_context', 'chunk_model_context'):
+        model_context = run.get(context_field)
+        if not isinstance(model_context, dict) or model_context.get('routing_schema_version') != 2:
+            continue
+        context_user_id = str(model_context.get('user_id') or '').strip()
+        if context_user_id and context_user_id != user_id:
+            raise PermissionError('Export model context ownership changed')
+        if model_context.get('scope_type') == 'user' and model_context.get('scope_id') != user_id:
+            raise PermissionError('Export model endpoint scope is not authorized')
+        run[context_field] = {**model_context, 'user_id': user_id}
+
     source_authorization = (
         (run or {}).get('source_descriptor')
         or (run or {}).get('source_authorization')
@@ -4259,7 +4270,9 @@ def _resolve_tabular_budget_model_selection(gpt_model, settings, model_context):
         or gpt_model or ''
     ).strip()
     if requested_endpoint_id:
-        endpoint = resolve_model_endpoint_from_context(settings, model_context) or {}
+        endpoint = resolve_model_endpoint_from_context(
+            settings, model_context, authorize=True
+        ) or {}
         if str(endpoint.get('id') or '').strip() != requested_endpoint_id:
             endpoint = {}
         matches = [
@@ -4393,31 +4406,54 @@ def _resolve_tabular_model_token_limits(gpt_model, settings, model_context=None,
     selected_model, selected_endpoint = _resolve_tabular_budget_model_selection(
         chunk_gpt_model, settings, chunk_model_context,
     )
-    context_overrides = _normalize_tabular_model_budget_record(chunk_model_context)
+    explicit_routing = (
+        chunk_model_context.get('routing_schema_version') == 2
+        or selected_endpoint.get('routing_schema_version') == 2
+    )
+    resolved_route = selected_endpoint.get('_resolved_route') if explicit_routing else None
+    if explicit_routing and not isinstance(resolved_route, dict):
+        raise ModelTokenBudgetError('model_context_invalid', 'The selected model route could not be authorized.')
+    context_overrides = {} if explicit_routing else _normalize_tabular_model_budget_record(chunk_model_context)
     model = {
-        'deploymentName': chunk_gpt_model,
+        'deploymentName': resolved_route['request_model'] if explicit_routing else chunk_gpt_model,
         **_normalize_tabular_model_budget_record(selected_model),
         **context_overrides,
     }
     endpoint = _normalize_tabular_model_budget_record(selected_endpoint, include_request_limit=False)
     provider = selected_endpoint.get('provider') or chunk_model_context.get('provider') or 'aoai'
     connection = selected_endpoint.get('connection') or {}
-    api_type = selected_endpoint.get('api_type') or chunk_model_context.get('api_type')
-    inference_endpoint = resolve_model_inference_endpoint(
-        connection.get('endpoint') or chunk_model_context.get('endpoint'),
-        provider=provider, api_type=api_type, model=model,
-        use_responses_api=connection.get('use_responses_api', chunk_model_context.get('use_responses_api')),
-        url_mode=connection.get('url_mode'),
+    api_type = (
+        resolved_route['api_type']
+        if explicit_routing
+        else selected_endpoint.get('api_type') or chunk_model_context.get('api_type')
     )
-    runtime_protocol = infer_model_endpoint_protocol(
-        provider,
-        inference_endpoint,
-        chunk_model_context.get('request_model') or chunk_gpt_model,
-        api_type,
+    inference_endpoint = (
+        resolved_route['operation_url']
+        if explicit_routing
+        else resolve_model_inference_endpoint(
+            connection.get('endpoint') or chunk_model_context.get('endpoint'),
+            provider=provider, api_type=api_type, model=model,
+            use_responses_api=connection.get(
+                'use_responses_api',
+                chunk_model_context.get('use_responses_api'),
+            ),
+            url_mode=connection.get('url_mode'),
+        )
+    )
+    runtime_protocol = (
+        resolved_route['protocol']
+        if explicit_routing
+        else infer_model_endpoint_protocol(
+            provider,
+            inference_endpoint,
+            chunk_model_context.get('request_model') or chunk_gpt_model,
+            api_type,
+        )
     )
     budget_protocol = (
         'messages' if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else
-        model_endpoint_inference_api(inference_endpoint)
+        resolved_route['inference_api'] if explicit_routing
+        else model_endpoint_inference_api(inference_endpoint)
     )
     budget = resolve_model_token_budget(
         model,

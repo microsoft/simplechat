@@ -5,20 +5,22 @@ ALWAYS import app_settings_cache and use app_settings_cache.get_settings_cache()
 App settings are read from Redis or Cosmos, never from a worker-local snapshot.
 Other cache families in this module retain their own fallback policies.
 """
+import copy
 import json
 import logging
-import copy
+import os
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable
+from typing import Callable, Literal
+from uuid import uuid4
 
-from azure.core import MatchConditions
-from azure.core.exceptions import AzureError
+from azure.core.exceptions import AzureError, ServiceRequestError, ServiceResponseError
 from azure.cosmos import ContainerProxy
 from redis import Redis
-from redis.exceptions import RedisError
+from redis.exceptions import ClusterCrossSlotError, NoPermissionError, RedisError, ResponseError
 
 from app_settings_store import AppSettingsStore, SETTINGS_REVISION_FIELD
 
@@ -31,6 +33,23 @@ class AppCacheDependencies:
     governance_container: ContainerProxy
     create_redis_client: Callable[..., Redis]
     log_event: Callable[..., None]
+
+
+class StreamReplayUnconfirmed(RuntimeError):
+    def __init__(self, message: str, *, publish_id: str | None = None):
+        super().__init__(message)
+        self.publish_id = publish_id
+
+
+class StreamDiscoveryUnavailable(AzureError):
+    """Shared stream discovery could not be confirmed."""
+
+
+@dataclass(frozen=True)
+class StreamReplayProgress:
+    event_count: int = 0
+    content_chars: int = 0
+    updated_at: str | None = None
 
 
 _logger = logging.getLogger(__name__)
@@ -50,7 +69,48 @@ CACHE_VERSION_DOC_TYPE = 'cache_version'
 CACHE_VERSION_READ_TTL_SECONDS = 15
 COSMOS_CACHE_ENTRY_DOC_TYPE = 'app_cache_entry'
 COSMOS_CACHE_ENTRY_PREFIX = 'app_cache_entry:'
+COSMOS_REPLAY_INDEX_SETTING = 'enable_cosmos_replay_index_exclusion'
+COSMOS_REPLAY_EVENTS_FIELD = 'stream_replay_events'
+COSMOS_REPLAY_INDEX_PATH = f'/{COSMOS_REPLAY_EVENTS_FIELD}/[]/?'
+COSMOS_REPLAY_PREFERENCE = 'cosmos_replay_excluded_text'
 STREAM_SESSION_APPEND_MAX_ATTEMPTS = 5
+STREAM_CONTENT_PUBLISH = """
+local function metadata(key)
+    local raw = redis.call('GET', key)
+    if not raw then return nil end
+    return cjson.decode(raw)
+end
+local current = metadata(KEYS[1])
+local discovery = metadata(KEYS[3])
+if (current and current.submission_id ~= ARGV[6]) or (discovery and discovery.submission_id ~= ARGV[6]) then
+    return -2
+end
+if not current then return 0 end
+if current.last_content_publish_id == ARGV[5] then return 1 end
+if current.active ~= true or (current.terminal_replacement and current.terminal_replacement ~= cjson.null) then
+    return -2
+end
+if current.cancel_requested then
+    local reason = current.cancel_reason
+    return type(reason) == 'string' and reason ~= '' and reason or 'user_requested'
+end
+if not discovery or current.consumer_detached or not current.first_content_at or current.first_content_at == cjson.null then
+    return 0
+end
+current.event_count = (tonumber(current.event_count) or 0) + 1
+current.content_event_count = (tonumber(current.content_event_count) or 0) + 1
+current.content_chars = (tonumber(current.content_chars) or 0) + tonumber(ARGV[3])
+current.updated_at = ARGV[2]
+current.last_event_at = ARGV[2]
+current.last_content_publish_id = ARGV[5]
+current.status = 'streaming'
+local encoded = cjson.encode(current)
+redis.call('RPUSH', KEYS[2], ARGV[1])
+redis.call('EXPIRE', KEYS[2], ARGV[4])
+redis.call('SET', KEYS[3], encoded, 'EX', ARGV[4])
+redis.call('SET', KEYS[1], encoded, 'EX', ARGV[4])
+return 1
+"""
 update_settings_cache = None
 get_settings_cache = None
 get_app_settings_cache_version = None
@@ -58,6 +118,8 @@ initialize_stream_session_cache = None
 set_stream_session_meta = None
 get_stream_session_meta = None
 append_stream_session_event = None
+publish_stream_content = None
+can_publish_stream_content = None
 get_stream_session_events = None
 delete_stream_session_cache = None
 get_user_ui_settings_cache = None
@@ -67,6 +129,12 @@ get_governance_cache_version = None
 bump_governance_cache_version = None
 app_cache_is_using_redis = False
 _app_cache_lock = threading.Lock()
+_stream_replay_writer = threading.local()
+
+
+def _single_line(value) -> str:
+    """Escape line breaks so request-derived cache keys cannot forge log records."""
+    return str(value).replace("\r", "\\r").replace("\n", "\\n")
 
 
 def create_redis_managed_identity_client(redis_url, settings=None, **redis_kwargs):
@@ -259,7 +327,9 @@ def _set_cosmos_cache_entry(cache_key, payload, ttl_seconds=None, log_event_func
         })
         return True
     except Exception as ex:
-        _logger.warning("[ASC] Cosmos cache fallback write failed for %s: %s", cache_key, ex)
+        _logger.warning(
+            "[ASC] Cosmos cache fallback write failed for %s: %s", _single_line(cache_key), _single_line(ex),
+        )
         if callable(log_event_func):
             log_event_func(
                 "[ASC] Cosmos cache fallback write failed.",
@@ -269,29 +339,42 @@ def _set_cosmos_cache_entry(cache_key, payload, ttl_seconds=None, log_event_func
         return False
 
 
-def _get_cosmos_cache_entry(cache_key, log_event_func=None):
+def _read_cosmos_cache_document(
+    cache_key, log_event_func=None, *, raise_on_error=False, include_expired=False,
+) -> Mapping | None:
     try:
         doc_id = _build_cosmos_cache_doc_id(cache_key)
         doc = _get_cosmos_cache_container().read_item(item=doc_id, partition_key=doc_id)
         expires_at = doc.get('expires_at')
-        if expires_at:
+        if expires_at and not include_expired:
             try:
                 if datetime.fromisoformat(expires_at) <= datetime.utcnow():
                     return None
             except (TypeError, ValueError):
+                if raise_on_error:
+                    raise
                 return None
-        return copy.deepcopy(doc.get('payload'))
+        return doc
     except Exception as ex:
         status_code = getattr(ex, 'status_code', None)
         if status_code != 404:
-            _logger.warning("[ASC] Cosmos cache fallback read failed for %s: %s", cache_key, ex)
+            _logger.warning(
+                "[ASC] Cosmos cache fallback read failed for %s: %s", _single_line(cache_key), _single_line(ex),
+            )
             if callable(log_event_func):
                 log_event_func(
                     "[ASC] Cosmos cache fallback read failed.",
                     extra={'cache_key': cache_key, 'error': str(ex), 'status_code': status_code},
                     level=logging.WARNING,
                 )
+            if raise_on_error:
+                raise
         return None
+
+
+def _get_cosmos_cache_entry(cache_key, log_event_func=None, *, raise_on_error=False):
+    document = _read_cosmos_cache_document(cache_key, log_event_func, raise_on_error=raise_on_error)
+    return copy.deepcopy(document.get('payload')) if document is not None else None
 
 
 def _delete_cosmos_cache_entry(cache_key, log_event_func=None):
@@ -302,7 +385,9 @@ def _delete_cosmos_cache_entry(cache_key, log_event_func=None):
     except Exception as ex:
         status_code = getattr(ex, 'status_code', None)
         if status_code != 404:
-            _logger.warning("[ASC] Cosmos cache fallback delete failed for %s: %s", cache_key, ex)
+            _logger.warning(
+                "[ASC] Cosmos cache fallback delete failed for %s: %s", _single_line(cache_key), _single_line(ex),
+            )
             if callable(log_event_func):
                 log_event_func(
                     "[ASC] Cosmos cache fallback delete failed.",
@@ -375,12 +460,79 @@ def _get_stream_session_events_key(cache_key):
     return f'STREAM_SESSION_EVENTS:{cache_key}'
 
 
+def cosmos_replay_index_policy_state(policy: Mapping) -> Literal["ready", "missing", "conflict"]:
+    if policy.get('indexingMode') != 'consistent' or policy.get('automatic') is not True:
+        return 'conflict'
+    included = {entry['path'] for entry in policy.get('includedPaths') or ()}
+    excluded = {entry['path'] for entry in policy.get('excludedPaths') or ()}
+    replay_paths = (f'/{COSMOS_REPLAY_EVENTS_FIELD}/', f'/"{COSMOS_REPLAY_EVENTS_FIELD}"/')
+    if '/*' not in included or any(
+        path.startswith(replay_paths) for path in included
+    ):
+        return 'conflict'
+    return 'ready' if {COSMOS_REPLAY_INDEX_PATH, f'{replay_paths[1]}[]/?'} & excluded else 'missing'
+
+
+def _stream_replay_field(document: Mapping) -> str:
+    field = COSMOS_REPLAY_EVENTS_FIELD if COSMOS_REPLAY_EVENTS_FIELD in document else 'payload'
+    if not isinstance(document.get(field), list):
+        raise TypeError("Invalid Cosmos stream replay document.")
+    return field
+
+
+def _new_cosmos_replay_field(metadata, log_event_func):
+    if (metadata or {}).get(COSMOS_REPLAY_PREFERENCE) is True:
+        try:
+            policy = _get_cosmos_cache_container().read().get('indexingPolicy')
+            if isinstance(policy, Mapping) and cosmos_replay_index_policy_state(policy) == 'ready':
+                return COSMOS_REPLAY_EVENTS_FIELD
+        except (AzureError, AttributeError, TypeError, KeyError) as error:
+            reason = type(error).__name__
+        else:
+            reason = 'policy_not_verified'
+        if callable(log_event_func):
+            log_event_func(
+                "[ASC] Using indexed replay because the exclusion could not be verified.",
+                extra={'reason': reason}, level=logging.WARNING,
+            )
+    return 'payload'
+
+
+def _stream_replay_progress(document: Mapping) -> StreamReplayProgress:
+    return StreamReplayProgress(
+        event_count=document.get('streamed_content_events', 0),
+        content_chars=document.get('streamed_content_chars', 0),
+        updated_at=document.get('updated_at'),
+    )
+
+
+def get_cosmos_stream_progress(cache_key: str, *, shared=False) -> StreamReplayProgress | None:
+    if not shared:
+        with _app_cache_lock:
+            entry = APP_STREAM_SESSION_EVENTS.get(cache_key)
+            if entry and not _is_expired(entry) and isinstance(entry.get('progress'), StreamReplayProgress):
+                return entry['progress']
+
+    document = _read_cosmos_cache_document(
+        _get_stream_session_events_key(cache_key),
+        log_event_func=_get_cache_dependencies().log_event,
+        raise_on_error=shared,
+        include_expired=True,
+    )
+    # Attempt status can outlive replay delivery. Only return counters, not expired text.
+    return _stream_replay_progress(document) if document is not None else None
+
+
 def _initialize_stream_session_cache_fallback(cache_key, metadata, ttl_seconds=None, log_event_func=None):
     expiration_timestamp = _get_expiration_timestamp(ttl_seconds)
-    existing_events = _get_cosmos_cache_entry(
+    document = _read_cosmos_cache_document(
         _get_stream_session_events_key(cache_key),
         log_event_func=log_event_func,
     )
+    field = _stream_replay_field(document) if document is not None else _new_cosmos_replay_field(
+        metadata, log_event_func,
+    )
+    existing_events = document[field] if document is not None else None
     events_payload = list(existing_events) if isinstance(existing_events, list) else []
     with _app_cache_lock:
         APP_STREAM_SESSION_METADATA[cache_key] = {
@@ -390,6 +542,8 @@ def _initialize_stream_session_cache_fallback(cache_key, metadata, ttl_seconds=N
         APP_STREAM_SESSION_EVENTS[cache_key] = {
             'value': events_payload,
             'expires_at': expiration_timestamp,
+            'progress': _stream_replay_progress(document) if document is not None else None,
+            'field': field,
         }
     _set_cosmos_cache_entry(
         _get_stream_session_metadata_key(cache_key),
@@ -407,14 +561,18 @@ def _initialize_stream_session_cache_fallback(cache_key, metadata, ttl_seconds=N
                 'id': _build_cosmos_cache_doc_id(_get_stream_session_events_key(cache_key)),
                 'type': COSMOS_CACHE_ENTRY_DOC_TYPE,
                 'cache_key': _get_stream_session_events_key(cache_key),
-                'payload': [],
+                field: [],
+                'replay_append_watermarks': {},
                 'created_at': now.isoformat(),
                 'updated_at': now.isoformat(),
                 'expires_at': _serialize_datetime(expires_at),
             })
         except AzureError as ex:
             if getattr(ex, 'status_code', None) != 409:
-                _logger.warning("[ASC] Cosmos stream event initialization failed for %s: %s", cache_key, ex)
+                _logger.warning(
+                    "[ASC] Cosmos stream event initialization failed for %s: %s",
+                    _single_line(cache_key), _single_line(ex),
+                )
                 if callable(log_event_func):
                     log_event_func(
                         "[ASC] Cosmos stream event initialization failed.",
@@ -430,7 +588,7 @@ def _set_stream_session_meta_fallback(cache_key, metadata, ttl_seconds=None, log
             'value': copy.deepcopy(metadata or {}),
             'expires_at': expiration_timestamp,
         }
-    _set_cosmos_cache_entry(
+    return _set_cosmos_cache_entry(
         _get_stream_session_metadata_key(cache_key),
         metadata or {},
         ttl_seconds=ttl_seconds,
@@ -453,88 +611,261 @@ def _get_stream_session_meta_fallback(cache_key, log_event_func=None):
     return copy.deepcopy(cached or {}) if cached is not None else None
 
 
-def _append_stream_session_event_fallback(cache_key, event_text, ttl_seconds=None, log_event_func=None):
+def get_cosmos_stream_discovery(cache_key: str) -> dict | None:
+    """Resolve the current submission without trusting a cached conversation alias."""
+    failure = None
+    try:
+        metadata = _get_cosmos_cache_entry(
+            _get_stream_session_metadata_key(cache_key),
+            log_event_func=_get_cache_dependencies().log_event,
+            raise_on_error=True,
+        )
+    except (AzureError, TypeError, ValueError) as error:
+        failure = error
+        metadata = None
+    if isinstance(metadata, dict):
+        return metadata
+    if metadata is not None:
+        _logger.warning("[ASC] Invalid Cosmos stream discovery record.")
+        raise StreamDiscoveryUnavailable("Invalid stream discovery record.")
+
+    # Legacy streams store their actual metadata under the conversation key.
+    with _app_cache_lock:
+        entry = APP_STREAM_SESSION_METADATA.get(cache_key)
+        if entry and not _is_expired(entry) and not entry['value'].get('submission_id'):
+            return copy.deepcopy(entry['value'])
+    if failure is not None:
+        raise StreamDiscoveryUnavailable("Stream discovery read could not be confirmed.") from failure
+    return None
+
+
+def initialize_cosmos_stream_discovery(cache_key: str, submission_id: str, ttl_seconds: int) -> None:
+    """Publish discovery before the admitted attempt starts streaming."""
+    key = _get_stream_session_metadata_key(cache_key)
+    for _ in range(2):
+        if _set_cosmos_cache_entry(
+            key, {'submission_id': submission_id}, ttl_seconds=ttl_seconds,
+            log_event_func=_get_cache_dependencies().log_event,
+        ):
+            return
+    raise StreamDiscoveryUnavailable("Stream discovery initialization could not be confirmed.")
+
+
+def _renew_cosmos_stream_expiry(
+    cache_key: str, submission_id: str, ttl_seconds: int, *, active_only: bool,
+) -> Literal["renewed", "superseded", "missing"]:
+    doc_id = _build_cosmos_cache_doc_id(_get_stream_session_metadata_key(cache_key))
+    now = datetime.utcnow()
+    predicate = f'FROM c WHERE c.payload.submission_id = {json.dumps(submission_id)}'
+    if active_only:
+        predicate += ' AND c.payload.active = true'
+    try:
+        _get_cosmos_cache_container().patch_item(
+            item=doc_id,
+            partition_key=doc_id,
+            patch_operations=[
+                {'op': 'set', 'path': '/updated_at', 'value': now.isoformat()},
+                {'op': 'set', 'path': '/expires_at', 'value': (now + timedelta(seconds=ttl_seconds)).isoformat()},
+            ],
+            filter_predicate=predicate,
+            no_response=True,
+        )
+    except AzureError as error:
+        status = getattr(error, 'status_code', None)
+        if status == 412:
+            return "superseded"
+        kind = "metadata" if active_only else "discovery"
+        _get_cache_dependencies().log_event(
+            f"[ASC] Cosmos stream {kind} renewal failed.",
+            extra={'error_type': type(error).__name__, 'status_code': status},
+            level=logging.WARNING,
+        )
+        if status == 404:
+            return "missing"
+        raise StreamDiscoveryUnavailable("Stream cache renewal could not be confirmed.") from error
+    return "renewed"
+
+
+def renew_cosmos_stream_discovery(
+    cache_key: str, submission_id: str, ttl_seconds: int,
+) -> Literal["renewed", "superseded", "missing"]:
+    """Extend a pointer only while it belongs to the same attempt."""
+    return _renew_cosmos_stream_expiry(cache_key, submission_id, ttl_seconds, active_only=False)
+
+
+def renew_cosmos_stream_metadata(
+    cache_key: str, submission_id: str, ttl_seconds: int,
+) -> Literal["renewed", "superseded", "missing"]:
+    expires_at = _get_expiration_timestamp(ttl_seconds)
+    result = _renew_cosmos_stream_expiry(cache_key, submission_id, ttl_seconds, active_only=True)
+    if result == "renewed":
+        with _app_cache_lock:
+            entry = APP_STREAM_SESSION_METADATA.get(cache_key)
+            if entry and entry['value'].get('submission_id') == submission_id and entry['value'].get('active'):
+                if entry['expires_at'] is not None:
+                    entry['expires_at'] = max(entry['expires_at'], expires_at)
+    return result
+
+
+def _next_stream_replay_sequence() -> tuple[str, int]:
+    # This thread cannot start its next append while an earlier reply is being reconciled.
+    pid = os.getpid()
+    if getattr(_stream_replay_writer, 'pid', None) != pid:
+        _stream_replay_writer.pid = pid
+        _stream_replay_writer.id = uuid4().hex
+        _stream_replay_writer.sequence = 0
+    _stream_replay_writer.sequence += 1
+    return _stream_replay_writer.id, _stream_replay_writer.sequence
+
+
+def _append_stream_session_event_fallback(
+    cache_key, event_text, ttl_seconds=None, log_event_func=None, *, require_shared=False,
+    progress_chars: int | None = None,
+):
     expiration_timestamp = _get_expiration_timestamp(ttl_seconds)
     cache_entry_key = _get_stream_session_events_key(cache_key)
     doc_id = _build_cosmos_cache_doc_id(cache_entry_key)
     container = _get_cosmos_cache_container()
-    events_payload = None
+    with _app_cache_lock:
+        field = APP_STREAM_SESSION_EVENTS.get(cache_key, {}).get('field', 'payload')
+    writer_id, sequence = _next_stream_replay_sequence()
+    watermark = f'c.replay_append_watermarks["{writer_id}"]'
+    initialize_watermarks = False
+    now = datetime.utcnow()
+    expires_at = (
+        now + timedelta(seconds=max(int(ttl_seconds), 0))
+        if ttl_seconds is not None else None
+    )
+    updated_at = now.isoformat()
+    expiry = _serialize_datetime(expires_at)
+    append_operations = [
+        {'op': 'set', 'path': '/updated_at', 'value': updated_at},
+        {'op': 'set', 'path': '/expires_at', 'value': expiry},
+    ]
+    progress = {}
+    if progress_chars is not None:
+        progress = {'streamed_content_events': 1, 'streamed_content_chars': progress_chars}
+        append_operations.extend(
+            {'op': 'incr', 'path': f'/{field}', 'value': value} for field, value in progress.items()
+        )
 
     for _ in range(STREAM_SESSION_APPEND_MAX_ATTEMPTS):
-        now = datetime.utcnow()
-        expires_at = None
-        if ttl_seconds is not None:
-            expires_at = now + timedelta(seconds=max(int(ttl_seconds), 0))
         try:
-            document = container.read_item(item=doc_id, partition_key=doc_id)
-            events_payload = list(document.get('payload') or [])
-            events_payload.append(event_text)
-            document['payload'] = events_payload
-            document['updated_at'] = now.isoformat()
-            document['expires_at'] = _serialize_datetime(expires_at)
-            container.replace_item(
-                item=doc_id,
-                body=document,
-                etag=document.get('_etag'),
-                match_condition=MatchConditions.IfNotModified,
+            marker = (
+                {'op': 'set', 'path': '/replay_append_watermarks', 'value': {writer_id: sequence}}
+                if initialize_watermarks else
+                {'op': 'set', 'path': f'/replay_append_watermarks/{writer_id}', 'value': sequence}
+            )
+            watermark_condition = (
+                'NOT IS_DEFINED(c.replay_append_watermarks)'
+                if initialize_watermarks else
+                'IS_OBJECT(c.replay_append_watermarks) '
+                f'AND (NOT IS_DEFINED({watermark}) OR {watermark} < {sequence})'
+            )
+            document = container.patch_item(
+                item=doc_id, partition_key=doc_id,
+                patch_operations=[{'op': 'add', 'path': f'/{field}/-', 'value': event_text}, *append_operations, marker],
+                filter_predicate=f'FROM c WHERE IS_ARRAY(c.{field}) AND ({watermark_condition})',
             )
         except AzureError as ex:
             status_code = getattr(ex, 'status_code', None)
-            if status_code in {404, 409, 412}:
-                if status_code == 404:
-                    try:
-                        container.create_item({
-                            'id': doc_id,
-                            'type': COSMOS_CACHE_ENTRY_DOC_TYPE,
-                            'cache_key': cache_entry_key,
-                            'payload': [event_text],
-                            'created_at': now.isoformat(),
-                            'updated_at': now.isoformat(),
-                            'expires_at': _serialize_datetime(expires_at),
-                        })
-                    except AzureError as create_error:
-                        if getattr(create_error, 'status_code', None) in {409, 412}:
-                            continue
-                        ex = create_error
-                    else:
-                        events_payload = [event_text]
-                        break
+            if status_code == 404:
+                if progress_chars is not None:
+                    _logger.warning("[ASC] Cosmos stream replay document is missing after publication started.")
+                    if callable(log_event_func):
+                        log_event_func(
+                            "[ASC] Cosmos stream replay document is missing after publication started.",
+                            level=logging.WARNING,
+                        )
+                    raise StreamReplayUnconfirmed("Cosmos stream publication could not be confirmed.") from ex
+                try:
+                    document = container.create_item({
+                        'id': doc_id,
+                        'type': COSMOS_CACHE_ENTRY_DOC_TYPE,
+                        'cache_key': cache_entry_key,
+                        field: [event_text],
+                        'replay_append_watermarks': {writer_id: sequence},
+                        'created_at': updated_at,
+                        'updated_at': updated_at,
+                        'expires_at': expiry,
+                        **progress,
+                    })
+                except AzureError as create_error:
+                    if getattr(create_error, 'status_code', None) in {409, 412} or isinstance(
+                        create_error, (ServiceRequestError, ServiceResponseError)
+                    ):
+                        initialize_watermarks = False
+                        continue
+                    ex = create_error
                 else:
+                    break
+            elif status_code == 412:
+                try:
+                    document = container.read_item(item=doc_id, partition_key=doc_id)
+                except AzureError as read_error:
+                    if getattr(read_error, 'status_code', None) == 404 or isinstance(
+                        read_error, (ServiceRequestError, ServiceResponseError)
+                    ):
+                        initialize_watermarks = False
+                        continue
+                    ex = read_error
+                else:
+                    field = _stream_replay_field(document)
+                    watermarks = document.get('replay_append_watermarks')
+                    if isinstance(watermarks, dict) and watermarks.get(writer_id) == sequence:
+                        break
+                    initialize_watermarks = 'replay_append_watermarks' not in document
                     continue
-            _logger.warning("[ASC] Cosmos stream event append failed for %s: %s", cache_key, ex)
+            elif isinstance(ex, (ServiceRequestError, ServiceResponseError)) or (status_code or 0) >= 500:
+                continue
+            _logger.warning("[ASC] Cosmos stream event append failed (%s, status %s).",
+                            type(ex).__name__, getattr(ex, 'status_code', None))
             if callable(log_event_func):
                 log_event_func(
                     "[ASC] Cosmos stream event append failed.",
-                    extra={'cache_key': cache_key, 'error': str(ex), 'status_code': status_code},
+                    extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
                     level=logging.WARNING,
                 )
+            if require_shared:
+                raise StreamReplayUnconfirmed("Cosmos stream publication could not be confirmed.") from ex
+            document = None
             break
         else:
             break
     else:
-        events_payload = None
+        _logger.warning("[ASC] Cosmos stream event append retry budget exhausted.")
+        if callable(log_event_func):
+            log_event_func("[ASC] Cosmos stream event append retry budget exhausted.", level=logging.WARNING)
+        if require_shared:
+            raise StreamReplayUnconfirmed("Cosmos stream publication could not be confirmed.")
+        document = None
 
-    if not isinstance(events_payload, list):
-        with _app_cache_lock:
+    with _app_cache_lock:
+        if document is not None:
+            field = _stream_replay_field(document)
+            events_payload = list(document[field])
+            replay_progress = _stream_replay_progress(document)
+        else:
             entry = APP_STREAM_SESSION_EVENTS.get(cache_key)
             events_payload = list(entry.get('value') or []) if entry and not _is_expired(entry) else []
             events_payload.append(event_text)
-
-    with _app_cache_lock:
+            replay_progress = entry.get('progress') if entry and not _is_expired(entry) else None
         APP_STREAM_SESSION_EVENTS[cache_key] = {
             'value': events_payload,
             'expires_at': expiration_timestamp,
+            'progress': replay_progress,
+            'field': field,
         }
 
 
 def _get_stream_session_events_fallback(cache_key, start_index=0, log_event_func=None):
     start = int(start_index or 0)
-    cached = _get_cosmos_cache_entry(
+    document = _read_cosmos_cache_document(
         _get_stream_session_events_key(cache_key),
         log_event_func=log_event_func,
     )
-    if cached is not None:
-        return list(cached[start:])
+    if document is not None:
+        return list(document[_stream_replay_field(document)][start:])
 
     with _app_cache_lock:
         entry = APP_STREAM_SESSION_EVENTS.get(cache_key)
@@ -607,6 +938,8 @@ def _assign_fallback_cache_functions(log_event_func=None):
     global update_settings_cache, get_settings_cache
     global initialize_stream_session_cache, set_stream_session_meta, get_stream_session_meta
     global append_stream_session_event, get_stream_session_events, delete_stream_session_cache
+    global publish_stream_content
+    global can_publish_stream_content
     global get_user_ui_settings_cache, set_user_ui_settings_cache, delete_user_ui_settings_cache
     global get_app_settings_cache_version
     global get_governance_cache_version, bump_governance_cache_version
@@ -615,6 +948,8 @@ def _assign_fallback_cache_functions(log_event_func=None):
 
     app_cache_is_using_redis = False
     APP_REDIS_CLIENT = None
+    publish_stream_content = None
+    can_publish_stream_content = None
     get_settings_store()
     initialize_stream_session_cache = lambda cache_key, metadata, ttl_seconds=None: (
         _initialize_stream_session_cache_fallback(
@@ -636,12 +971,14 @@ def _assign_fallback_cache_functions(log_event_func=None):
         cache_key,
         log_event_func=log_event_func,
     )
-    append_stream_session_event = lambda cache_key, event_text, ttl_seconds=None: (
+    append_stream_session_event = lambda cache_key, event_text, ttl_seconds=None, *, require_shared=False, progress_chars=None: (
         _append_stream_session_event_fallback(
             cache_key,
             event_text,
             ttl_seconds=ttl_seconds,
             log_event_func=log_event_func,
+            require_shared=require_shared,
+            progress_chars=progress_chars,
         )
     )
     get_stream_session_events = lambda cache_key, start_index=0: _get_stream_session_events_fallback(
@@ -688,6 +1025,8 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
     global APP_GOVERNANCE_CACHE_VERSION, APP_GOVERNANCE_SHARED_VERSION_CACHE
     global initialize_stream_session_cache, set_stream_session_meta, get_stream_session_meta
     global append_stream_session_event, get_stream_session_events, delete_stream_session_cache
+    global publish_stream_content
+    global can_publish_stream_content
     global get_user_ui_settings_cache, set_user_ui_settings_cache, delete_user_ui_settings_cache
     global get_app_settings_cache_version
     global get_governance_cache_version, bump_governance_cache_version
@@ -699,6 +1038,8 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
     store = configure_settings_store(settings, dependencies=dependencies)
     app_cache_is_using_redis = False
     APP_REDIS_CLIENT = None
+    publish_stream_content = None
+    can_publish_stream_content = None
 
     if use_redis:
         redis_url = settings.get('redis_url', '').strip()
@@ -755,8 +1096,7 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
                 pipeline.set(metadata_key, json.dumps(metadata))
                 if ttl_seconds is not None:
                     pipeline.expire(metadata_key, int(ttl_seconds))
-                    if redis_client.exists(events_key):
-                        pipeline.expire(events_key, int(ttl_seconds))
+                    pipeline.expire(events_key, int(ttl_seconds))
                 pipeline.execute()
             except Exception as ex:
                 _log_cache_fallback('set_stream_session_meta', ex, log_event_func=log_event)
@@ -775,7 +1115,7 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
                 _log_cache_fallback('get_stream_session_meta', ex, log_event_func=log_event)
                 return _get_stream_session_meta_fallback(cache_key, log_event_func=log_event)
 
-        def append_stream_session_event_redis(cache_key, event_text, ttl_seconds=None):
+        def append_stream_session_event_redis(cache_key, event_text, ttl_seconds=None, *, require_shared=False):
             try:
                 metadata_key = get_stream_session_metadata_key(cache_key)
                 events_key = get_stream_session_events_key(cache_key)
@@ -783,10 +1123,12 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
                 pipeline.rpush(events_key, event_text)
                 if ttl_seconds is not None:
                     pipeline.expire(events_key, int(ttl_seconds))
-                    if redis_client.exists(metadata_key):
-                        pipeline.expire(metadata_key, int(ttl_seconds))
+                    pipeline.expire(metadata_key, int(ttl_seconds))
                 pipeline.execute()
             except Exception as ex:
+                if require_shared:
+                    _logger.warning("[ASC] Redis stream append could not be confirmed (%s).", type(ex).__name__)
+                    raise StreamReplayUnconfirmed("Redis stream publication could not be confirmed.") from ex
                 _log_cache_fallback('append_stream_session_event', ex, log_event_func=log_event)
                 _append_stream_session_event_fallback(
                     cache_key,
@@ -794,6 +1136,65 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
                     ttl_seconds=ttl_seconds,
                     log_event_func=log_event,
                 )
+
+        script_available = True
+
+        def can_publish_stream_content_redis():
+            return script_available
+
+        def publish_stream_content_redis(
+            cache_key, discovery_key, submission_id, event_text, event_at, content_chars, ttl_seconds,
+        ):
+            """Return 1 for published, 0 for legacy, -2 for closed, or the Stop reason."""
+            nonlocal script_available
+            if not script_available:
+                return 0
+            keys = (
+                get_stream_session_metadata_key(cache_key),
+                get_stream_session_events_key(cache_key),
+                get_stream_session_metadata_key(discovery_key),
+            )
+            publish_id = uuid4().hex
+            try:
+                result = redis_client.eval(
+                    STREAM_CONTENT_PUBLISH, len(keys), *keys,
+                    event_text, event_at, content_chars, int(ttl_seconds), publish_id, submission_id,
+                )
+            except RedisError as error:
+                if isinstance(error, ResponseError):
+                    message = str(error).lower()
+                    if (
+                        isinstance(error, ClusterCrossSlotError)
+                        or message.startswith(("unknown command 'eval'", "crossslot"))
+                        or (isinstance(error, NoPermissionError) and "run the 'eval' command" in message)
+                    ):
+                        script_available = False
+                        _logger.warning("[ASC] Redis stream script unavailable; using separate cache operations.")
+                        return 0
+                # Lua has no rollback. Only the marker written after the replay and discovery
+                # writes confirms that this publication reached the end of the script.
+                try:
+                    raw = redis_client.get(keys[0])
+                    current = json.loads(raw) if raw else None
+                except (RedisError, ValueError):
+                    current = None
+                if (
+                    isinstance(current, dict)
+                    and current.get('submission_id') == submission_id
+                    and current.get('last_content_publish_id') == publish_id
+                ):
+                    return 1
+                _logger.warning("[ASC] Redis stream publication could not be confirmed (%s).",
+                                type(error).__name__)
+                raise StreamReplayUnconfirmed(
+                    "Redis stream publication could not be confirmed.", publish_id=publish_id,
+                ) from error
+            if isinstance(result, (bytes, str)):
+                return result.decode('utf-8') if isinstance(result, bytes) else result
+            if type(result) is int and result in (1, 0, -2):
+                return result
+            _logger.warning("[ASC] Redis returned an invalid stream publication result.")
+            raise StreamReplayUnconfirmed("Redis stream publication could not be confirmed.", publish_id=publish_id)
 
         def get_stream_session_events_redis(cache_key, start_index=0):
             try:
@@ -884,6 +1285,8 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
         set_stream_session_meta = set_stream_session_meta_redis
         get_stream_session_meta = get_stream_session_meta_redis
         append_stream_session_event = append_stream_session_event_redis
+        publish_stream_content = publish_stream_content_redis
+        can_publish_stream_content = can_publish_stream_content_redis
         get_stream_session_events = get_stream_session_events_redis
         delete_stream_session_cache = delete_stream_session_cache_redis
         get_user_ui_settings_cache = get_user_ui_settings_cache_redis
@@ -1044,9 +1447,11 @@ def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
         get_stream_session_meta = lambda cache_key: _get_stream_session_meta_fallback(
             cache_key, log_event_func=log_event,
         )
-        append_stream_session_event = lambda cache_key, event_text, ttl_seconds=None: (
+        append_stream_session_event = lambda cache_key, event_text, ttl_seconds=None, *, require_shared=False, progress_chars=None: (
             _append_stream_session_event_fallback(
                 cache_key, event_text, ttl_seconds=ttl_seconds, log_event_func=log_event,
+                require_shared=require_shared,
+                progress_chars=progress_chars,
             )
         )
         get_stream_session_events = lambda cache_key, start_index=0: _get_stream_session_events_fallback(

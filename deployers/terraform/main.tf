@@ -378,6 +378,7 @@ locals {
   cosmos_containers = {
     conversations                      = { partition_key_path = "/id", default_ttl = null }
     messages                           = { partition_key_path = "/conversation_id", default_ttl = null }
+    chat_links                         = { partition_key_path = "/id", default_ttl = -1 }
     tabular_export_runs                = { partition_key_path = "/user_id", default_ttl = null }
     data_management_jobs               = { partition_key_path = "/id", default_ttl = null }
     data_management_job_items          = { partition_key_path = "/job_id", default_ttl = null }

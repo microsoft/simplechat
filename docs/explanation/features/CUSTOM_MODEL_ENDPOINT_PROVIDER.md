@@ -1,4 +1,4 @@
-# Custom Model Endpoint Provider (v0.261.107)
+# Custom Model Endpoint Provider (v0.261.428)
 
 ## Overview
 
@@ -7,10 +7,21 @@ without disguising it as an Azure resource. The connection owns its endpoint,
 authentication, API contract, and manually configured models. Chat and images can
 reference the same connection while keeping independent defaults.
 
-Implemented in version: **0.261.107** for the React v2/shared-image forward-port.
+Implemented in version: **0.261.107** for the React v2/shared-image forward-port and
+integrated with explicit endpoint routing in **0.261.428**.
 Application versioning is tracked in `application/single_app/config.py`.
 The implementation reuses the Custom foundation from #1437 without replacing newer
 shared-connection behavior.
+
+Current extensions in **0.261.052**: per-model protocol/path choices, clearer
+catalog/request identity and effective capacities, shared CA trust selection,
+and a named [GenAI.mil profile](./GENAI_MIL_MODEL_PROFILE.md). Historical API-key
+limitations below describe the original implementation; generic Custom now
+supports the [documented authentication schemes](./CUSTOM_MODEL_ENDPOINT_AUTH.md).
+Generic Custom discovery remains unavailable; GenAI.mil has its protected,
+documented `/v1/models` discovery contract.
+
+**Issue:** [#1222](https://github.com/microsoft/simplechat/issues/1222)
 
 The original global, personal, and group Custom chat provider was implemented in
 **0.250.172** for [#1222](https://github.com/microsoft/simplechat/issues/1222).

@@ -253,6 +253,7 @@ from functions_orchestration_schema import (
     PLAN_STATUS_COMPLETED,
     PLAN_STATUS_FAILED,
     PLAN_STATUS_RUNNING,
+    PLAN_STATUS_WAITING,
     LegacyPlanError,
     PlanValidationError,
     apply_plan_edits,
@@ -2231,6 +2232,107 @@ def _automatic_continuation(record, recovery, user_id, settings):
 
 _CONTINUATION_RELEASE_CHECKS = 10
 _CONTINUATION_RELEASE_PAUSE_SECONDS = 1.0
+# How long the request's worker waits between tries to continue its own paused run. The pause
+# grows with each try so pending work that takes long is not asked about every few seconds.
+_SESSION_CONTINUATION_PAUSE_SECONDS = 5.0
+_SESSION_CONTINUATION_MAX_PAUSE_SECONDS = 30.0
+
+
+def _session_continuation_due(record):
+    """Whether this paused run is one the signed-in request, not the scheduler, continues."""
+    if (
+        not isinstance(record, dict) or record.get('status') != PLAN_STATUS_WAITING
+        or record.get('continuation_requires_session') is not True
+        or record.get('cancellation_requested_at')
+    ):
+        return False
+    if any(
+        row.get('status') == 'waiting' and (row.get('wait') or {}).get('kind') in ('action_credentials', 'user_input')
+        for row in record.get('execution_steps') or [] if isinstance(row, dict)
+    ):
+        # The user's answer continues that wait, through its own signed-in request.
+        return False
+    try:
+        deadline = datetime.fromisoformat(record.get('execution_deadline_at'))
+    except (TypeError, ValueError):
+        return False
+    # Past its deadline the scheduler closes it as timed out; nothing is continued here.
+    return deadline.tzinfo is not None and deadline > datetime.now(timezone.utc)
+
+
+def _continue_waiting_run(run_id, conversation_id, user_id):
+    """Continue a paused run whose results need this request's signed-in session.
+
+    Called on the run's own worker after its stream ended, inside a copy of the request context
+    that started it, like the next attempt of a failed run. A run pauses when a step's work is
+    still pending. The scheduler resumes a paused run without a session, which cannot read a
+    result that names an external source, so it leaves such a run alone and this continues it:
+    the same claim the scheduler makes, the same saved-wait checkpoints, with the identity the
+    request already holds. It does not depend on any page staying open. If this worker is lost
+    the run stays paused until its deadline closes it.
+    """
+    from functions_orchestration_continuation import ContinuationCheckpoints, claim_run_continuation
+    from functions_orchestration_execution import HarnessExecutionError, prepare_harness_execution
+
+    authorize = lambda: _authorize_context_conversation(conversation_id, user_id)
+    correlation = workflow_log_context(run_id=run_id, conversation_id=conversation_id)
+    tries = 0
+    while True:
+        record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id, strict=True)
+        if not _session_continuation_due(record):
+            return
+        tries += 1
+        time.sleep(min(_SESSION_CONTINUATION_PAUSE_SECONDS * tries, _SESSION_CONTINUATION_MAX_PAUSE_SECONDS))
+        try:
+            owned = claim_run_continuation(
+                run_id, user_id, conversation_id, authorize=authorize,
+                message_container=cosmos_messages_container,
+            )
+        except (CheckpointError, RecoveryError, ConversationContextError, PermissionError) as exc:
+            log_event(
+                '[ORCHESTRATION_RUNS] A paused run could not be claimed by its request.',
+                level=logging.WARNING, extra={
+                    **correlation, 'stage': 'session_continuation',
+                    'validation_code': getattr(exc, 'code', None), 'error_type': type(exc).__name__,
+                },
+            )
+            return
+        if owned is None:
+            # Still released by its last owner, already claimed, or no longer waiting: read again.
+            continue
+        record, lease = owned
+        try:
+            settings = get_settings()
+            snapshot = _conversation_context_for_run(record, user_id, settings)
+            execution = prepare_harness_execution(
+                {**record, 'conversation_context': snapshot}, settings=settings,
+                identity_context=_request_identity(user_id),
+                execution_identity=capture_execution_identity(user_id, conversation_id),
+                lease=lease, checkpoint_factory=ContinuationCheckpoints,
+            )
+        except HarnessExecutionError as exc:
+            # Preparation saved its own outcome on the run.
+            log_event(
+                '[ORCHESTRATION_RUNS] A paused run could not be continued by its request.',
+                level=logging.WARNING, extra={
+                    **correlation, 'stage': 'session_continuation', 'execution_code': exc.code,
+                    'durable_status': exc.durable_status, 'error_type': type(exc).__name__,
+                },
+            )
+            return
+        except BaseException:
+            lease.close()
+            raise
+        log_event(
+            '[ORCHESTRATION_RUNS] A paused run is continued by the request that started it.',
+            extra={**correlation, 'stage': 'session_continuation', 'attempt': tries},
+        )
+        try:
+            # Reading the execution to its end is what runs it; nobody is listening.
+            for _frame in execution.execute(emit=lambda _frame: None):
+                pass
+        finally:
+            execution.close()
 
 
 def _continue_failed_run(run_id, conversation_id, user_id, run_plan):
@@ -3357,6 +3459,7 @@ def register_route_backend_orchestration(bp):
                         identity_context=planning_identity,
                     )
                     seeds['model'] = planner_model.answer_model_selection()
+                    seeds['apply_model_persona'] = planner_model.answer_model_persona_enabled()
                     turn_context['original_seeds'] = {
                         **(turn_context.get('original_seeds') or seeds),
                         'model': dict(seeds['model']),
@@ -4372,11 +4475,25 @@ def register_route_backend_orchestration(bp):
         except PlanValidationError as exc:
             payload, status = _plan_edit_error(exc)
             return jsonify(payload), status
-        after = None
-        if reactive_loop_enabled(settings):
-            # Bound to this request's identity now; it runs after the attempt, on its worker.
-            @copy_current_request_context
-            def after():
+        # Bound to this request's identity now; it runs after the attempt, on its worker. A run
+        # that paused on results needing this session is continued first; then a failed attempt
+        # is followed by its next one, which is also how a run that fails after its pause is.
+        @copy_current_request_context
+        def after():
+            try:
+                _continue_waiting_run(run_id, conversation_id or record['conversation_id'], user_id)
+            except Exception as exc:
+                # The run keeps whatever state it saved; a failed attempt is still followed.
+                log_event(
+                    '[ORCHESTRATION_RUNS] A paused run could not be continued by its request.',
+                    level=logging.ERROR, extra={
+                        **workflow_log_context(
+                            run_id=run_id, conversation_id=conversation_id or record['conversation_id'],
+                        ),
+                        'stage': 'session_continuation', **exception_log_fields(exc),
+                    },
+                )
+            if reactive_loop_enabled(settings):
                 _continue_failed_run(run_id, conversation_id or record['conversation_id'], user_id, _run_saved_plan)
 
         return _prepare_execution_stream(

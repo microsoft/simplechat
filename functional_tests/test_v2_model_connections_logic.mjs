@@ -1,9 +1,10 @@
 // test_v2_model_connections_logic.mjs
 //
 // Runtime test for the V2 global model connection form logic.
-// Version: 0.261.410
+// Version: 0.261.461
 // Implemented in: 0.261.059; embeddings added in 0.261.106
 // Automatic Foundry routing and model presets: 0.261.410
+// Model persona controls and Unicode validation: 0.261.461
 //
 // The classic connection editor decided which fields a provider and auth type needed by
 // toggling `d-none` across two dozen elements from three separate listeners, and reported
@@ -41,6 +42,7 @@ const {
 } = await import('../application/v2_ui/src/lib/modelConnections.ts');
 const { isNativeFoundryEndpoint, usesMaiChatCompletions } = await import('../application/v2_ui/src/lib/modelInference.ts');
 const { findAutomaticCatalogProfile } = await import('../application/v2_ui/src/lib/modelCatalog.ts');
+const { buildModelIdentity } = await import('../application/v2_ui/src/lib/models.ts');
 
 const checks = [];
 function check(name, fn) {
@@ -162,6 +164,57 @@ check('canonical Custom transport controls and embedding aliases stay distinct',
 
 check('a complete Azure OpenAI connection validates', () => {
     assert.deepEqual(validateConnection(validAoai()), {});
+});
+
+check('model persona validation counts Unicode characters', () => {
+    const model = {
+        deploymentName: 'chat-model',
+        persona_enabled: true,
+        persona_text_visible: true,
+        persona_markdown: '🧭'.repeat(8000),
+    };
+    const connection = validAoai({ models: [model] });
+    assert.equal(validateConnection(connection).model_0_persona, undefined);
+    connection.models[0].persona_markdown += '🧭';
+    assert.match(validateConnection(connection).model_0_persona, /8,000/);
+});
+
+check('model persona fields survive editable and payload round trips', () => {
+    const source = validAoai({
+        models: [{
+            id: 'chat-model',
+            deploymentName: 'chat-model',
+            persona_enabled: false,
+            persona_markdown: 'Draft persona',
+            persona_text_visible: false,
+        }],
+    });
+    const editable = toEditableConnection(source);
+    assert.equal(editable.models[0].persona_markdown, 'Draft persona');
+    assert.equal(editable.models[0].persona_text_visible, false);
+    const payload = buildConnectionPayload(editable);
+    assert.equal(payload.models[0].persona_enabled, false);
+    assert.equal(payload.models[0].persona_markdown, 'Draft persona');
+    assert.equal(payload.models[0].persona_text_visible, false);
+});
+
+check('chat model identity carries endpoint scope with the model id', () => {
+    assert.deepEqual(buildModelIdentity({
+        selection_key: 'personal:user-1:endpoint-1:model-1',
+        deployment_name: 'chat-model',
+        model_id: 'model-1',
+        endpoint_id: 'endpoint-1',
+        provider: 'aoai',
+        scope_type: 'personal',
+        scope_id: 'user-1',
+    }), {
+        model_deployment: 'chat-model',
+        model_endpoint_id: 'endpoint-1',
+        model_id: 'model-1',
+        model_provider: 'aoai',
+        model_scope_type: 'personal',
+        model_scope_id: 'user-1',
+    });
 });
 
 check('unknown embedding models require verified support and explicit dimensions and token limits', () => {

@@ -49,6 +49,13 @@ export const NEW_CHAT_PARAM = 'new';
  */
 export const RESULT_WORKFLOW_PARAM = 'result_workflow_id';
 export const RESULT_RUN_PARAM = 'result_run_id';
+export const CHAT_LINK_PARAM = 'chat_link';
+
+/** A one-shot opaque launch reference, never a permission-bearing payload. */
+export function readChatLinkParam(params: URLSearchParams): string | null {
+    const value = (params.get(CHAT_LINK_PARAM) ?? '').trim();
+    return /^[A-Za-z0-9_-]{22}$/.test(value) ? value : null;
+}
 
 /**
  * A one-shot parameter that scrolls the opened conversation to a saved Microsoft 365 outgoing
@@ -258,10 +265,11 @@ export function syncedConversationParams(
     const hasAgentLaunch = params.has(WORKSPACE_AGENT_PARAM) || params.has(AGENT_SCOPE_PARAM)
         || params.has(AGENT_SCOPE_ID_PARAM);
     const hasResultLaunch = hasWorkflowResultLaunch(params);
+    const hasChatLinkLaunch = params.has(CHAT_LINK_PARAM);
     const hasPendingActionFocus = params.has(M365_PENDING_ACTION_PARAM);
 
     if (!hasLegacy && !hasPrompt && !hasPromptScope && !hasAgentLaunch && !hasResultLaunch
-        && !hasPendingActionFocus && (current ?? null) === conversationId) {
+        && !hasChatLinkLaunch && !hasPendingActionFocus && (current ?? null) === conversationId) {
         return null;
     }
 
@@ -271,6 +279,7 @@ export function syncedConversationParams(
     next.delete(PROMPT_SCOPE_PARAM);
     next.delete(PROMPT_SCOPE_ID_PARAM);
     next.delete(M365_PENDING_ACTION_PARAM);
+    next.delete(CHAT_LINK_PARAM);
     if (hasAgentLaunch) {
         next.delete(WORKSPACE_AGENT_PARAM);
         next.delete(AGENT_SCOPE_PARAM);

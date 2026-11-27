@@ -22,6 +22,7 @@ if sys.platform == 'win32':
         sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
 import app_settings_cache
+from chat_link_contract import chat_link_reference_from_path
 from config import *
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel
@@ -97,11 +98,13 @@ from config import cosmos_action_credential_state_container
 from route_backend_search import *
 from route_backend_conversations import *
 from route_backend_conversation_handoffs import register_route_backend_conversation_handoffs
+from route_chat_links import register_route_chat_links
 from route_backend_documents import *
 from route_backend_groups import *
 from route_backend_users import *
 from route_backend_group_documents import *
 from route_backend_models import *
+from route_backend_model_ca_bundles import register_route_backend_model_ca_bundles
 from route_backend_workflows import *
 from route_backend_safety import *
 from route_backend_feedback import *
@@ -178,6 +181,8 @@ from route_plugin_logging import bpl as plugin_logging_bp
 from functions_custom_pages import get_custom_pages_nav, is_same_origin_framing_allowed
 from functions_debug import debug_print
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_model_capabilities import get_model_endpoint_library_options
+from model_endpoint_profiles import get_custom_endpoint_profile_options
 from functions_terms_of_use import has_terms_of_use_acceptance
 from functions_mcp_server_auth import inbound_mcp_required_blueprint
 
@@ -385,6 +390,8 @@ def initialize_application(force=False):
         print("Setting up Application Insights logging...")
         setup_appinsights_logging(settings)
         logging.basicConfig(level=logging.DEBUG)
+        for model_http_logger in ('httpx', 'httpcore', 'openai', 'anthropic'):
+            logging.getLogger(model_http_logger).setLevel(logging.INFO)
         # basicConfig above is a no-op once Azure Monitor owns the root logger,
         # and that same root handler stops Flask attaching its stderr handler,
         # so unhandled tracebacks would otherwise never reach the container log.
@@ -639,6 +646,9 @@ def inject_settings():
         idle_timeout_minutes=idle_timeout_minutes,
         idle_warning_minutes=idle_warning_minutes,
         model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
+        model_endpoint_routing_api_types=get_model_endpoint_provider_ui_options(routing_schema_version=2),
+        model_endpoint_library=get_model_endpoint_library_options(),
+        model_endpoint_profiles=get_custom_endpoint_profile_options(),
         mcp_ui_enabled=is_mcp_ui_enabled()
     )
 
@@ -1110,7 +1120,10 @@ def enforce_idle_session_timeout():
             idle_seconds = now_epoch - parsed_last_activity_epoch
             if idle_seconds >= (idle_timeout_minutes * 60):
                 user_id = session.get('user', {}).get('oid') or session.get('user', {}).get('sub')
+                pending_chat_link_reference = chat_link_reference_from_path(request.path)
                 session.clear()
+                if pending_chat_link_reference:
+                    remember_pending_chat_link_path(request.path, now=now_epoch)
 
                 log_event(
                     f"Session expired due to {idle_timeout_minutes} minute inactivity timeout for user {user_id or 'unknown'}.",
@@ -1127,6 +1140,8 @@ def enforce_idle_session_timeout():
                         'requires_reauth': True
                     }), 401
 
+                if pending_chat_link_reference:
+                    return redirect(url_for('frontend_authentication.login'))
                 return redirect(url_for('frontend_authentication.local_logout'))
         except Exception as e:
             log_event(f"Idle timeout evaluation failed: {e}", level=logging.WARNING)
@@ -1194,12 +1209,12 @@ def add_security_headers(response):
     return response
 
 # Register a custom Jinja filter for Markdown
-def markdown_filter(text):
+def markdown_filter(text, extras=None, safe_mode=None):
     if not text:
         text = ""
 
     # Convert Markdown to HTML
-    html = markdown2.markdown(text)
+    html = markdown2.markdown(text, extras=extras, safe_mode=safe_mode)
 
     # Add target="_blank" to all <a> links
     html = re.sub(r'(<a\s+href=["\'](https?://.*?)["\'])', r'\1 target="_blank" rel="noopener noreferrer"', html)
@@ -1214,6 +1229,7 @@ def markdown_filter(text):
         'h5',
         'h6',
         'br',
+        'hr',
         'table',
         'thead',
         'tbody',
@@ -1504,6 +1520,7 @@ register_route_blueprint('backend_content_screening', register_route_backend_con
 # ------------------- API Conversation Routes ------------
 register_route_blueprint('backend_conversations', register_route_backend_conversations, user_required_blueprint)
 register_route_blueprint('backend_conversation_handoffs', register_route_backend_conversation_handoffs, user_required_blueprint)
+register_route_blueprint('chat_links', register_route_chat_links, user_required_blueprint)
 
 # ------------------- API Collaboration Routes -----------
 register_route_blueprint('backend_collaboration', register_route_backend_collaboration, user_required_blueprint)
@@ -1532,6 +1549,9 @@ register_route_blueprint('backend_bitbucket', register_route_backend_bitbucket, 
 
 @app.after_request
 def finalize_m365_json_request(response):
+    # File delivery and streams must not be consumed by JSON request finalization.
+    if response.direct_passthrough or response.is_streamed:
+        return response
     if response.is_json:
         payload = response.get_json()
         success = response.status_code < 400 and isinstance(payload, dict) and not (
@@ -1554,6 +1574,7 @@ register_route_blueprint('backend_group_documents', register_route_backend_group
 
 # ------------------- API Model Routes -------------------
 register_route_blueprint('backend_models', register_route_backend_models, user_required_blueprint)
+register_route_blueprint('backend_model_ca_bundles', register_route_backend_model_ca_bundles, user_required_blueprint)
 
 # ------------------- API Workflow Routes ----------------
 register_route_blueprint('backend_workflows', register_route_backend_workflows, user_required_blueprint)

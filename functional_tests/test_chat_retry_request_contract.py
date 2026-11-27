@@ -1,7 +1,7 @@
 # test_chat_retry_request_contract.py
 """
 Functional regression coverage for canonical chat retry inputs.
-Version: 0.261.319
+Version: 0.261.485
 Implemented in: 0.261.317
 
 Real replay helpers run with external bootstrap I/O blocked. These checks protect
@@ -73,7 +73,8 @@ def test_retry_restores_complete_identity_and_saved_options(replay):
     question = source()
     original = deepcopy(question)
     result = prepare(replay, question)
-    assert {key: result[key] for key in replay.MODEL_FIELDS} == {
+    # Scope fields are restored only when the catalog entry records a scope.
+    assert {key: result[key] for key in replay.MODEL_FIELDS if key in result} == {
         'model_deployment': 'shared-model', 'model_id': 'model-b',
         'model_endpoint_id': 'endpoint-b', 'model_provider': 'aoai',
     }

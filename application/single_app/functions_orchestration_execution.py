@@ -208,7 +208,10 @@ ANSWER_MAX_TOKENS = 4000
 ANSWER_TEMPERATURE = 0.3
 _USAGE_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
 _WAITING_OUTPUT_STATES = frozenset({"waiting", "rendering", "retry_scheduled"})
-_MODEL_METADATA_FIELDS = ("model_deployment_name", "model_provider", "model_endpoint_id", "model_id")
+_MODEL_METADATA_FIELDS = (
+    "model_deployment_name", "model_provider", "model_endpoint_id", "model_id",
+    "model_scope_type", "model_scope_id",
+)
 _REASONING_METADATA_FIELDS = ("reasoning_effort", "requested_reasoning_effort", "reasoning_mode")
 _DELIVERY_FAILURE_CODES = frozenset({"run_timeout", "user_cancelled", "context_unavailable"})
 
@@ -897,6 +900,9 @@ class HarnessExecution:
             model_context={
                 "model_id": self.answer_model.model_id, "endpoint_id": self.answer_model.endpoint_id,
                 "provider": self.answer_model.provider, "model_deployment": self.answer_model.deployment,
+                "scope_type": self.answer_model.model_scope_type,
+                "scope_id": self.answer_model.model_scope_id,
+                "apply_model_persona": self.answer_model.apply_model_persona,
                 "user_id": user_id, "active_group_ids": seeds.get("active_group_ids") or [],
             },
             agent_execution_identity=principal, plan_contract_version=2,
@@ -1584,6 +1590,31 @@ class HarnessExecution:
             or (self.record.get("time_zone") if workflow_time_zone_configured(self.settings) else None),
         )
 
+    def _continuation_requires_session(self, current, has_execution_state):
+        """Whether the results this paused run holds can only be read with a signed-in session.
+
+        Every retained result is authorized again before the next step reads it and again before
+        the answer is published. One that names an external source is authorized against the
+        user's session, so the rest of this run cannot be done by work that has none. Without
+        restored results the saved answer stands. A result whose lineage cannot be read is
+        treated as needing a session: a signed-in continuation can do everything the scheduler
+        can, and the reverse is not true.
+        """
+        if not has_execution_state:
+            return current.get("continuation_requires_session") is True
+        references = [
+            reference for task in self.context.task_results.values()
+            if task.status in {"complete", "partial"} for reference in task.outputs
+        ]
+        references.extend(
+            reference for reference in (getattr(self.context, "result_aliases", None) or {}).values()
+            if type(reference) is ResultRef
+        )
+        try:
+            return self.services.results.lineage_names_external_source(references)
+        except (ResultContractError, ResultUnavailableError, PermissionError):
+            return True
+
     def _finalize(self, result, error, *, refreshes=0):
         # Recovery is an application-owned store dependency, not an import-time dependency.
         from functions_orchestration_recovery import public_execution_fields
@@ -1827,6 +1858,12 @@ class HarnessExecution:
         if not self._delivery_only:
             updates["harness_step_token_usage"] = _usage(
                 result.get("token_usage", self.context.token_usage if self.context is not None else {}),
+            )
+        if status == "waiting":
+            # Read by the scheduler, which has no session and leaves such a run to a signed-in
+            # continuation, and by the request that continues it.
+            updates["continuation_requires_session"] = self._continuation_requires_session(
+                current, has_execution_state,
             )
         if output_check.blocked:
             # The executor's provisional summary cannot retain text the checkpoint removed.

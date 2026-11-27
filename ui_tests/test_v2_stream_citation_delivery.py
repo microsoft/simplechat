@@ -1,9 +1,10 @@
 # test_v2_stream_citation_delivery.py
 """
 UI regressions for live tool/web evidence and recorded tool outcomes.
-Version: 0.261.423
+Version: 0.261.472
 Implemented in: 0.261.365
 Word comment inspection fixed in: 0.261.422
+Stream timing integration covered in: 0.261.472
 
 Drives the real send/SSE/store/message inspector locally with synthetic HTTP boundaries.
 The existing Azure Playwright-compatible fixture also supports local browsers. No live
@@ -51,6 +52,67 @@ def citation_page(page):
             page.add_style_tag(content=stylesheet.read_text(encoding="utf-8"))
         yield page
     assert not errors, errors
+
+
+@pytest.mark.parametrize("opt_in", [False, True])
+def test_stream_timing_reports_split_samples_once_without_logging_content(page, opt_in):
+    harness_build.ensure_bundle()
+    with harness_build.start_static_server() as origin:
+        query = "?stream_timing=1" if opt_in else ""
+        page.goto(f"{origin}/{harness_build.HARNESS_HTML_REL}{query}")
+        page.wait_for_function("() => Boolean(window.OrchHarness)")
+        result = page.evaluate("""async () => {
+            const requests = [];
+            const diagnosticLogs = [];
+            const originalInfo = console.info;
+            const originalFetch = window.fetch;
+            const content = 'diagnostics must not log this fixture text';
+            const chunks = [': sc-timing ', `1\\ndata: ${JSON.stringify({done: true, full_content: content})}\\n\\n`];
+            console.info = (message, event) => {
+                if (message.startsWith('[STREAMING] Timing browser')) diagnosticLogs.push([message, event]);
+            };
+            window.fetch = async (input, init) => {
+                const url = new URL(String(input), location.origin);
+                if (url.pathname !== '/api/chat/stream') throw new Error('Unexpected request');
+                requests.push(new Headers(init.headers).get('X-SimpleChat-Stream-Timing'));
+                return new Response(new ReadableStream({
+                    start(controller) {
+                        for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+                        controller.close();
+                    },
+                }), {headers: {
+                    'Content-Type': 'text/event-stream',
+                    'X-SimpleChat-Stream-Timing-Id': '0123456789abcdef',
+                }});
+            };
+            try {
+                const {streamChat} = window.OrchHarness.chatSse;
+                const first = await streamChat({message: 'fixture'}, {});
+                const second = await streamChat({message: 'fixture'}, {});
+                return {
+                    requests, diagnosticLogs,
+                    expectedBytes: new TextEncoder().encode(chunks.join('')).byteLength,
+                    complete: first.completed && second.completed
+                        && first.accumulated === content && second.accumulated === content,
+                    loggedContent: JSON.stringify(diagnosticLogs).includes(content),
+                };
+            } finally {
+                window.fetch = originalFetch;
+                console.info = originalInfo;
+            }
+        }""")
+    assert result["complete"] and not result["loggedContent"]
+    assert result["requests"] == (["1", None] if opt_in else [None, None])
+    if not opt_in:
+        assert result["diagnosticLogs"] == []
+        return
+    (arrival_message, arrival), (finish_message, finish) = result["diagnosticLogs"]
+    assert arrival_message == "[STREAMING] Timing browser arrival"
+    assert finish_message == "[STREAMING] Timing browser end"
+    assert arrival["diagnostic_run_id"] == finish["diagnostic_run_id"] == "0123456789abcdef"
+    assert arrival["event_sequence"] == 1
+    assert arrival["read_count"] == finish["read_count"] == 2
+    assert arrival["bytes_received"] == finish["bytes_received"] == result["expectedBytes"]
 
 
 def _send(page, fields):

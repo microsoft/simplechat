@@ -1,7 +1,7 @@
 # test_orchestration_v2_plan_backend.py
 """Saved plan editing, restoration, and private admission-context persistence.
 
-Version: 0.261.232
+Version: 0.261.484
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
 Submission ids kept out of the planner prompt: 0.261.200
@@ -80,6 +80,19 @@ class V2PlanBackendTests(unittest.TestCase):
             fixtures = importlib.import_module('test_support.orchestration_results')
         self.stack.enter_context(patch.object(self.store, 'cosmos_orchestration_runs_container', self.runs))
         self.fixture = fixtures.ResultFixture()
+        source_access = importlib.import_module('functions_orchestration_source_access')
+        self.stack.enter_context(patch.object(
+            source_access,
+            'resolve_orchestration_source_manifest',
+            side_effect=lambda ids, user_id, **scope: [
+                {
+                    **item,
+                    'file_name': item['document_id'],
+                    'source_kind': 'narrative',
+                }
+                for item in self.fixture.resolve(ids, user_id=user_id, **scope)
+            ],
+        ))
         self.task = self.fixture.save()
         self.reference = self.task.output('findings')
         self.aliases = {'saved_findings': self.reference}
@@ -340,6 +353,10 @@ class V2PlanBackendTests(unittest.TestCase):
             ) if key in record['plan']},
         }
 
+    def revised_steps(self, record):
+        """Return the expected policy-enriched plan emitted during revision."""
+        return self.schema.available_information_plan(deepcopy(record['plan']))['steps']
+
     def hold(self, record):
         return self.revisions.begin_plan_edit(
             record['id'], 'owner', 'conversation-1', plan_id=record['plan']['plan_id'],
@@ -563,7 +580,7 @@ class V2PlanBackendTests(unittest.TestCase):
         outcome = self.edit(record, self.reply(record))
         document = outcome['document']
         self.assertEqual(document['planner_contract_version'], 2)
-        self.assertEqual(document['steps'], record['plan']['steps'])
+        self.assertEqual(document['steps'], self.revised_steps(record))
         self.assertEqual(document['final_response'], record['plan']['final_response'])
         self.assertEqual(outcome['turn_context']['planner_contract_version'], 2)
         self.assertEqual(outcome['turn_context']['result_aliases'], self.wire_aliases)
@@ -707,7 +724,7 @@ class V2PlanBackendTests(unittest.TestCase):
         published = self.publish(record, outcome['document'], outcome['turn_context'])
         self.assertNotIn('render_file', [entry['id'] for entry in payload['capabilities']])
         self.assertEqual(checked['steps'], record['plan']['steps'])
-        self.assertEqual(published['plan']['steps'], record['plan']['steps'])
+        self.assertEqual(published['plan']['steps'], self.revised_steps(record))
         serialized = json.dumps({'outcome': outcome, 'published': published})
         self.assertNotIn('export_catalog', serialized)
         rendering.renderer.assert_not_called()
@@ -731,7 +748,7 @@ class V2PlanBackendTests(unittest.TestCase):
         self.assertEqual(planner.call_args.kwargs['export_catalog'], catalog)
         self.assertEqual(default_checked['steps'], record['plan']['steps'])
         self.assertEqual(checked['steps'], record['plan']['steps'])
-        self.assertEqual(outcome['document']['steps'], record['plan']['steps'])
+        self.assertEqual(outcome['document']['steps'], self.revised_steps(record))
         self.assertEqual(outcome['document']['steps'][1]['depends_on'], ['draft'])
         rendering.renderer.assert_not_called()
 
@@ -901,7 +918,7 @@ class V2PlanBackendTests(unittest.TestCase):
             self.assertNotIn(name, serialized)
             self.assertNotIn(repr(callback), requests)
             callback.assert_not_called()
-        self.assertEqual(published['plan']['steps'], record['plan']['steps'])
+        self.assertEqual(published['plan']['steps'], self.revised_steps(record))
         self.assertEqual(published['result_aliases'], self.wire_aliases)
 
     def test_external_preflight_forwards_the_actual_bound_provider_guard_without_io(self):
@@ -924,7 +941,7 @@ class V2PlanBackendTests(unittest.TestCase):
             self.external_sources.OrchestrationExternalSourceProvider.preflight_gather_invocation,
         )
         self.assertEqual(checked['steps'], record['plan']['steps'])
-        self.assertEqual(outcome['document']['steps'], record['plan']['steps'])
+        self.assertEqual(outcome['document']['steps'], self.revised_steps(record))
         serialized = json.dumps({'context': self.editor._turn_context(record), 'outcome': outcome})
         self.assertNotIn('external_source_preflight', serialized)
         for name, callback in callbacks.items():
@@ -1025,7 +1042,7 @@ class V2PlanBackendTests(unittest.TestCase):
             self.assertNotIn(name, serialized)
             initial[name].assert_not_called()
             current[name].assert_not_called()
-        self.assertEqual(outcome['document']['steps'], record['plan']['steps'])
+        self.assertEqual(outcome['document']['steps'], self.revised_steps(record))
 
     def test_external_callback_keywords_are_optional_and_keyword_only(self):
         for function in (
@@ -1091,7 +1108,7 @@ class V2PlanBackendTests(unittest.TestCase):
         serialized = json.dumps(outcome)
         self.assertNotIn('rendering_service', serialized)
         published = self.publish(record, outcome['document'], outcome['turn_context'])
-        self.assertEqual(published['plan']['steps'], record['plan']['steps'])
+        self.assertEqual(published['plan']['steps'], self.revised_steps(record))
         self.assertNotIn('rendering_service', published)
         rendering.authorize_execution.assert_not_called()
         rendering.renderer.assert_not_called()
@@ -1140,7 +1157,7 @@ class V2PlanBackendTests(unittest.TestCase):
             }},
             rendering_service=rendering,
         )
-        self.assertEqual(outcome['document']['steps'], record['plan']['steps'])
+        self.assertEqual(outcome['document']['steps'], self.revised_steps(record))
         serialized = json.dumps(outcome)
         self.assertNotIn('rendering_service', serialized)
         rendering.authorize_execution.assert_not_called()
@@ -1206,14 +1223,14 @@ class V2PlanBackendTests(unittest.TestCase):
         with patch.object(self.editor, 'plan_request', wraps=self.editor.plan_request) as planner:
             outcome = self.edit(record, self.reply(record), native_bridge_for_step=self.native_factory)
         self.assertIs(planner.call_args.kwargs['request_context']['native_bridge_for_step'], self.native_factory)
-        self.assertEqual(outcome['document']['steps'], record['plan']['steps'])
+        self.assertEqual(outcome['document']['steps'], self.revised_steps(record))
         payload = json.loads(self.model_calls[0]['messages'][1]['content'])
         self.assertIn('tabular_analyze', [item['id'] for item in payload['capabilities']])
         serialized = json.dumps(outcome)
         self.assertNotIn('native_bridge_for_step', serialized)
         published = self.publish(record, outcome['document'], outcome['turn_context'])
         self.assertNotIn('native_bridge_for_step', published)
-        self.assertEqual(published['plan']['steps'], record['plan']['steps'])
+        self.assertEqual(published['plan']['steps'], self.revised_steps(record))
         self.native_factory.assert_not_called()
 
     def test_native_restore_requires_a_fresh_server_factory_for_validation(self):
@@ -1261,7 +1278,7 @@ class V2PlanBackendTests(unittest.TestCase):
             }},
             native_bridge_for_step=self.native_factory,
         )
-        self.assertEqual(outcome['document']['steps'], record['plan']['steps'])
+        self.assertEqual(outcome['document']['steps'], self.revised_steps(record))
         self.assertEqual(outcome['turn_context']['planner_contract_version'], 2)
         serialized = json.dumps(outcome)
         self.assertNotIn('native_bridge_for_step', serialized)
@@ -1305,7 +1322,7 @@ class V2PlanBackendTests(unittest.TestCase):
         held = self.hold(current)
         outcome = self.edit(held, self.reply(held))
         published = self.publish(held, outcome['document'], outcome['turn_context'])
-        self.assertEqual(published['plan']['steps'], held['plan']['steps'])
+        self.assertEqual(published['plan']['steps'], self.revised_steps(held))
         self.assertEqual(published['plan']['steps'][1]['depends_on'], ['draft'])
         self.assertEqual(published['plan']['final_response'], binding('summary'))
 

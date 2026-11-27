@@ -4,9 +4,10 @@
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
-import { Check, ChevronDown, Search } from 'lucide-react';
+import { Check, ChevronDown, Search, UserRound } from 'lucide-react';
 import { DropdownScopeContext } from './DropdownScope';
 import { dropdownPlacement } from './dropdownPlacement';
+import { PlainMarkdown } from './PlainMarkdown';
 
 /** Tallest the menu is allowed to get, matching the max-h-80 ceiling. */
 const MENU_MAX_HEIGHT = 320;
@@ -24,6 +25,10 @@ export interface DropdownOption {
     group?: string;
     /** Additional public catalog metadata, such as a model's publisher. */
     searchText?: string;
+    persona?: {
+        enabled: boolean;
+        markdown?: string;
+    };
 }
 
 export function filterDropdownOptions(options: DropdownOption[], query: string): DropdownOption[] {
@@ -83,6 +88,7 @@ export function Dropdown({
 }: DropdownProps) {
     const [localOpen, setLocalOpen] = useState(false);
     const [query, setQuery] = useState('');
+    const [openPersona, setOpenPersona] = useState<string | null>(null);
     const searchable = Boolean(searchPlaceholder);
     const scope = useContext(DropdownScopeContext);
     const scopeSetter = scope?.setActiveId;
@@ -161,7 +167,10 @@ export function Dropdown({
     }, [disabled, scope, id]);
 
     useEffect(() => {
-        if (!open) setQuery('');
+        if (!open) {
+            setQuery('');
+            setOpenPersona(null);
+        }
     }, [open]);
 
     useEffect(() => () => {
@@ -184,6 +193,14 @@ export function Dropdown({
         (initial ?? panel)?.focus({ preventScroll: true });
         initial?.scrollIntoView({ block: 'nearest' });
     }, [open, floating, searchable, measure]);
+
+    useLayoutEffect(() => {
+        if (!openPersona) return;
+        const inspector = Array.from(
+            panelRef.current?.querySelectorAll<HTMLElement>('[data-persona-inspector]') ?? [],
+        ).find((element) => element.dataset.personaInspector === openPersona);
+        inspector?.scrollIntoView({ block: 'nearest' });
+    }, [openPersona]);
 
     useEffect(() => {
         if (!open) {
@@ -253,6 +270,15 @@ export function Dropdown({
                 ],
             )}
             onKeyDown={(event) => {
+                const inPersonaInspector = (
+                    event.target as HTMLElement
+                ).closest?.('[data-persona-inspector]');
+                if (
+                    inPersonaInspector
+                    && ['ArrowDown', 'ArrowUp', 'Home', 'End', 'PageDown', 'PageUp'].includes(event.key)
+                ) {
+                    return;
+                }
                 if (!floating && !searchable) return;
                 const inSearch = event.target === searchRef.current;
                 if (inSearch && event.key === 'Enter') {
@@ -261,7 +287,7 @@ export function Dropdown({
                     return;
                 }
                 if (event.nativeEvent.isComposing) return;
-                const buttons = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? []);
+                const buttons = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
                 const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
                 let next: number | undefined;
                 if (event.key === 'ArrowDown') {
@@ -284,8 +310,36 @@ export function Dropdown({
                     buttons[next].scrollIntoView({ block: 'nearest' });
                 }
                 if (event.key === 'Tab') {
+                    const focusable = Array.from(panelRef.current?.querySelectorAll<HTMLElement>(
+                        'button:not(:disabled), input:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+                    ) ?? []);
+                    const boundaryTarget = event.shiftKey
+                        ? focusable[0]
+                        : focusable[focusable.length - 1];
+                    if (event.target !== boundaryTarget) return;
+
+                    const trigger = triggerRef.current;
+                    const pageFocusables = Array.from(document.querySelectorAll<HTMLElement>(
+                        'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+                    )).filter((element) => (
+                        element.getClientRects().length > 0
+                        && element !== trigger
+                        && !panelRef.current?.contains(element)
+                    ));
+                    const documentOrder = Array.from(document.querySelectorAll<HTMLElement>(
+                        'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+                    )).filter((element) => element.getClientRects().length > 0);
+                    const triggerIndex = trigger ? documentOrder.indexOf(trigger) : -1;
+                    const orderedAfterTrigger = documentOrder.slice(triggerIndex + 1).find((element) =>
+                        pageFocusables.includes(element)
+                    );
+                    const orderedBeforeTrigger = documentOrder.slice(0, triggerIndex).reverse().find((element) =>
+                        pageFocusables.includes(element)
+                    );
+                    const destination = (event.shiftKey ? orderedBeforeTrigger : orderedAfterTrigger) ?? trigger;
+                    event.preventDefault();
                     setOpen(false);
-                    triggerRef.current?.focus({ preventScroll: true });
+                    destination?.focus({ preventScroll: true });
                 }
             }}
         >
@@ -338,6 +392,15 @@ export function Dropdown({
                     const showGroupHeading = option.group && option.group !== lastGroup;
                     lastGroup = option.group;
                     const isSelected = option.value === value;
+                    const personaEnabled = option.persona?.enabled === true;
+                    const personaMarkdown = option.persona?.markdown?.trim() || '';
+                    const personaPreview = personaMarkdown
+                        .replace(/[#>*_`~[\]()!-]/g, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                    const personaTitle = personaEnabled
+                        ? `Persona enabled${personaPreview ? `: ${personaPreview.slice(0, 240)}` : ''}`
+                        : '';
 
                     return (
                         <div key={option.value}>
@@ -346,34 +409,72 @@ export function Dropdown({
                                     {option.group}
                                 </p>
                             )}
-                            <button
-                                type="button"
-                                role="option"
-                                aria-selected={isSelected}
-                                onClick={() => {
-                                    onChange(option.value);
-                                    setOpen(false);
-                                    if (floating) triggerRef.current?.focus({ preventScroll: true });
-                                }}
-                                className={clsx(
-                                    'flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left',
-                                    isSelected ? 'bg-accent-soft' : 'hover:bg-surface-2',
-                                )}
-                            >
-                                <span className="min-w-0 flex-1">
-                                    <span className="block truncate text-sm text-text-1">
-                                        {option.label}
-                                    </span>
-                                    {option.description && (
-                                        <span className="mt-0.5 block line-clamp-2 text-xs text-text-3">
-                                            {option.description}
+                            <div className={clsx(
+                                'flex items-start gap-1 rounded-lg',
+                                isSelected ? 'bg-accent-soft' : 'hover:bg-surface-2',
+                            )}>
+                                <button
+                                    type="button"
+                                    role="option"
+                                    aria-selected={isSelected}
+                                    onClick={() => {
+                                        onChange(option.value);
+                                        setOpen(false);
+                                        if (floating) triggerRef.current?.focus({ preventScroll: true });
+                                    }}
+                                    className="flex min-w-0 flex-1 items-start gap-2 rounded-lg px-3 py-2 text-left"
+                                >
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-sm text-text-1">
+                                            {option.label}
                                         </span>
+                                        {!personaEnabled && option.description && (
+                                            <span className="mt-0.5 block line-clamp-2 text-xs text-text-3">
+                                                {option.description}
+                                            </span>
+                                        )}
+                                    </span>
+                                    {isSelected && (
+                                        <Check size={15} className="mt-0.5 shrink-0 text-accent" />
                                     )}
-                                </span>
-                                {isSelected && (
-                                    <Check size={15} className="mt-0.5 shrink-0 text-accent" />
-                                )}
-                            </button>
+                                </button>
+                                {personaEnabled ? (
+                                    <button
+                                        type="button"
+                                        className={clsx(
+                                            'mr-2 mt-1.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
+                                            'text-accent hover:bg-accent-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                                        )}
+                                        aria-label={`View persona for ${option.label}`}
+                                        aria-expanded={openPersona === option.value}
+                                        title={personaTitle}
+                                        onClick={() => setOpenPersona((current) =>
+                                            current === option.value ? null : option.value
+                                        )}
+                                    >
+                                        <UserRound size={15} aria-hidden="true" />
+                                    </button>
+                                ) : null}
+                            </div>
+                            {personaEnabled && openPersona === option.value ? (
+                                <div
+                                    role="dialog"
+                                    tabIndex={0}
+                                    data-persona-inspector={option.value}
+                                    aria-label={`Persona for ${option.label}`}
+                                    className="mx-2 mt-1 mb-2 max-h-56 overflow-y-auto rounded-xl border border-edge bg-surface-1 p-3 shadow-sm"
+                                >
+                                    <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-accent">
+                                        <UserRound size={14} aria-hidden="true" />
+                                        Persona enabled
+                                    </div>
+                                    {personaMarkdown ? (
+                                        <PlainMarkdown content={personaMarkdown} allowMedia={false} size="sm" />
+                                    ) : (
+                                        <p className="text-xs text-text-3">The persona text is not visible to you.</p>
+                                    )}
+                                </div>
+                            ) : null}
                         </div>
                     );
                 })}
@@ -420,6 +521,17 @@ export function Dropdown({
                 {!compact && (
                     <>
                         <span className="truncate">{triggerLabel}</span>
+                        {selected?.persona?.enabled ? (
+                            <span
+                                className="text-accent"
+                                aria-hidden="true"
+                                title={`Persona enabled${selected.persona.markdown
+                                    ? `: ${selected.persona.markdown.replace(/\s+/g, ' ').trim().slice(0, 240)}`
+                                    : ''}`}
+                            >
+                                <UserRound size={14} aria-hidden="true" />
+                            </span>
+                        ) : null}
                         <ChevronDown size={14} className="ml-auto shrink-0 opacity-60" />
                     </>
                 )}

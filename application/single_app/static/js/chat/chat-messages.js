@@ -5,7 +5,8 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, activateUserWorkspaceContextForChatUpload, selectWorkspaceDocumentForChatUpload, registerConversationTaskDocument, updateConversationTaskDocumentsFromMessages, getConversationTaskDocumentIds, getConversationTaskDocumentSummary } from "./chat-documents.js";
+import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, buildChatLinkDocumentSourceSelection, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, activateUserWorkspaceContextForChatUpload, selectWorkspaceDocumentForChatUpload, registerConversationTaskDocument, updateConversationTaskDocumentsFromMessages, getConversationTaskDocumentIds, getConversationTaskDocumentSummary } from "./chat-documents.js";
+import { commitChatLinkReference, getChatLinkReferenceForRequest } from "./chat-links.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -55,6 +56,8 @@ import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
 import { getCitedHybridCitations, getCitedWebCitations } from './chat-citation-tracking.js';
+import { parseMath, restoreMathSource } from './chat-math-segments.js';
+import { getMathAwareSelection, hydrateMath, injectMathPlaceholders } from './chat-math.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -1566,35 +1569,145 @@ updateDocumentActionControls().catch(error => {
  * This fixes the issue where AI responses contain tables in code blocks,
  * preventing them from being rendered as proper HTML tables.
  *
+ * Lines are scanned once with precomputed runs. This keeps the fence matching of
+ * the previous regular expression, which backtracked exponentially on long runs of
+ * pipe-delimited lines and could freeze the browser while rendering:
+ * /```(?:\w+)?\n((?:[^\n]*\|[^\n]*\n)+(?:\|[-\s|:]+\|\n)?(?:[^\n]*\|[^\n]*\n)*)\n?```/g
+ *
  * @param {string} content - The markdown content to process
  * @returns {string} - Content with tables unwrapped from code blocks
  */
 function unwrapTablesFromCodeBlocks(content) {
-  // Pattern to match code blocks that contain markdown tables
-  const codeBlockTablePattern = /```(?:\w+)?\n((?:[^\n]*\|[^\n]*\n)+(?:\|[-\s|:]+\|\n)?(?:[^\n]*\|[^\n]*\n)*)\n?```/g;
+  const lines = content.split('\n');
+  const lastLine = lines.length - 1;
+  const lineStarts = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStarts.push(offset);
+    offset += line.length + 1;
+  }
 
-  return content.replace(codeBlockTablePattern, (match, tableContent) => {
-    // Check if the content inside the code block looks like a markdown table
-    const lines = tableContent.trim().split('\n');
+  // Runs of newline-terminated lines: any line with a pipe, or only [-\s|:] characters.
+  const pipeRunEnd = new Array(lines.length);
+  const separatorRunEnd = new Array(lines.length);
+  for (let index = lastLine; index >= 0; index -= 1) {
+    const terminated = index < lastLine;
+    pipeRunEnd[index] = terminated && lines[index].includes('|') ? pipeRunEnd[index + 1] : index - 1;
+    separatorRunEnd[index] = terminated && /^[-\s|:]*$/.test(lines[index]) ? separatorRunEnd[index + 1] : index - 1;
+  }
+  const separatorRunStart = new Array(lines.length);
+  const lastFenceLine = new Array(lines.length);
+  const lastPipeStartLine = new Array(lines.length);
+  lines.forEach((line, index) => {
+    separatorRunStart[index] = separatorRunEnd[index] >= index
+      ? Math.min(index, separatorRunStart[index - 1] ?? index)
+      : index + 1;
+    lastFenceLine[index] = line.startsWith('```') ? index : (lastFenceLine[index - 1] ?? -1);
+    lastPipeStartLine[index] = line.startsWith('|') ? index : (lastPipeStartLine[index - 1] ?? -1);
+  });
 
-    // A markdown table should have:
-    // 1. At least 2 lines
-    // 2. Lines containing pipe characters (|)
-    // 3. Potentially a separator line with dashes and pipes
-    if (lines.length >= 2) {
-      const hasTableStructure = lines.every(line => line.includes('|'));
-      const hasSeparatorLine = lines.some(line => /^[\s|:-]+$/.test(line));
-
-      // If it looks like a table, unwrap it from the code block
-      if (hasTableStructure && (hasSeparatorLine || lines.length >= 3)) {
-        console.log('🔧 Unwrapping table from code block:', tableContent.substring(0, 50) + '...');
-        return '\n\n' + tableContent.trim() + '\n\n';
+  // The closing fence right after a body line, optionally after one blank line.
+  const closingAfter = bodyLastLine => {
+    const next = bodyLastLine + 1;
+    if (lines[next] === '' && next < lastLine && lines[next + 1].startsWith('```')) {
+      return { bodyEndLine: next, closingLine: next + 1 };
+    }
+    if (next <= lastLine && lines[next].startsWith('```')) {
+      return { bodyEndLine: next, closingLine: next };
+    }
+    return null;
+  };
+  // Pipe lines from firstLine (possibly none), longest first, then fences that start a line.
+  const closingForPipeLines = firstLine => {
+    const runEnd = pipeRunEnd[firstLine];
+    const fence = lastFenceLine[Math.max(runEnd, 0)];
+    return closingAfter(runEnd)
+      || (runEnd >= firstLine && fence >= firstLine ? { bodyEndLine: fence, closingLine: fence } : null);
+  };
+  // The optional separator group could bridge blank or dash-only lines after a run.
+  // Its result depends only on where that run ends, so each run is scanned once.
+  const bridgedClosings = new Map();
+  const closingAcrossSeparatorLines = runEnd => {
+    if (!bridgedClosings.has(runEnd)) {
+      let closing = null;
+      for (let line = separatorRunEnd[runEnd]; line > runEnd && !closing; line -= 1) {
+        if (lines[line].endsWith('|')) {
+          closing = closingForPipeLines(line + 1);
+        }
       }
+      bridgedClosings.set(runEnd, closing);
+    }
+    return bridgedClosings.get(runEnd);
+  };
+  // Same precedence as the backtracking pattern: longest pipe body, then the later of an
+  // interior fence or a separator bridge that starts on a later line.
+  const findClosing = firstLine => {
+    const runEnd = pipeRunEnd[firstLine];
+    if (runEnd < firstLine) {
+      return null;
+    }
+    const endClosing = closingAfter(runEnd);
+    if (endClosing) {
+      return endClosing;
+    }
+    const fence = lastFenceLine[runEnd] > firstLine ? lastFenceLine[runEnd] : -1;
+    const bridgeStart = lastPipeStartLine[runEnd];
+    const bridged = bridgeStart > firstLine && bridgeStart > fence && bridgeStart >= separatorRunStart[runEnd]
+      ? closingAcrossSeparatorLines(runEnd)
+      : null;
+    return bridged || (fence >= 0 ? { bodyEndLine: fence, closingLine: fence } : null);
+  };
+
+  let result = '';
+  let cursor = 0;
+  for (let index = 0; index < lastLine; index += 1) {
+    const fenceOffset = findOpeningCodeFence(lines[index]);
+    const matchStart = lineStarts[index] + fenceOffset;
+    const closing = fenceOffset >= 0 && matchStart >= cursor ? findClosing(index + 1) : null;
+    if (!closing) {
+      continue;
     }
 
-    // If it doesn't look like a table, keep it as a code block
-    return match;
-  });
+    const matchEnd = lineStarts[closing.closingLine] + 3;
+    const tableContent = content.slice(lineStarts[index + 1], lineStarts[closing.bodyEndLine]);
+    result += content.slice(cursor, matchStart)
+      + unwrapCodeBlockTable(content.slice(matchStart, matchEnd), tableContent);
+    cursor = matchEnd;
+    // The closing line may still open another block after the consumed fence.
+    index = closing.closingLine - 1;
+  }
+  return result + content.slice(cursor);
+}
+
+function findOpeningCodeFence(line) {
+  let languageStart = line.length;
+  while (languageStart > 0 && /\w/.test(line[languageStart - 1])) {
+    languageStart -= 1;
+  }
+  return line.endsWith('```', languageStart) ? languageStart - 3 : -1;
+}
+
+function unwrapCodeBlockTable(match, tableContent) {
+  // Check if the content inside the code block looks like a markdown table
+  const lines = tableContent.trim().split('\n');
+
+  // A markdown table should have:
+  // 1. At least 2 lines
+  // 2. Lines containing pipe characters (|)
+  // 3. Potentially a separator line with dashes and pipes
+  if (lines.length >= 2) {
+    const hasTableStructure = lines.every(line => line.includes('|'));
+    const hasSeparatorLine = lines.some(line => /^[\s|:-]+$/.test(line));
+
+    // If it looks like a table, unwrap it from the code block
+    if (hasTableStructure && (hasSeparatorLine || lines.length >= 3)) {
+      console.log('🔧 Unwrapping table from code block:', tableContent.substring(0, 50) + '...');
+      return '\n\n' + tableContent.trim() + '\n\n';
+    }
+  }
+
+  // If it doesn't look like a table, keep it as a code block
+  return match;
 }
 
 /**
@@ -2234,7 +2347,7 @@ export function loadMessages(conversationId) {
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
 
-  return fetch(`/conversation/${conversationId}/messages?ts=${Date.now()}`, {
+  return fetch(`/conversation/${encodeURIComponent(conversationId)}/messages?ts=${Date.now()}`, {
     cache: "no-store",
     headers: {
       "Cache-Control": "no-cache",
@@ -2877,7 +2990,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
   export function renderAiMessageContent(messageContent, options = {}) {
     const followUpRenderModel = buildFollowUpRenderModel(messageContent);
-    let cleaned = stripInlineAzureMapsBlocks(followUpRenderModel.visibleMarkdown).trim().replace(/\n{3,}/g, "\n\n");
+    const parsedMath = parseMath(followUpRenderModel.visibleMarkdown);
+    let cleaned = stripInlineAzureMapsBlocks(parsedMath.text).trim().replace(/\n{3,}/g, "\n\n");
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
 
     const chartExtraction = extractInlineChartBlocks(cleaned);
@@ -2904,7 +3018,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
     const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
     const sanitizedHtml = renderMarkdownSafely(withASCIITables);
-    const htmlWithCharts = injectInlineChartHtml(sanitizedHtml, chartExtraction.blocks);
+    const htmlWithMath = injectMathPlaceholders(sanitizedHtml, parsedMath);
+    const htmlWithCharts = injectInlineChartHtml(htmlWithMath, chartExtraction.blocks);
     const htmlWithDiagrams = injectInlineDiagramHtml(htmlWithCharts, diagramExtraction.blocks);
     const htmlWithImageProposals = injectInlineImageProposalHtml(htmlWithDiagrams, imageProposalExtraction.blocks);
     const copyMarkdown = restoreInlineChartTokens(
@@ -2917,8 +3032,10 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     return {
       htmlContent: addTargetBlankToExternalLinks(htmlWithImageProposals),
-      copyMarkdown,
-      previewMarkdown: stripInlineRenderTokens(imageProposalExtraction.markdown),
+      copyMarkdown: restoreMathSource(copyMarkdown, parsedMath),
+      previewMarkdown: stripInlineRenderTokens(
+        restoreMathSource(imageProposalExtraction.markdown, parsedMath)
+      ),
       followUpSuggestions: followUpRenderModel.suggestions,
     };
   }
@@ -5886,8 +6003,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     generatedOutputsContainer.classList.remove('d-none');
   }
 
-  function renderInlineExportButtonContent(button, labelText, iconHtml) {
-    button.innerHTML = `${iconHtml || ''}${labelText}`;
+  function renderInlineExportButtonContent(button, labelText, icon) {
+    button.replaceChildren(...(icon ? [icon] : []), String(labelText ?? ''));
   }
 
   function setInlineExportButtonPendingState(button, isPending, actionName) {
@@ -5906,16 +6023,19 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     button.title = isPending ? pendingLabel : defaultTitle;
 
     if (isPending) {
-      renderInlineExportButtonContent(
-        button,
-        pendingLabel,
-        '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>'
-      );
+      const spinner = document.createElement('span');
+      spinner.className = 'spinner-border spinner-border-sm me-1';
+      spinner.setAttribute('aria-hidden', 'true');
+      renderInlineExportButtonContent(button, pendingLabel, spinner);
       return;
     }
 
-    const iconHtml = iconClass ? `<i class="${iconClass} me-1"></i>` : '';
-    renderInlineExportButtonContent(button, defaultLabel, iconHtml);
+    let icon = null;
+    if (iconClass) {
+      icon = document.createElement('i');
+      icon.className = `${iconClass} me-1`;
+    }
+    renderInlineExportButtonContent(button, defaultLabel, icon);
   }
 
   function waitForUiPaint() {
@@ -5990,6 +6110,24 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       });
     });
   }
+
+function renderMessageInterruptionStatus(messageElement, message, isUser = false) {
+  const metadata = message?.metadata || {};
+  const interrupted = isUser
+    ? metadata.response_attempt?.state === 'interrupted'
+    : metadata.incomplete || metadata.canceled || metadata.complete === false
+      || ['stopped', 'interrupted', 'stop_unconfirmed'].includes(metadata.stream_status);
+  if (!interrupted || messageElement.querySelector('.stream-stopped-banner, .message-interruption-status')) return;
+  const notice = document.createElement('p');
+  notice.className = isUser ? 'message-interruption-status small text-muted' : 'stream-stopped-banner alert alert-info mt-2 mb-0';
+  notice.setAttribute('role', 'status');
+  const userCanceled = metadata.stop_reason === 'user_cancelled' || metadata.cancel_reason === 'user_requested';
+  notice.textContent = metadata.stream_status === 'stop_unconfirmed'
+    ? 'Stopping is not confirmed. Refresh to check saved work.'
+    : userCanceled ? 'Stopped by you. Response may be incomplete.'
+      : 'This response was interrupted. Response may be incomplete.';
+  (messageElement.querySelector('.message-text') || messageElement).appendChild(notice);
+}
 
 export function appendMessage(
   sender,
@@ -6258,6 +6396,7 @@ export function appendMessage(
       messageDiv.dataset.messageComplete = 'false';
     }
     chatbox.appendChild(messageDiv); // Append AI message
+    renderMessageInterruptionStatus(messageDiv, fullMessageObject);
     window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     renderMessageReasoningAdjustments(messageDiv, getMessageReasoningAdjustments(fullMessageObject));
     renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
@@ -6318,6 +6457,7 @@ export function appendMessage(
       hydrateInlineCharts(messageDiv);
       hydrateInlineDiagrams(messageDiv);
       hydrateInlineImageProposals(messageDiv);
+      void hydrateMath(messageDiv);
     }
 
     // --- Attach Event Listeners specifically for AI message ---
@@ -6766,6 +6906,7 @@ export function appendMessage(
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
+    renderMessageInterruptionStatus(messageDiv, fullMessageObject, sender === 'You' || sender === 'Collaborator');
     window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     hydrateChatWorkspaceAttachmentProgress(messageDiv);
 
@@ -7005,6 +7146,8 @@ function getCurrentModelSelection() {
   let modelId = null;
   let modelEndpointId = null;
   let modelProvider = null;
+  let modelScopeType = null;
+  let modelScopeId = null;
   let modelIcon = {};
 
   if (window.appSettings?.enable_multi_model_endpoints && modelSelect) {
@@ -7012,6 +7155,8 @@ function getCurrentModelSelection() {
     modelId = selectedOption?.dataset?.modelId || selectedOption?.value || null;
     modelEndpointId = selectedOption?.dataset?.endpointId || null;
     modelProvider = selectedOption?.dataset?.provider || null;
+    modelScopeType = selectedOption?.dataset?.scopeType || null;
+    modelScopeId = selectedOption?.dataset?.scopeId || null;
     modelDeployment = selectedOption?.dataset?.requestModel
       || selectedOption?.value
       || selectedOption?.dataset?.deploymentName
@@ -7024,6 +7169,8 @@ function getCurrentModelSelection() {
     modelId,
     modelEndpointId,
     modelProvider,
+    modelScopeType,
+    modelScopeId,
     modelIcon,
     modelDisplayName: String(
       modelSelect?.options?.[modelSelect.selectedIndex]?.dataset?.displayName
@@ -7187,6 +7334,8 @@ function buildCollaborativeModelTarget(option = {}) {
   const modelId = String(dataset.modelId || option.model_id || option.value || '').trim() || null;
   const modelEndpointId = String(dataset.endpointId || option.endpoint_id || '').trim() || null;
   const modelProvider = String(dataset.provider || option.provider || '').trim() || null;
+  const modelScopeType = String(dataset.scopeType || option.scope_type || '').trim() || null;
+  const modelScopeId = String(dataset.scopeId || option.scope_id || '').trim() || null;
   const parsedIcon = parseSafeJsonObject(dataset.modelIcon);
   const selectionKey = String(
     dataset.selectionKey
@@ -7207,6 +7356,8 @@ function buildCollaborativeModelTarget(option = {}) {
     model_id: modelId,
     model_endpoint_id: modelEndpointId,
     model_provider: modelProvider,
+    model_scope_type: modelScopeType,
+    model_scope_id: modelScopeId,
     model_icon: Object.keys(parsedIcon).length ? parsedIcon : (option.icon || {}),
     subtitle: modelDeployment && modelDeployment !== displayName
       ? modelDeployment
@@ -7366,6 +7517,8 @@ function buildCollaborativeSendContext(finalMessageToSend, conversationId = curr
     messageData.model_id = explicitInvocationTarget.model_id || messageData.model_id;
     messageData.model_endpoint_id = explicitInvocationTarget.model_endpoint_id || messageData.model_endpoint_id;
     messageData.model_provider = explicitInvocationTarget.model_provider || messageData.model_provider;
+    messageData.model_scope_type = explicitInvocationTarget.model_scope_type || messageData.model_scope_type;
+    messageData.model_scope_id = explicitInvocationTarget.model_scope_id || messageData.model_scope_id;
     messageData.model_icon = explicitInvocationTarget.model_icon || messageData.model_icon;
   }
 
@@ -7400,6 +7553,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     modelId,
     modelEndpointId,
     modelProvider,
+    modelScopeType,
+    modelScopeId,
     modelIcon,
   } = getCurrentModelSelection();
 
@@ -7553,12 +7708,36 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     model_id: modelId,
     model_endpoint_id: modelEndpointId,
     model_provider: modelProvider,
+    model_scope_type: modelScopeType,
+    model_scope_id: modelScopeId,
     model_icon: modelIcon,
     prompt_info: promptInfo,
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort(),
     time_zone: getBrowserTimeZone(),
   };
+
+  const chatLinkDocumentSelection = buildChatLinkDocumentSourceSelection();
+  if (chatLinkDocumentSelection) {
+    const chatLinkReference = getChatLinkReferenceForRequest({
+      ...requestPayload,
+      document_source_selection: chatLinkDocumentSelection,
+    });
+    if (chatLinkReference && documentActionType === DOCUMENT_ACTION_NONE) {
+      requestPayload.document_source_selection = chatLinkDocumentSelection;
+      requestPayload.chat_link_reference = chatLinkReference;
+      delete requestPayload.selected_document_id;
+      delete requestPayload.selected_document_ids;
+      delete requestPayload.tags;
+      delete requestPayload.doc_scope;
+      delete requestPayload.active_group_id;
+      delete requestPayload.active_group_ids;
+      delete requestPayload.active_public_workspace_id;
+      delete requestPayload.active_public_workspace_ids;
+    } else if (chatLinkReference) {
+      commitChatLinkReference(chatLinkReference);
+    }
+  }
 
   if (documentActionType !== DOCUMENT_ACTION_NONE) {
     requestPayload.document_action = documentAction;
@@ -7784,7 +7963,6 @@ export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
     );
     return;
   }
-
   // Append user message first with temporary ID
   appendMessage("You", finalMessageToSend, null, tempUserMessageId);
   userInput.value = "";
@@ -7798,7 +7976,12 @@ export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
     {
       endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream',
       fallbackAgentInfo: messageData.agent_info || null,
-      onDone: onVoiceResponseDone,
+      onDone: data => {
+        if (data?.status !== 'waiting_for_credentials' && messageData.chat_link_reference) {
+          commitChatLinkReference(messageData.chat_link_reference);
+        }
+        onVoiceResponseDone?.(data);
+      },
     }
   );
 
@@ -9334,7 +9517,7 @@ export function applySearchHighlight(searchTerm) {
     const textNodes = [];
     let node;
     while (node = walker.nextNode()) {
-      if (node.nodeValue.trim() !== '') {
+      if (node.nodeValue.trim() !== '' && !node.parentElement?.closest('.sc-math')) {
         textNodes.push(node);
       }
     }
@@ -9634,6 +9817,7 @@ function applyMaskedState(messageDiv, metadata = {}) {
   hydrateInlineCharts(messageDiv);
   hydrateInlineDiagrams(messageDiv);
   hydrateInlineImageProposals(messageDiv);
+  void hydrateMath(messageDiv);
   updateMaskControls(messageDiv, nextMetadata);
 }
 
@@ -9649,16 +9833,9 @@ function getSelectionInfoForMessage(messageDiv) {
     return null;
   }
 
-  const preSelectionRange = range.cloneRange();
-  preSelectionRange.selectNodeContents(messageText);
-  preSelectionRange.setEnd(range.startContainer, range.startOffset);
-  const selectedText = selection.toString();
-  const start = preSelectionRange.toString().length;
   return {
     selection,
-    start,
-    end: start + selectedText.length,
-    text: selectedText,
+    ...getMathAwareSelection(messageText, range),
   };
 }
 
@@ -9689,7 +9866,7 @@ function buildMaskPayload(messageDiv, action, selectionInfo = null) {
     payload.selection = {
       start: selectionInfo.start,
       end: selectionInfo.end,
-      text: selectionInfo.text,
+      text: selectionInfo.sourceText ?? selectionInfo.text,
       display_start: selectionInfo.start,
       display_end: selectionInfo.end,
       display_text: selectionInfo.text,

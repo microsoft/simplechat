@@ -1,7 +1,7 @@
 # test_ai_connection_custom_embeddings.py
 """
 Custom embedding controls in the real Classic AI Connections editor.
-Version: 0.261.122
+Version: 0.261.436
 Implemented in: 0.261.122
 
 Uses the existing Azure Playwright/local Chromium harness with the actual local
@@ -14,7 +14,7 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.test_model_endpoint_capacity_editor import (
-    _open_editor, _save, capacity_browser, capacity_ui,
+    _expand, _open_editor, _save, capacity_browser, capacity_ui,
 )
 
 
@@ -54,30 +54,35 @@ def test_supported_custom_embeddings_use_the_matching_api_and_saved_selection(
     page, api = capacity_ui
     configure_embedding(api, provider=provider, api_type=api_type, auth_type=auth_type)
     _open_editor(page, api)
-    expect(page.locator("#model-endpoint-embedding-settings")).to_be_visible()
-    expect(page.locator("#model-endpoint-embedding-unavailable")).to_be_hidden()
+    expect(page.locator("#model-endpoint-embedding-settings")).to_have_count(0)
     expect(page.locator('input[data-capability="embeddings"]')).to_be_enabled()
     expect(page.locator('input[data-capability="embeddings"]')).to_be_checked()
     azure = api_type == "azure_openai"
-    azure_option = page.locator('#model-endpoint-embedding-api option[value="azure_openai"]')
-    openai_option = page.locator('#model-endpoint-embedding-api option[value="openai"]')
-    version_group = page.locator("#model-endpoint-embedding-version-group")
+    _expand(page.locator("details[data-model-capability-details-for]"))
+    page.get_by_text("Embedding routing", exact=True).click()
+    page.get_by_label("Use model-specific embedding routing", exact=True).check()
+    azure_option = page.locator('[data-embedding-route-field="api"] option[value="azure_openai"]')
+    openai_option = page.locator('[data-embedding-route-field="api"] option[value="openai"]')
+    version_group = page.get_by_label("Embedding API version", exact=True)
     if azure:
         expect(azure_option).to_be_enabled()
-        expect(openai_option).to_be_disabled()
+        expect(openai_option).to_have_attribute("disabled", "")
         expect(version_group).to_be_visible()
     else:
-        expect(azure_option).to_be_disabled()
+        expect(azure_option).to_have_attribute("disabled", "")
         expect(openai_option).to_be_enabled()
         expect(version_group).to_be_hidden()
+    page.get_by_label("Use model-specific embedding routing", exact=True).uncheck()
+    saved = _save(page, api)
+    _open_editor(page, api)
     page.get_by_role("button", name="Test embeddings", exact=True).click()
     expect(page.locator("#toast-container")).to_contain_text("1,536 dimensions")
     assert api.operation_tests == [{
         "test_type": "embedding",
         "selection": {"endpoint_id": "endpoint-one", "model_id": "model-one", "provider": provider},
     }]
-    saved = _save(page, api)
     assert saved["models"][0]["enabled_capabilities"] == ["embeddings"]
+    assert "embedding_operation" not in saved["models"][0]
     assert "embeddings" not in saved["connection"].get("operation_settings", {})
     if azure:
         assert saved["connection"]["api_version"] == "2025-03-01-preview"
@@ -90,10 +95,8 @@ def test_unsupported_custom_embedding_protocols_are_not_advertised(capacity_ui, 
     page, api = capacity_ui
     configure_embedding(api, api_type=api_type, auth_type=auth_type)
     _open_editor(page, api)
-    expect(page.locator("#model-endpoint-embedding-unavailable")).to_contain_text(
-        "Other Custom API types and OAuth2 embeddings are not supported.",
-    )
-    expect(page.locator("#model-endpoint-embedding-settings")).to_be_hidden()
+    expect(page.get_by_text(re.compile("Other Custom API types and OAuth2 embeddings are not supported.")).first).to_be_visible()
+    expect(page.locator("[data-embedding-routing]")).to_have_count(0)
     expect(page.locator('input[data-capability="embeddings"]')).to_be_disabled()
     expect(page.locator('input[data-capability="embeddings"]')).not_to_be_checked()
     expect(page.get_by_role("button", name="Test embeddings", exact=True)).to_be_hidden()
@@ -107,7 +110,7 @@ def test_authentication_changes_preserve_drafts_and_reject_invalid_metadata(capa
     configure_embedding(api)
     _open_editor(page, api)
     page.locator("[data-description-for]").fill("Keep this draft while changing authentication")
-    page.locator("details[data-model-capability-details-for] summary").click()
+    page.get_by_text("Capability metadata", exact=True).click()
     dimensions = page.locator('input[data-config-key="dimensions"]')
     dimensions.fill("1.5")
     auth = page.locator("#model-endpoint-auth-type")
@@ -116,12 +119,15 @@ def test_authentication_changes_preserve_drafts_and_reject_invalid_metadata(capa
     expect(dimensions).to_have_value("1.5")
     dimensions.fill("512")
     auth.select_option("oauth2_client_credentials")
-    expect(page.locator("#model-endpoint-embedding-unavailable")).to_be_visible()
+    page.get_by_text("Capability metadata", exact=True).click()
+    reason = page.get_by_text(re.compile("Other Custom API types and OAuth2 embeddings are not supported.")).first
+    expect(reason).to_be_visible()
     expect(page.locator('input[data-capability="embeddings"]')).to_be_disabled()
     expect(dimensions).to_have_value("512")
     expect(page.locator("[data-description-for]")).to_have_value("Keep this draft while changing authentication")
     auth.select_option("api_key")
-    expect(page.locator("#model-endpoint-embedding-unavailable")).to_be_hidden()
+    page.get_by_text("Capability metadata", exact=True).click()
+    expect(reason).to_have_count(0)
     expect(page.locator('input[data-capability="embeddings"]')).to_be_enabled()
     expect(dimensions).to_have_value("512")
     expect(page.locator("[data-description-for]")).to_have_value("Keep this draft while changing authentication")
@@ -135,7 +141,7 @@ def test_custom_api_mismatch_has_an_explicit_error_instead_of_saving(capacity_ui
     before = page.locator("#model_endpoints_json").input_value()
     page.locator("#model-endpoint-save-btn").click()
     expect(page.locator("#toast-container")).to_contain_text(
-        "The embedding operation must match the Custom connection API type.",
+        "The embedding operation must match the Custom model's API type.",
     )
     expect(page.locator("#modelEndpointModal")).to_be_visible()
     assert page.locator("#model_endpoints_json").input_value() == before

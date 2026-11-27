@@ -22,6 +22,7 @@ from agent_credential_contracts import (
 from functions_mcp_operations import MCP_CUSTOM_HEADERS_FIELD, MCP_PLUGIN_TYPE
 from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE, SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS
 from functions_yamcs_operations import YAMCS_PLUGIN_TYPE, YAMCS_SENSITIVE_ADDITIONAL_FIELDS
+from functions_microsoft_decision_operations import MICROSOFT_DECISION_PLUGIN_TYPE
 
 try:
     from azure.identity import DefaultAzureCredential
@@ -429,6 +430,12 @@ def _is_yamcs_plugin(plugin_dict):
     return isinstance(plugin_type, str) and plugin_type.lower() == YAMCS_PLUGIN_TYPE
 
 
+def _is_microsoft_decision_plugin(plugin_dict):
+    """Return True when the plugin manifest is a Microsoft Decision action."""
+    plugin_type = (plugin_dict or {}).get("type", "")
+    return isinstance(plugin_type, str) and plugin_type.lower() == MICROSOFT_DECISION_PLUGIN_TYPE
+
+
 def _is_mcp_plugin(plugin_dict):
     """Return True when the plugin manifest is an MCP action."""
     plugin_type = (plugin_dict or {}).get("type", "")
@@ -681,6 +688,16 @@ def redact_model_endpoint_secret_values(endpoint_dict, redaction_value=REDACTED_
             if new_auth.get(auth_field):
                 new_auth[auth_field] = redaction_value
         redacted["auth"] = new_auth
+    models = redacted.get("models")
+    if isinstance(models, list):
+        redacted["models"] = []
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            redacted_model = dict(model)
+            if isinstance(redacted_model.get("persona_markdown"), str):
+                redacted_model["persona_markdown"] = redaction_value
+            redacted["models"].append(redacted_model)
 
     return redacted
 

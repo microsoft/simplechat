@@ -122,7 +122,10 @@ export function workflowRunnerSummary(
         return agent?.display_name || agent?.name || 'Agent not selected';
     }
     const model = options.models.find((item) =>
-        item.endpoint_id === workflow.model_endpoint_id && item.model_id === workflow.model_id);
+        item.endpoint_id === workflow.model_endpoint_id
+        && item.model_id === workflow.model_id
+        && (!workflow.model_scope_type || item.scope_type === workflow.model_scope_type)
+        && (!workflow.model_scope_id || item.scope_id === workflow.model_scope_id));
     return model?.label || 'App default model';
 }
 

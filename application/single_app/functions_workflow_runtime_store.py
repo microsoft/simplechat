@@ -24,6 +24,7 @@ from functions_workflow_identity import workflow_execution_id
 from functions_artifact_publication_readiness import public_publication_status
 from functions_workflow_limits import WORKFLOW_REPEAT_ITERATIONS_DEFAULT, WORKFLOW_REPEAT_ITERATIONS_MAX
 from functions_m365_workflow_binding import M365_WAITING_STATES
+from functions_workflow_policy_errors import WORKFLOW_FAILURE_FIELDS, safe_workflow_failure_summary
 
 
 CONTROL_ID = "workflow-runtime:v1"
@@ -84,6 +85,9 @@ GATE_ALLOWED_KEYS = frozenset({
     "publication",
     "reason_code",
     "repeat",
+    "error", "error_code", "failure_phase", "effect_certainty", "terminal_failure",
+    "correlation_reference", "provider_status", "provider_error_type",
+    "model_protocol", "request_stage", "missing_capability", "request_outcome",
 })
 GATE_KIND_BY_STATE = {
     **{state: "pause" for state in M365_WAITING_STATES},
@@ -425,6 +429,7 @@ def _unit_projection(unit):
         if key not in unit:
             continue
         projected[key] = _safe_ref(unit[key]) if key.endswith("_ref") else deepcopy(unit[key])
+    projected.update(safe_workflow_failure_summary(unit))
     return projected
 
 
@@ -461,7 +466,7 @@ def public_projection(control):
     if gate:
         safe_gate = {}
         for key in GATE_ALLOWED_KEYS:
-            if key not in gate or key == "metadata":
+            if key not in gate or key == "metadata" or key in WORKFLOW_FAILURE_FIELDS:
                 continue
             if key == "references":
                 references = gate[key] if isinstance(gate[key], list) else []
@@ -474,6 +479,7 @@ def public_projection(control):
                 safe_gate[key] = deepcopy(gate[key])
         if isinstance(gate.get("metadata"), dict):
             safe_gate["metadata"] = _safe_ref(gate["metadata"])
+        safe_gate.update(safe_workflow_failure_summary(gate))
     return {
         "schema_version": control.get("schema_version", 1),
         "version": control.get("version"),

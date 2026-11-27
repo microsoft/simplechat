@@ -21,6 +21,8 @@ let summaryModelDeployment = '';
 let summaryModelEndpointId = '';
 let summaryModelId = '';
 let summaryModelProvider = '';
+let summaryModelScopeType = '';
+let summaryModelScopeId = '';
 let currentStep = 1;
 let totalSteps = 3;
 let skipSelectionStep = false;
@@ -188,14 +190,15 @@ function _renderSelectionStep(container) {
     const count = exportConversationIds.length;
     let listHtml = '';
     exportConversationIds.forEach(id => {
+        const safeId = _escapeHtml(id);
         const title = _escapeHtml(exportConversationTitles[id] || 'Untitled');
         listHtml += `
-            <div class="d-flex align-items-center justify-content-between py-2 px-3 border-bottom export-conversation-item" data-id="${id}">
+            <div class="d-flex align-items-center justify-content-between py-2 px-3 border-bottom export-conversation-item" data-id="${safeId}">
                 <div class="d-flex align-items-center">
                     <i class="bi bi-chat-dots me-2 text-primary"></i>
                     <span>${title}</span>
                 </div>
-                <button class="btn btn-sm btn-outline-danger export-remove-btn" data-id="${id}" title="Remove from export">
+                <button class="btn btn-sm btn-outline-danger export-remove-btn" data-id="${safeId}" title="Remove from export">
                     <i class="bi bi-x-lg"></i>
                 </button>
             </div>`;
@@ -557,6 +560,8 @@ async function _executeExport() {
                 summary_model_endpoint_id: includeSummaryIntro ? summaryModelEndpointId : null,
                 summary_model_id: includeSummaryIntro ? summaryModelId : null,
                 summary_model_provider: includeSummaryIntro ? summaryModelProvider : null,
+                summary_model_scope_type: includeSummaryIntro ? summaryModelScopeType : null,
+                summary_model_scope_id: includeSummaryIntro ? summaryModelScopeId : null,
                 visual_assets: visualAssets
             })
         });
@@ -640,9 +645,13 @@ async function buildExportVisualAssets(statusDiv) {
 }
 
 function _escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    // Quotes are escaped too, so the result is also safe inside attribute values.
+    return String(text ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function _getDefaultSummaryModel() {
@@ -675,7 +684,13 @@ function _selectSummaryModelOption(selectElement, deployment) {
         if (summaryModelProvider && option.dataset.provider !== summaryModelProvider) {
             return false;
         }
-        return Boolean(deploymentValue || summaryModelEndpointId || summaryModelId || summaryModelProvider);
+        if (summaryModelScopeType && option.dataset.scopeType !== summaryModelScopeType) {
+            return false;
+        }
+        if (summaryModelScopeId && option.dataset.scopeId !== summaryModelScopeId) {
+            return false;
+        }
+        return Boolean(deploymentValue || summaryModelEndpointId || summaryModelId || summaryModelProvider || summaryModelScopeType);
     });
     const deploymentOption = exactOption || options.find(option => (
         option.dataset.deploymentName || option.value || ''
@@ -694,6 +709,8 @@ function _setSummaryModelSelectionFromSelect(selectElement) {
     summaryModelEndpointId = selectedOption?.dataset?.endpointId || '';
     summaryModelId = selectedOption?.dataset?.modelId || '';
     summaryModelProvider = selectedOption?.dataset?.provider || '';
+    summaryModelScopeType = selectedOption?.dataset?.scopeType || '';
+    summaryModelScopeId = selectedOption?.dataset?.scopeId || '';
 }
 
 // --- Expose Globally ---
