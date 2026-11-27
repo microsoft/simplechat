@@ -31,6 +31,7 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_model_endpoint_urls import routing_schema_version
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
@@ -39,6 +40,9 @@ from functions_activity_logging import (
     log_user_support_feedback_email_submission,
 )
 from functions_appinsights import log_event
+from app_settings_cache import COSMOS_REPLAY_INDEX_SETTING
+from app_settings_store import SettingsConflictError, SettingsUnavailableError
+from functions_cosmos_indexing import get_cosmos_replay_index_status
 from functions_cosmos_throughput import (
     calculate_manual_to_autoscale_target,
     calculate_manual_scale_target,
@@ -543,6 +547,60 @@ def register_route_backend_settings(bp):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to load app maintenance status.'}), 500
+
+    @bp.route('/api/admin/settings/cosmos-replay-indexing', methods=['GET', 'POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def cosmos_replay_indexing_admin():
+        """Preview, verify, enable or disable the Cosmos replay-only exclusion."""
+        action = None
+        if request.method == 'POST':
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict) or set(payload) - {'action', 'readers_ready'}:
+                return jsonify({'error': 'Invalid replay indexing request.'}), 400
+            action = payload.get('action')
+            if action not in ('apply', 'verify', 'disable'):
+                return jsonify({'error': 'Select a valid replay indexing action.'}), 400
+            if action != 'disable' and payload.get('readers_ready') is not True:
+                return jsonify({'error': 'Confirm that all workers can read both replay formats.'}), 400
+
+        try:
+            settings = get_settings(use_cosmos=action is not None)
+            if not isinstance(settings, dict) or (action is not None and not settings.get('_etag')):
+                raise SettingsUnavailableError("The current settings revision is unavailable.")
+            if action is None:
+                return jsonify(get_cosmos_replay_index_status(settings))
+            enabled = action != 'disable'
+            if enabled:
+                if settings.get('enable_redis_cache'):
+                    return jsonify({
+                        'error': 'Cosmos replay optimization is only available when Redis is off.',
+                        'status': get_cosmos_replay_index_status(settings),
+                    }), 409
+                status = get_cosmos_replay_index_status(settings, apply=action == 'apply')
+                if status['policy_state'] != 'ready':
+                    return jsonify({
+                        'error': 'The replay exclusion is not confirmed. New streams will not use it until verified.',
+                        'status': status,
+                    }), 409
+            if (settings.get(COSMOS_REPLAY_INDEX_SETTING) is True) != enabled:
+                if not update_settings({COSMOS_REPLAY_INDEX_SETTING: enabled}, expected_etag=settings['_etag']):
+                    raise SettingsUnavailableError("Replay indexing preference could not be saved.")
+                log_event(
+                    '[COSMOS_INDEXING] Replay exclusion preference changed.',
+                    extra={'enabled': enabled, 'admin_user_id': get_current_user_id()},
+                    level=logging.INFO,
+                )
+            if enabled:
+                return jsonify({**status, 'enabled': True})
+            return jsonify(get_cosmos_replay_index_status({**settings, COSMOS_REPLAY_INDEX_SETTING: False}))
+        except SettingsConflictError:
+            return jsonify({'error': 'Settings changed while applying this action. Refresh and retry.'}), 409
+        except (AzureError, SettingsUnavailableError) as error:
+            log_event('[COSMOS_INDEXING] Replay indexing preference could not be confirmed.',
+                      extra={'error_type': type(error).__name__}, level=logging.WARNING)
+            return jsonify({'error': 'Replay indexing settings could not be confirmed. Refresh and retry.'}), 503
 
     @bp.route('/api/admin/settings/app-maintenance/run', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -1605,6 +1663,18 @@ def _test_multimodal_vision_connection(payload):
                     or ''
                 ).strip(),
             }
+            selected_endpoint = next((
+                endpoint for endpoint in settings.get('model_endpoints', []) or []
+                if isinstance(endpoint, dict)
+                and str(endpoint.get('id') or '').strip() == model_context['endpoint_id']
+            ), None)
+            if selected_endpoint and routing_schema_version(selected_endpoint) == 2:
+                model_context.update({
+                    'routing_schema_version': 2,
+                    'scope_type': 'global',
+                    'scope_id': 'global',
+                    'user_id': identity_context['user_id'],
+                })
             resolved_endpoint = resolve_model_endpoint_from_context(settings, model_context)
             if not resolved_endpoint:
                 return jsonify({'error': 'Selected vision model endpoint could not be resolved from saved settings'}), 400
@@ -1631,7 +1701,13 @@ def _test_multimodal_vision_connection(payload):
             if not matched_model:
                 return jsonify({'error': 'Selected vision model could not be resolved from saved settings'}), 400
 
-            vision_model = resolve_model_endpoint_request_model(resolved_endpoint, matched_model)
+            resolved_route = resolved_endpoint.get('_resolved_route')
+            if resolved_route:
+                if not resolved_route.get('capabilities', {}).get('processesImages', False):
+                    return jsonify({'error': 'Selected model is not approved for image input.'}), 400
+                vision_model = resolved_route['request_model']
+            else:
+                vision_model = resolve_model_endpoint_request_model(resolved_endpoint, matched_model)
             vision_model_name = str(matched_model.get('modelName') or vision_model).strip()
             connection = resolved_endpoint.get('connection', {}) or {}
             gpt_client, _ = build_model_endpoint_sync_chat_client(
@@ -1640,7 +1716,7 @@ def _test_multimodal_vision_connection(payload):
                 connection.get('endpoint'),
                 connection.get('openai_api_version') or connection.get('api_version'),
                 deployment_name=vision_model,
-                api_type=get_model_endpoint_api_type(resolved_endpoint),
+                api_type=(resolved_route['api_type'] if resolved_route else get_model_endpoint_api_type(resolved_endpoint)),
                 anthropic_version=connection.get('anthropic_version') or '',
                 allow_private_custom_endpoints=bool(
                     settings.get('allow_private_custom_model_endpoints', False)
@@ -1648,6 +1724,8 @@ def _test_multimodal_vision_connection(payload):
                 settings=settings,
                 endpoint_config=resolved_endpoint,
                 identity_context=identity_context,
+                resolved_route=resolved_route,
+                model_id=str(matched_model.get('id') or '').strip(),
             )
         elif enable_apim:
             settings = get_settings()

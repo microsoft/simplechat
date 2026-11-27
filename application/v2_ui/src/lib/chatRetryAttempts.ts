@@ -20,6 +20,7 @@ export interface RetryPresentation {
 }
 
 export interface ResponseAttempt {
+    submission_id?: string;
     kind?: string;
     state?: string;
     error?: string;
@@ -51,6 +52,7 @@ export function savedResponseAttempt(message: ChatMessage | undefined): Response
     const value = message?.metadata?.response_attempt;
     if (!isRecord(value)) return {};
     return {
+        submission_id: typeof value.submission_id === 'string' ? value.submission_id : undefined,
         kind: typeof value.kind === 'string' ? value.kind : undefined,
         state: typeof value.state === 'string' ? value.state : undefined,
         error: typeof value.error === 'string' ? value.error : undefined,
@@ -69,14 +71,18 @@ export function retryQuestion(messages: ChatMessage[], message: ChatMessage): Ch
     const thread = messageThreadId(message);
     const turn = messageOrchestrationTurn(message);
     if (thread || turn) {
-        return messages.find((candidate) => candidate.role === 'user' && (
+        const matched = messages.find((candidate) => candidate.role === 'user' && (
             thread
                 ? messageThreadId(candidate) === thread && currentAttempt(candidate) === currentAttempt(message)
                 : messageOrchestrationTurn(candidate) === turn
         ));
+        if (matched) return matched;
     }
-    const before = messages.slice(0, messages.findIndex((candidate) => candidate.id === message.id));
-    return before.reverse().find((candidate) => candidate.role === 'user');
+    const messageIndex = messages.findIndex((candidate) => candidate.id === message.id);
+    if (messageIndex < 0) return undefined;
+    return messages.slice(0, messageIndex).reverse().find((candidate) =>
+        candidate.role === 'user' && candidate.conversation_id === message.conversation_id
+    );
 }
 
 export function beginRetryPresentation(

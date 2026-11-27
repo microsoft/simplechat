@@ -75,11 +75,10 @@ def effective_capability_ids(values):
 
 # Document action vocabulary, duplicated as literals rather than imported.
 #
-# `functions_document_actions` reaches `functions_document_analysis` and `functions_search`,
-# and through them `config.py`, which builds a Cosmos client at import time. This module is
-# read by the validator and by tests that have no Azure to talk to, so it stays importable
-# on its own and pulls that chain in lazily inside the gate instead. The same reasoning
-# produced the `_load_orchestration_helper` shim in `functions_tabular_analysis.py`.
+# `functions_document_actions` reaches `functions_document_analysis` and the Azure SDK modules
+# it loads. This module is read by the validator and by tests that have no Azure to talk to, so
+# it stays importable on its own and pulls that chain in lazily inside the gate instead. The same
+# reasoning produced the `_load_orchestration_helper` shim in `functions_tabular_analysis.py`.
 DOCUMENT_ACTION_TYPE_ANALYZE = 'analyze'
 DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'
 DOCUMENT_ACTION_TYPE_MERGE = 'merge'

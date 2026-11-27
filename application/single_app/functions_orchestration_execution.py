@@ -211,7 +211,10 @@ ANSWER_MAX_TOKENS = 4000
 ANSWER_TEMPERATURE = 0.3
 _USAGE_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
 _WAITING_OUTPUT_STATES = frozenset({"waiting", "rendering", "retry_scheduled"})
-_MODEL_METADATA_FIELDS = ("model_deployment_name", "model_provider", "model_endpoint_id", "model_id")
+_MODEL_METADATA_FIELDS = (
+    "model_deployment_name", "model_provider", "model_endpoint_id", "model_id",
+    "model_scope_type", "model_scope_id",
+)
 _REASONING_METADATA_FIELDS = ("reasoning_effort", "requested_reasoning_effort", "reasoning_mode")
 _DELIVERY_FAILURE_CODES = frozenset({"run_timeout", "user_cancelled", "context_unavailable"})
 
@@ -922,6 +925,9 @@ class HarnessExecution:
             model_context={
                 "model_id": self.answer_model.model_id, "endpoint_id": self.answer_model.endpoint_id,
                 "provider": self.answer_model.provider, "model_deployment": self.answer_model.deployment,
+                "scope_type": self.answer_model.model_scope_type,
+                "scope_id": self.answer_model.model_scope_id,
+                "apply_model_persona": self.answer_model.apply_model_persona,
                 "user_id": user_id, "active_group_ids": seeds.get("active_group_ids") or [],
             },
             agent_execution_identity=principal, plan_contract_version=2,

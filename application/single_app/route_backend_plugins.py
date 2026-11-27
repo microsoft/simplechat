@@ -121,6 +121,11 @@ from functions_action_connection_tests import (
     test_openapi_connection,
     test_snowflake_connection,
     test_tableau_connection,
+    test_microsoft_decision_connection,
+)
+from functions_microsoft_decision_operations import (
+    MICROSOFT_DECISION_PLUGIN_TYPE,
+    normalize_microsoft_decision_additional_fields,
 )
 from functions_blob_storage_operations import (
     BLOB_STORAGE_PLUGIN_TYPE,
@@ -403,6 +408,16 @@ def _apply_plugin_runtime_defaults(plugin_payload):
             additional_fields['server_url'] = endpoint
 
         plugin_payload['type'] = YAMCS_PLUGIN_TYPE
+        plugin_payload['auth'] = auth
+        plugin_payload['additionalFields'] = additional_fields
+    elif plugin_type == MICROSOFT_DECISION_PLUGIN_TYPE:
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        auth_type = str(auth.get('type') or 'key').strip() or 'key'
+        auth['type'] = auth_type
+        additional_fields = normalize_microsoft_decision_additional_fields(
+            plugin_payload.get('additionalFields')
+        )
+        plugin_payload['type'] = MICROSOFT_DECISION_PLUGIN_TYPE
         plugin_payload['auth'] = auth
         plugin_payload['additionalFields'] = additional_fields
     elif plugin_type == SIMPLECHAT_PLUGIN_TYPE:
@@ -4430,3 +4445,16 @@ def test_snowflake_action_connection():
 def test_tableau_action_connection():
     """Test a Tableau action by signing in to the configured server and site."""
     return _run_action_connection_test(TABLEAU_PLUGIN_TYPE, 'Tableau', test_tableau_connection)
+
+
+@bpap.route('/api/plugins/test-microsoft-decision-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_microsoft_decision_action_connection():
+    """Test a Microsoft Decision action without persisting its submitted configuration."""
+    return _run_action_connection_test(
+        MICROSOFT_DECISION_PLUGIN_TYPE,
+        'Microsoft Decision',
+        test_microsoft_decision_connection,
+    )

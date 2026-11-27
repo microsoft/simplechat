@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for live user-message metadata reconciliation.
-Version: 0.250.202
+Version: 0.261.485
 Implemented in: 0.250.202
+Metadata refresh option argument position fixed in: 0.261.485
 
 This test ensures streaming routes acknowledge persisted user messages before
 assistant completion and the browser replaces temporary IDs without a refresh.
@@ -144,6 +145,11 @@ def test_browser_reconciles_pending_metadata_without_terminal_event() -> None:
     assert "if (data.type === USER_MESSAGE_PERSISTED_EVENT_TYPE)" in streaming_source
     assert "const acknowledgedUserMessageId = applyStreamingUserMessagePersistence(" in streaming_source
     assert "{ refreshExpandedMetadata: true }" in streaming_source
+    # The refresh option must be updateUserMessageId's third (options) argument.
+    assert (
+        "updateUserMessageId( tempUserMessageId, persistedUserMessageId, { refreshExpandedMetadata: true } );"
+        in " ".join(streaming_source.split())
+    )
     assert "finalizePendingUserMessageMetadata();" in streaming_source
     assert "markInterruptedUserMessageMetadata();" in streaming_source
     assert "markUserMessageMetadataFinalizationUnconfirmed(persistedUserMessageId);" in streaming_source

@@ -39,6 +39,7 @@ import { WorkflowLoopSelectionDetails } from './WorkflowLoopSelectionDetails';
 import { WorkflowPublicationDetails } from './WorkflowPublicationDetails';
 import { WorkflowDocumentChoiceDetails } from './WorkflowDocumentChoiceDetails';
 import { WorkflowRepeatProgress } from './WorkflowRepeatProgress';
+import { WorkflowFailureDetails } from './WorkflowFailureDetails';
 import { isRecord } from '../../lib/workspaceAuthoring';
 
 interface PagedState<T> {
@@ -579,6 +580,7 @@ function AttemptHistory({
                                 {attempt.started_at ? <span className="text-xs text-text-3">{formatTimestamp(attempt.started_at)}</span> : null}
                                 {attempt.completed_at ? <span className="text-xs text-text-3">→ {formatTimestamp(attempt.completed_at)}</span> : null}
                             </div>
+                            <WorkflowFailureDetails failure={attempt} />
                             {validation ? <DetailLine label="Validation"><Pill tone={validationTone(attempt.workflow_validation)}>{validation}</Pill></DetailLine> : null}
                             {resultSummary ? <DetailLine label="Result ref">{resultSummary}</DetailLine> : null}
                             {attempt.iteration_path?.length ? <DetailLine label="Iteration path">{formatIterationPath(attempt.iteration_path)}</DetailLine> : null}
@@ -1013,6 +1015,7 @@ function ScopedWorkflowExecutionInspector({
                 {resultSummary ? <DetailLine label="Result ref">{resultSummary}</DetailLine> : null}
             </div>
             <ConsumedInputs inputs={inputs} />
+            <WorkflowFailureDetails failure={execution} />
             <WorkflowDocumentChoiceDetails choice={execution.workflow_result?.document_action_choice} />
             <WorkflowPublicationDetails publication={execution.workflow_result?.publication}
                 label={`Publication for execution ${executionId}`} />

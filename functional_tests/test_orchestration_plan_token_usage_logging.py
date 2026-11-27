@@ -2,8 +2,8 @@
 # test_orchestration_plan_token_usage_logging.py
 """
 Functional test for orchestration plan token usage, split by model and logged.
-Version: 0.261.483
-Implemented in: 0.261.483
+Version: 0.261.489
+Implemented in: 0.261.489
 
 This test ensures that what an orchestration plan spends is attributed to the models that spent
 it (steps can run on different models under Auto routing), that the rows add up to the run's
@@ -164,12 +164,13 @@ def test_waiting_runs_and_failures_write_nothing_harmful():
     """A waiting run finalizes again later; a logging failure never reaches the run."""
     rows = plan_usage.summarize_plan_usage_by_model(PLAN, STEPS, TOTAL, ANSWER_MODEL)
     calls = []
-    assert plan_usage.log_plan_token_usage(
+    waiting_rows = plan_usage.log_plan_token_usage(
         _record(), rows, status="waiting", message_id="m", log_token_usage=lambda **kwargs: calls.append(kwargs),
-    ) == 0
-    assert plan_usage.log_plan_token_usage(
+    )
+    empty_rows = plan_usage.log_plan_token_usage(
         _record(), [], status="completed", message_id="m", log_token_usage=lambda **kwargs: calls.append(kwargs),
-    ) == 0
+    )
+    assert waiting_rows == 0 and empty_rows == 0
     assert calls == []
 
     def broken(**kwargs):

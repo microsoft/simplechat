@@ -29,13 +29,14 @@
         "tags": "tags",
         "group_id": "group_id",
         "workspace_id": "workspace_id",
+        "chat_link": "chat_link",
         "prompt_id": "prompt",
         "promptId": "prompt",
         "prompt_scope": "prompt_scope",
         "prompt_scope_id": "prompt_scope_id"
       },
       "templates": ["chats.html"],
-      "notes": "V2 reads conversationId (and the older conversation_id), m365_pending_action, the document hand-off keys (search_documents, doc_scope, document_id, document_ids, tags, group_id, workspace_id) and the saved prompt keys (prompt, prompt_scope, prompt_scope_id); classic spells the prompt key prompt_id or promptId. Classic-only keys that V2 ignores and the redirect drops: workspace with openSearch and scope=public (public directory chat buttons), openPrompt, feature_action, classification, and m365_request_id with m365_auth (the full-page Microsoft 365 sign-in return: V2 signs in from a popup and resumes the paused request in the page, so it reads neither from the address). Changing a conversation's scope lock (ScopeLockControl) and the generated artifact actions Add to Workspace and Create PowerPoint (GeneratedArtifactActions) are native in V2."
+      "notes": "V2 reads conversationId (and the older conversation_id), m365_pending_action, chat_link, the document hand-off keys (search_documents, doc_scope, document_id, document_ids, tags, group_id, workspace_id) and the saved prompt keys (prompt, prompt_scope, prompt_scope_id); classic spells the prompt key prompt_id or promptId. Classic-only keys that V2 ignores and the redirect drops: workspace with openSearch and scope=public (public directory chat buttons), openPrompt, feature_action, classification, and m365_request_id with m365_auth (the full-page Microsoft 365 sign-in return: V2 signs in from a popup and resumes the paused request in the page, so it reads neither from the address). Changing a conversation's scope lock (ScopeLockControl) and the generated artifact actions Add to Workspace and Create PowerPoint (GeneratedArtifactActions) are native in V2."
     },
     {
       "key": "workflow-activity",

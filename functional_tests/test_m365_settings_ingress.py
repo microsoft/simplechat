@@ -1,14 +1,17 @@
 # test_m365_settings_ingress.py
 """
 Regression tests for retired Graph actions at the generic settings boundary.
-Version: 0.261.031
+Version: 0.261.485
 Implemented in: 0.261.029
+Settings conflict and managed CA reference seams added in: 0.261.485
 
 Executes the production writer with isolated storage/cache I/O and the real
 legacy validator. Cold-import coverage separately exercises the owning module.
 """
 
 import ast
+from contextlib import contextmanager
+import copy
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
@@ -24,13 +27,22 @@ sys.path.insert(0, str(APP))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # The standalone source path must be initialized before repository imports.
+from app_settings_store import SettingsConflictError
 from json_schema_validation import validate_legacy_plugin_settings_update
+from model_endpoint_ca_bundles import endpoint_ca_bundle_ids
 from test_support.m365 import CosmosContainer
+
+
+WRITER_FUNCTIONS = ("reserve_model_endpoint_ca_references", "update_user_settings")
+
+
+def _unexpected_ca_registry(settings):
+    raise AssertionError("Settings without managed CA bundles must not open the CA registry.")
 
 
 def writer(container):
     tree = ast.parse((APP / "functions_settings.py").read_text(encoding="utf-8-sig"))
-    node = next(item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == "update_user_settings")
+    nodes = [item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name in WRITER_FUNCTIONS]
     events = []
     namespace = {
         "_authorize_user_settings_access": lambda user_id, *args, **kwargs: user_id,
@@ -40,11 +52,14 @@ def writer(container):
         "validate_legacy_plugin_settings_update": validate_legacy_plugin_settings_update,
         "MatchConditions": MatchConditions,
         "exceptions": exceptions, "datetime": datetime, "timezone": timezone, "logging": logging,
+        "copy": copy, "contextmanager": contextmanager, "SettingsConflictError": SettingsConflictError,
+        "endpoint_ca_bundle_ids": endpoint_ca_bundle_ids,
+        "get_model_endpoint_ca_bundle_registry": _unexpected_ca_registry,
         "get_settings": lambda: {},
         "_set_request_cached_user_settings": lambda *args: None,
         "_delete_user_ui_settings_cache": lambda *args: None,
     }
-    exec(compile(ast.Module(body=[node], type_ignores=[]), str(APP / "functions_settings.py"), "exec"), namespace)
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP / "functions_settings.py"), "exec"), namespace)
     return namespace["update_user_settings"], events
 
 

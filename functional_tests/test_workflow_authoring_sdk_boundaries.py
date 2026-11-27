@@ -1,7 +1,7 @@
 # test_workflow_authoring_sdk_boundaries.py
 """
 SDK-shaped runtime coverage for storage owners in the workflow authoring modules.
-Version: 0.261.362
+Version: 0.261.485
 Implemented in: 0.261.332
 Personal workflow owner-runtime coverage added in: 0.261.335
 Workflow assistant/citation write coverage added in: 0.261.362
@@ -12,7 +12,6 @@ their modules. External I/O is blocked; real owners use the existing SDK-default
 conditional Cosmos double. This is representative, not exhaustive coverage.
 """
 
-import ast
 import importlib
 import sys
 import uuid
@@ -23,7 +22,6 @@ from types import SimpleNamespace
 import pytest
 from azure.core.exceptions import AzureError
 from azure.cosmos._cosmos_responses import CosmosDict
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'application' / 'single_app'))
@@ -73,17 +71,10 @@ def owners(initialized_application, monkeypatch):
     search = importlib.import_module('functions_search_service')
     conversations = AtomicMemoryContainer('id')
     messages = AtomicMemoryContainer('conversation_id')
-    # Bind the exact route helper bodies without registering the web-only agent
-    # decorators; SDK responses, ownership checks, and projections remain real.
-    path = ROOT / 'application' / 'single_app' / 'route_backend_workflows.py'
-    nodes = [node for node in ast.parse(path.read_text(encoding='utf-8')).body
-             if isinstance(node, ast.FunctionDef) and node.name in {
-                 '_load_workflow_conversation', '_load_group_workflow_conversation', '_normalize_identifier',
-             }]
-    namespace = {'cosmos_conversations_container': conversations,
-                 'CosmosResourceNotFoundError': CosmosResourceNotFoundError}
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
-    routes = SimpleNamespace(**namespace)
+    # Import the real route module under the existing offline bootstrap. AST-only
+    # extraction cannot establish the changed module's dependency/consumer contract.
+    routes = importlib.import_module('route_backend_workflows')
+    monkeypatch.setattr(routes, 'cosmos_conversations_container', conversations)
     for module in (runner, search):
         monkeypatch.setattr(module, 'cosmos_conversations_container', conversations)
     for module in (runner, search):

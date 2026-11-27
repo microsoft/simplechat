@@ -585,8 +585,12 @@ def group_endpoint_environment():
             env.user_settings.get(user_id, {"id": user_id, "settings": {}})
         )
 
-        def update_user_settings(user_id, updates):
+        def update_user_settings(user_id, updates, *, expected_etag=None):
             document = env.user_settings.setdefault(user_id, {"id": user_id, "settings": {}})
+            if expected_etag is not None and expected_etag != document.get("_etag"):
+                from app_settings_store import SettingsConflictError
+
+                raise SettingsConflictError("stale test revision")
             document["settings"].update(copy.deepcopy(updates))
             return True
 
@@ -600,6 +604,9 @@ def group_endpoint_environment():
                 MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI=providers.MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
                 MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE=providers.MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
                 build_anthropic_chat_client=Mock(side_effect=AssertionError("Unexpected Anthropic client")),
+                build_custom_openai_sync_http_client=Mock(
+                    side_effect=AssertionError("Unexpected custom OpenAI client")
+                ),
                 build_openai_style_chat_client=Mock(side_effect=AssertionError("Unexpected OpenAI-style client")),
                 infer_model_endpoint_protocol=lambda *args, **kwargs: providers.MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
                 normalize_anthropic_messages_url=lambda endpoint, **kwargs: str(endpoint or ""),

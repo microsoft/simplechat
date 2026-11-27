@@ -2238,6 +2238,31 @@ export async function deleteConversation(conversationId) {
   }
 }
 
+export function prepareNewConversationDraft(options = {}) {
+  const { preserveSelections = false } = options;
+  window.chatCollaboration?.deactivateConversation?.();
+  if (!preserveSelections) {
+    notifyConversationContextChanged("new", null, { preserveSelections });
+  }
+  currentConversationId = null;
+  window.currentConversationId = null;
+  resetScopeLock({ preserveSelections });
+  if (currentConversationTitleEl) {
+    currentConversationTitleEl.textContent = "New Conversation";
+  }
+  if (currentConversationClassificationsEl) {
+    currentConversationClassificationsEl.innerHTML = "";
+  }
+  if (chatbox) {
+    chatbox.replaceChildren();
+  }
+  highlightSelectedConversation(null);
+  toggleConversationInfoButton(false);
+  hideWorkflowActivityButton();
+  setSidebarActiveConversation(null);
+  updateConversationUrl(null);
+}
+
 // Create a new conversation via API
 export async function createNewConversation(callback, options = {}) {
     if (pendingConversationCreation) {

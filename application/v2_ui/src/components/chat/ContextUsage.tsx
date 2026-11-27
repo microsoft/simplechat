@@ -8,6 +8,7 @@
 import { useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import { Gauge } from 'lucide-react';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useContextUsageStore } from '../../stores/contextUsageStore';
 import {
@@ -46,10 +47,23 @@ const LEVEL_TEXT: Record<ContextLevel, string> = {
     full: 'text-danger',
 };
 
+/**
+ * Whether administrators let users see context usage. On unless the setting is explicitly off,
+ * so a deployment whose settings predate it keeps the display. Hiding it does not stop the
+ * server recording usage.
+ */
+export function useContextUsageEnabled(): boolean {
+    return useBootstrapStore((state) => state.data?.features?.enable_context_usage_display !== false);
+}
+
 export function useContextUsage(): ContextUsageView | null {
+    const enabled = useContextUsageEnabled();
     const messages = useChatStore((state) => state.messages);
     const selectedModel = useContextUsageStore((state) => state.selectedModel);
-    return useMemo(() => readContextUsage(messages, selectedModel), [messages, selectedModel]);
+    return useMemo(
+        () => (enabled ? readContextUsage(messages, selectedModel) : null),
+        [enabled, messages, selectedModel],
+    );
 }
 
 /** A progress ring. With no known limit it draws the empty track only. */

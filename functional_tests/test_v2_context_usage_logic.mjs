@@ -1,6 +1,6 @@
 // test_v2_context_usage_logic.mjs
-// Version: 0.261.483
-// Implemented in: 0.261.483
+// Version: 0.261.489
+// Implemented in: 0.261.489
 // Executes the real V2 helpers behind the composer's context ring and the drawer's Context tab.
 // The provider's count is the total when one request produced it; the server's estimate supplies
 // the split, and the difference between the two is shown as its own row or scaled away, never

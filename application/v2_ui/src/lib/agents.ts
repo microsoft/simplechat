@@ -16,6 +16,7 @@ export interface AgentInfo {
     id: string | null;
     name: string;
     display_name: string;
+    catalog_key: string | null;
     is_global: boolean;
     is_group: boolean;
     group_id: string | null;
@@ -78,6 +79,7 @@ export function buildAgentInfo(agent: AgentRecord | undefined): AgentInfo | null
         is_group: agent.is_group === true || agent.scope_type === 'group',
         group_id: text(agent.group_id) || null,
         group_name: text(agent.group_name) || null,
+        catalog_key: text(agent.catalog_key) || null,
     };
 }
 

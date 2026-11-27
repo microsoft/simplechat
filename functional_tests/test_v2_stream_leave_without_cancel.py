@@ -2,10 +2,11 @@
 """
 Functional test for leaving a V2 conversation without cancelling its generation.
 
-Version: 0.261.226
+Version: 0.261.471
 Implemented in: 0.261.050 (cancellation), 0.261.051 (conversation-creation window)
 Updated in: 0.261.226 (orchestration turns release `streaming` on leave; New chat during the
 creation window; Stop routed through the Composer's handleStop)
+Background publisher settings reuse added in: 0.261.471.
 
 Sending a message and then opening a different conversation used to end the answer. Not
 because the reader was dropped -- that is harmless, generation runs in background execution
@@ -121,7 +122,7 @@ def test_generation_survives_a_dropped_reader():
     chats = _read(APP_DIR / "route_backend_chats.py")
 
     assert re.search(
-        r"def build_background_stream_response\(event_generator_factory, stream_session=None\):\s*\n\s*\"\"\"[^\"]*survives disconnects",
+        r"def build_background_stream_response\([^\n]*\):\s*\n\s*\"\"\"[^\"]*survives disconnects",
         chats,
     ), (
         "Streaming no longer documents surviving disconnects; if generation now dies with "

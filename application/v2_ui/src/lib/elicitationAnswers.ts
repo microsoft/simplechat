@@ -188,6 +188,8 @@ export interface BuiltElicitationAnswer {
     pendingUploads: boolean;
 }
 
+export const ELICITATION_PENDING_UPLOAD_MESSAGE = 'Wait for the attached files to finish processing.';
+
 export function buildElicitationAnswer(
     elicitation: Elicitation,
     draft: ElicitationDraft,
@@ -211,7 +213,7 @@ export function buildElicitationAnswer(
         const waiting = composerDraftHasPendingUploads(editor);
         pendingUploads ||= waiting;
         if (waiting) {
-            errors[name] = 'Wait for the attached files to finish processing.';
+            errors[name] = ELICITATION_PENDING_UPLOAD_MESSAGE;
         } else if (editor.uploads.some((upload) => upload.state === 'failed')) {
             errors[name] = 'Retry or remove the failed upload before continuing.';
         }

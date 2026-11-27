@@ -20,6 +20,7 @@ category: Version History
 - [Content Safety Violation Messages](CONTENT_SAFETY_VIOLATION_MESSAGES.md)
 - [Access Restricted Sign-In Screen](ACCESS_RESTRICTED_SIGN_IN_SCREEN.md)
 - [V2 Admin Review Center](V2_ADMIN_REVIEW_CENTER.md)
+- [Stream Timing Diagnostics](STREAM_TIMING_DIAGNOSTICS.md)
 
 ## Agent and Action Features
 

@@ -108,7 +108,7 @@ EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 CHAT_STREAM_EXECUTOR_MAX_WORKERS = max(8, int(os.getenv('SIMPLECHAT_CHAT_STREAM_WORKERS', '32') or '32'))
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.483"
+VERSION = "0.261.489"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -663,7 +663,7 @@ _cosmos_create_container_if_not_exists = cosmos_database.create_container_if_not
 
 
 def _create_container_if_not_exists_with_conflict_recovery(*args, **kwargs):
-    """Return the existing container when concurrent startup creates it first.
+    """Return or provision a container after a concurrent startup race.
 
     Under managed identity Cosmos refuses data-plane container creation (403), so
     a missing container is created through ARM instead.
@@ -679,6 +679,13 @@ def _create_container_if_not_exists_with_conflict_recovery(*args, **kwargs):
             raise
 
         container = cosmos_database.get_container_client(container_id)
+        for attempt in range(7):
+            try:
+                container.read()
+                return container
+            except exceptions.CosmosResourceNotFoundError:
+                time.sleep(min(0.1 * (2 ** attempt), 2.0))
+        # The final read surfaces a container that is still missing.
         container.read()
         return container
     except exceptions.CosmosHttpResponseError as exc:
@@ -731,6 +738,13 @@ cosmos_conversation_handoffs_container_name = "conversation_handoffs"
 cosmos_conversation_handoffs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_conversation_handoffs_container_name,
     partition_key=PartitionKey(path="/destination_conversation_id")
+)
+
+cosmos_chat_links_container_name = "chat_links"
+cosmos_chat_links_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_chat_links_container_name,
+    partition_key=PartitionKey(path="/id"),
+    default_ttl=-1,
 )
 
 cosmos_tabular_export_runs_container_name = "tabular_export_runs"

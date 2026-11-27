@@ -1,7 +1,7 @@
 # test_v2_workflow_durable_runtime.py
 """
 UI tests for native V2 durable workflow runtime controls.
-Version: 0.261.381
+Version: 0.261.430
 Implemented in: 0.261.111
 Workflow status freshness and readable run labels: 0.261.362
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
@@ -83,6 +83,35 @@ def expand_durable_history(page):
     runs.get_by_text("Run memory", exact=True).click()
     expect(runs.get_by_text("Checkpoint units and attempts", exact=True)).to_be_visible()
     return runs
+
+
+@pytest.mark.parametrize("reason", ["not_committed", "candidate_unverified"])
+def test_failed_task_history_shows_safe_error_without_loading_an_absent_excerpt(workflow_ui, reason):
+    ui, page = workflow_ui, workflow_ui.page
+    failure = '<img src=x onerror="window.workflowXss=true"> The selected model request failed.'
+    page.route(f"**/api/user/workflows/{WORKFLOW_ID}/runs/run-1/items", lambda route: route.fulfill(json={
+        "workflow_id": WORKFLOW_ID, "run_id": "run-1", "items": [{
+            "id": "failed-task", "item_type": "task", "task_id": "task-a", "label": "Failed request",
+            "status": "incomplete" if reason == "candidate_unverified" else "failed",
+            "error": failure, "error_code": "model_endpoint_configuration_invalid",
+            "request_stage": "capability_validation", "missing_capability": "toolCalling",
+            "failure_phase": "request", "effect_certainty": "none", "correlation_reference": "abc12345",
+            "workflow_result": {}, "result_availability": {"available": False, "reason": reason},
+        }],
+    }))
+    ui.open("/workspace/workflows")
+    runs = open_workflow_runs(page, "Quarterly review workflow")
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
+    details = runs.get_by_label("Failure details")
+    expect(details).to_contain_text(failure)
+    expect(details).to_contain_text("model_endpoint_configuration_invalid")
+    expect(details).to_contain_text("toolCalling")
+    expect(runs.get_by_role("button", name="Load result excerpt", exact=True)).to_have_count(0)
+    if reason == "candidate_unverified":
+        expect(runs.get_by_text("A generated candidate is unverified. No result artifact was committed.", exact=True)).to_be_visible()
+    assert not any(request.path.endswith("/result") for request in ui.requests)
+    assert page.locator("img[src=x]").count() == 0
+    assert page.evaluate("() => window.workflowXss === true") is False
 
 
 def test_durable_default_existing_preservation_and_task_approval_payload(workflow_ui):

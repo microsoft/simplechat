@@ -2,8 +2,8 @@
 # test_context_usage_measurement.py
 """
 Functional test for chat context usage measurement.
-Version: 0.261.483
-Implemented in: 0.261.483
+Version: 0.261.489
+Implemented in: 0.261.489
 
 This test ensures that the request a chat sends to the model is sized by where its text came
 from (messages, summary, attached files, workspace results, memory, instructions), that the

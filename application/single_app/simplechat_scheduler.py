@@ -31,6 +31,8 @@ def initialize_scheduler_runtime():
     configure_action_credential_runtime()
     setup_appinsights_logging(settings)
     logging.basicConfig(level=logging.DEBUG)
+    for model_http_logger in ('httpx', 'httpcore', 'openai', 'anthropic'):
+        logging.getLogger(model_http_logger).setLevel(logging.INFO)
     print('SimpleChat scheduler runtime initialized.')
 
 

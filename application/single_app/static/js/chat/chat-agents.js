@@ -560,6 +560,31 @@ export function areAgentsEnabled() {
     return enableAgentsBtn && enableAgentsBtn.classList.contains('active');
 }
 
+export async function selectAgentForChatLink(selectionKey) {
+    if (!hasAgentInteractionControls() || !selectionKey) {
+        return false;
+    }
+    await populateAgentDropdown();
+    const option = Array.from(agentSelect.options).find(item => (
+        item.dataset.catalogKey === selectionKey
+    ));
+    if (!option || option.disabled) {
+        return false;
+    }
+    option.selected = true;
+    enableAgentsBtn?.classList.add('active');
+    if (agentSelectContainer) {
+        agentSelectContainer.classList.remove('d-none');
+        agentSelectContainer.style.removeProperty('display');
+    }
+    if (modelSelectContainer) {
+        modelSelectContainer.classList.add('d-none');
+    }
+    agentSelectorController?.refresh();
+    await syncAssignedKnowledgeForPayload(buildAgentPayloadFromOption(option));
+    return true;
+}
+
 export async function initializeAgentInteractions() {
     if (!hasAgentInteractionControls()) {
         return;

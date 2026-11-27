@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.446"
+version: "0.261.460"
 ---
 
 ## How to use this reference
@@ -504,6 +504,11 @@ being presented as a model answer that no documents exist.
 | `choose-file-btn` | Lets you select a supported local file and starts chat upload processing for the conversation. | Use it when the file is the immediate subject of the conversation and you do not want to visit Workspace first. | [`enable_chat_file_uploads`]({{ '/admin/workspaces/' | relative_url }}) |
 | `upload-btn` | Adds the selected upload to the chat after file selection. | Use it to confirm an upload before asking questions about that file. | [`enable_web_search`]({{ '/admin/knowledge/' | relative_url }}) |
 | `search-web-btn` | Discovers public sources through Foundry Grounding with Bing Search or V2 Microsoft Web IQ. Web IQ can add relevant admin-approved news, image, and video discovery. | Use it for current events and external evidence. Only current-message-derived queries leave the search boundary. Text-only media keeps descriptions/source links without previews; With media permits selected answer cards. | [`enable_web_search`]({{ '/admin/knowledge/' | relative_url }}) |
+| `create-chat-link-btn` | Creates a compact opaque link for the current agent or model, one whole workspace or explicit documents, and the model reasoning effort. | Use it to share a repeatable chat starting configuration through plain-text email. The URL does not grant access. | Available when one runner and one workspace-level or explicit-document source selection are available |
+| `chat-link-create-btn` | Creates the configured launch link after a creator selects its lifetime. | Use it after reviewing the runner, workspace, document count, and expiry. | Available from the chat-link dialog |
+| `chat-link-copy-btn` | Copies the created plain-text launch URL. | Use it for email or another message; selection fallback supports manual copy when clipboard access is denied. | Available after link creation |
+| `chat-link-revoke-confirm-btn` | Confirms revocation of the selected creator-owned link. | Use it when a shared URL should stop launching for all recipients. Existing conversations remain. | Available from the active-links list |
+| `chat-link-start-normal-btn` | Removes a failed one-shot link marker and starts an ordinary chat. | Use it when the linked setup is unavailable or not authorized and you want to continue without the link. | Available on a failed link launch |
 | `url-access-btn` | Opens review for URLs pasted into the message so they can be inspected by the chat flow. | Use it when pasted links should be fetched or reasoned over instead of treated as plain text. | [`enable_url_access`]({{ '/admin/knowledge/' | relative_url }}) |
 | `source-review-btn` | Starts Deep Research so SimpleChat can inspect search results and linked source pages within configured crawl limits. | Use it for research tasks where source review and evidence collection matter more than a quick answer. | [`enable_source_review`]({{ '/admin/knowledge/' | relative_url }}) |
 | `send-btn` | Sends the current composer message to the selected model or agent. | Use it once the prompt, files, scope, and optional tools are ready. | Always available |
@@ -1123,6 +1128,12 @@ for binding compatibility, capability admission, source access, and limits.
 
 ## Message Retry and attempt history (V2 interface)
 
+As of **0.261.470** (`application/single_app/config.py`), message action bars
+stay visible in browsers that do not support hovering. Other browsers still
+reveal the bar when you hover over a message or focus one of its actions with
+the keyboard. Choose **More actions** to open its menu; it does not open on
+its own.
+
 Implemented in version: **0.261.317** (`application/single_app/config.py`).
 Use **Retry** when you want another answer to the question you are viewing,
 including an edited question. It reuses that attempt's saved model or agent,
@@ -1136,6 +1147,17 @@ preparation restores the previous answer without adding an attempt. After
 preparation succeeds, a failure belongs to the new attempt: returning to an older
 successful answer hides that failure, and returning to the failed attempt shows
 it again. **Stop** retains available partial text.
+
+Updated in version: **0.261.430** (`application/single_app/config.py`).
+For ordinary chat and Responses, Stop addresses the exact submitted attempt,
+including before generation starts. An accepted stop prevents that attempt from
+later publishing a successful completion; stopping upstream computation after
+dispatch remains best effort. A completion committed first stays complete.
+An unconfirmed stop preserves visible text and asks you to check saved work
+instead of claiming success. Saved partial replies retain their interruption
+status after reload. Provider or transport interruptions are not labelled
+“Stopped by you.” Leaving a conversation still detaches the V2 reader rather
+than canceling generation.
 
 Retry still works from a surviving question after deleting its answer. Retrying
 an earlier question does not delete or regenerate later messages, and those later
@@ -1353,10 +1375,10 @@ repeats them as you, in the workflow's own conversation. See
 [Repeat a chat plan on a schedule]({{ '/guides/create-a-workflow/' | relative_url }}#repeat-a-chat-plan-on-a-schedule).
 
 Starting in **0.261.338**, the entry point is a calendar icon beside Copy and
-Retry in the answer's message action bar. Hover over the answer or tab into its
-actions to reveal it. The scheduling card stays out of the conversation until
-you choose the icon; it then expands below the answer and remains visible
-until collapsed.
+Retry in the answer's message action bar. If the bar is hidden, hover over
+the answer or tab into its actions to reveal it. The scheduling card stays
+out of the conversation until you choose the icon; it then expands below
+the answer and remains visible until collapsed.
 
 {% include media.html src="reference/chat-controls-saved-chat-plan-card.png" alt="Save this chat plan card under an orchestrated answer, showing the request, time handling, cadence, step cap, the numbered steps and the Save workflow button." title="Save this chat plan card" capture="Capture an expanded Save this chat plan card under a finished orchestrated answer, showing the Request, Time, Cadence, Step cap, Runs as and Alerts lines, the numbered steps with their kind of work, the schedule fields and the Save workflow button. Redact the conversation title, the request and the step titles." %}
 

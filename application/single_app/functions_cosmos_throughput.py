@@ -900,6 +900,8 @@ def _get_arm_resource_kind(resource_path):
         return 'container_throughput'
     if resource_path.endswith('/containers'):
         return 'container_list'
+    if '/containers/' in resource_path:
+        return 'container'
     if '/throughputSettings/' in resource_path:
         return 'database_throughput'
     return 'unknown'
@@ -927,12 +929,12 @@ def _build_arm_request_context(refresh_id='', resource_kind='unknown'):
     }
 
 
-def _arm_request(method, resource_path, payload=None, refresh_id='', request_context=None):
+def _arm_request(method, resource_path, payload=None, refresh_id='', request_context=None, *, if_match=None):
     if not isinstance(resource_path, str) or not re.fullmatch(
         r'/subscriptions/[^/]+/resourceGroups/[^/]+'
         r'/providers/Microsoft\.DocumentDB/databaseAccounts/[^/]+/sqlDatabases/[^/]+'
         r'(?:/throughputSettings/default(?:/migrateToAutoscale)?'
-        r'|/containers(?:/[^/]+/throughputSettings/default(?:/migrateToAutoscale)?)?)',
+        r'|/containers(?:/[^/]+(?:/throughputSettings/default(?:/migrateToAutoscale)?)?)?)',
         resource_path,
     ):
         raise CosmosThroughputError('Invalid Cosmos ARM resource path.')
@@ -959,6 +961,12 @@ def _arm_request(method, resource_path, payload=None, refresh_id='', request_con
     credential_elapsed_ms = request_context.get('credential_elapsed_ms', 0)
 
     request_url = f"{request_context['resource_manager_endpoint']}{resource_path}"
+    headers = {
+        'Authorization': f"Bearer {request_context['token']}",
+        'Content-Type': 'application/json',
+    }
+    if if_match:
+        headers['If-Match'] = if_match
 
     _log_refresh_event(
         '[CosmosThroughput] ARM HTTP request sending.',
@@ -969,10 +977,7 @@ def _arm_request(method, resource_path, payload=None, refresh_id='', request_con
         response = requests.request(
             method,
             request_url,
-            headers={
-                'Authorization': f"Bearer {request_context['token']}",
-                'Content-Type': 'application/json',
-            },
+            headers=headers,
             json=payload,
             params={'api-version': COSMOS_THROUGHPUT_ARM_API_VERSION},
             timeout=30,

@@ -14,6 +14,7 @@ from functions_model_endpoint_providers import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
     MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
+    MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1,
     MODEL_ENDPOINT_API_TYPE_GEMINI,
     MODEL_ENDPOINT_API_TYPE_OPENAI,
     MODEL_ENDPOINT_CUSTOM_API_TYPES,
@@ -29,16 +30,32 @@ __all__ = [
     "DEFAULT_ANTHROPIC_VERSION",
     "MODEL_ENDPOINT_API_TYPE_ANTHROPIC",
     "MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI",
+    "MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1",
     "MODEL_ENDPOINT_API_TYPE_GEMINI",
     "MODEL_ENDPOINT_API_TYPE_OPENAI",
     "MODEL_ENDPOINT_CUSTOM_API_TYPES",
     "MODEL_ENDPOINT_PROVIDER_CUSTOM",
     "find_enabled_model_endpoint_for_model_name",
+    "AmbiguousModelEndpointSelectionError",
     "get_model_endpoint_api_type",
     "normalize_model_endpoint_api_type",
     "resolve_model_endpoint_request_model",
     "custom_endpoint_validation_view",
 ]
+
+
+class AmbiguousModelEndpointSelectionError(LookupError):
+    """A legacy name cannot identify one enabled endpoint/model route."""
+
+
+def routing_schema_version(endpoint: dict) -> int:
+    """Reject unknown schema markers instead of treating them as legacy."""
+    if not isinstance(endpoint, dict):
+        return 1
+    version = endpoint.get("routing_schema_version", 1)
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError("Unsupported model routing schema version.")
+    return version
 
 
 def custom_endpoint_validation_view(endpoint):
@@ -65,18 +82,42 @@ def normalize_model_endpoint_api_type(provider: Any, api_type: Any) -> str:
     return normalized_api_type if normalized_api_type in MODEL_ENDPOINT_CUSTOM_API_TYPES else ""
 
 
-def get_model_endpoint_api_type(endpoint: Any) -> str:
+def get_model_endpoint_api_type(endpoint: Any, model: Any = None, *, use_model_routing: bool = False) -> str:
     """Return the canonical explicit API type from an endpoint record."""
     if not isinstance(endpoint, dict):
         return ""
+    if routing_schema_version(endpoint) == 2:
+        resolved_route = endpoint.get("_resolved_route")
+        model_data = model if isinstance(model, dict) else {}
+        api_type = normalize_api_type_value(
+            model_data.get("api_type")
+            or (resolved_route.get("api_type") if isinstance(resolved_route, dict) else "")
+            or endpoint.get("api_type")
+        )
+        if get_model_endpoint_provider(api_type) is None:
+            if use_model_routing or isinstance(model, dict) or isinstance(resolved_route, dict):
+                raise ValueError("The selected model requires a supported API type.")
+            return ""
+        return api_type
     return normalize_model_endpoint_api_type(endpoint.get("provider"), endpoint.get("api_type"))
 
 
-def resolve_model_endpoint_request_model(endpoint: Any, model: Any) -> str:
+def resolve_model_endpoint_request_model(endpoint: Any, model: Any, *, use_model_routing: bool = False) -> str:
     """Resolve the model identifier that must be sent to the configured API."""
     endpoint_data: Dict[str, Any] = endpoint if isinstance(endpoint, dict) else {}
     model_data: Dict[str, Any] = model if isinstance(model, dict) else {}
     provider = str(endpoint_data.get("provider") or "aoai").strip().lower()
+
+    if routing_schema_version(endpoint_data) == 2:
+        api_type = get_model_endpoint_api_type(endpoint_data, model_data, use_model_routing=True)
+        descriptor = get_model_endpoint_provider(api_type)
+        if descriptor is None:
+            return ""
+        field = "modelName" if descriptor.uses_model_name else "deploymentName"
+        identifier = model_data.get(field)
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise ValueError("The selected model requires its protocol-specific identifier.")
+        return identifier.strip()
 
     if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
         registered_provider = get_model_endpoint_provider(get_model_endpoint_api_type(endpoint_data))
@@ -133,7 +174,7 @@ def find_enabled_model_endpoint_for_model_name(
     if not requested_name or not isinstance(endpoints, (list, tuple)):
         return None, None
 
-    best_match = (None, None)
+    best_matches = []
     best_rank = None
     for endpoint in endpoints:
         if not isinstance(endpoint, dict) or not endpoint.get("enabled", True):
@@ -145,11 +186,17 @@ def find_enabled_model_endpoint_for_model_name(
             if not isinstance(model, dict) or not model.get("enabled", True):
                 continue
             rank = _get_model_name_match_rank(endpoint, model, requested_name)
-            if rank is None or (best_rank is not None and rank >= best_rank):
+            if rank is None:
                 continue
-            best_match = (endpoint, model)
-            best_rank = rank
-            if rank == 0:
-                return best_match
+            if best_rank is None or rank < best_rank:
+                best_rank = rank
+                best_matches = [(endpoint, model)]
+            elif rank == best_rank:
+                best_matches.append((endpoint, model))
 
-    return best_match
+    if len(best_matches) > 1:
+        raise AmbiguousModelEndpointSelectionError(
+            "The stored model name matches multiple enabled endpoint/model routes. "
+            "Select the endpoint and model explicitly."
+        )
+    return best_matches[0] if best_matches else (None, None)

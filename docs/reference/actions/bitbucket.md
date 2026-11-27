@@ -135,4 +135,4 @@ or reconnect; SimpleChat does not replay a possibly rotated refresh token.
 
 - [Personal action credentials]({{ '/guides/personal-action-credentials/' | relative_url }})
 - [Actions reference]({{ '/reference/actions/' | relative_url }})
-- [Bitbucket implementation details]({{ '/explanation/features/BITBUCKET_REPOSITORY_ACTION/' | relative_url }})
+- [Bitbucket implementation details](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/BITBUCKET_REPOSITORY_ACTION.md)

@@ -10,7 +10,7 @@ uses and what is using it.
 - A **Context tab in the right-hand drawer**, beside Contents, Documents and Plan, shows the
   total, a breakdown by type, and the request size behind each reply.
 
-Implemented in version **0.261.483**.
+Implemented in version **0.261.489**.
 
 ### Dependencies
 
@@ -174,8 +174,13 @@ treat such fields as credentials. File names are the only user content stored, a
 
 ## Usage instructions
 
-No setting turns this on. The ring and the header button appear after the first reply in a
-conversation.
+The display is on by default. An administrator can hide it with **Show Context Usage** in
+Admin Settings, under Chat > Chat Experience > Context Usage (setting
+`enable_context_usage_display`). Turning it off hides the ring, the header button and the
+Context tab from users. It does not stop the server recording usage on each reply or in the
+activity logs, so turning it back on shows figures for replies made while it was hidden.
+
+The ring and the header button appear after the first reply in a conversation.
 
 - Hover the ring for the percentage and sizes. Select it, or the ring in the chat header, to open
   the Context tab.
@@ -203,6 +208,11 @@ named on hover and to assistive technology.
   adding up to the run's total, steps bound to different models, agent steps counted under the
   agent's model, unbound and reused steps, per-step observations and the largest request, the
   activity rows and their idempotency ids, waiting runs, and a failing log store.
+- `functional_tests/test_context_usage_display_setting.py` covers the admin setting: on by default,
+  offered and saved in both admin interfaces, hiding the display in the modern chat, and not
+  read by anything that records usage.
+- `functional_tests/test_control_center_dashboard_owner_runtime.py` runs the dashboard's storage
+  readers, with the source filter, against the installed Cosmos SDK's response types.
 - `functional_tests/test_token_usage_source_filter.py` covers the source predicates, the
   dashboard and activity log filters, refusal of unknown sources, and the summary request's
   usage being read and logged on every path that can summarize.
@@ -214,14 +224,14 @@ named on hover and to assistive technology.
   on a network that cannot reach its host), sizes fall back to four characters per token and the
   failure is remembered so chat requests are not delayed again.
 - Images sent to a vision model are not sized; only their text description is.
-- Replies saved before 0.261.483 show a total only, with no split and no percentage.
+- Replies saved before 0.261.489 show a total only, with no split and no percentage.
 - A custom deployment name the catalog does not recognize has no percentage until its limits are
   set in Model Endpoints.
 - An agent step shows no largest request, because an agent reports one total for all the
   requests it made.
 - Requests a plan step makes through its planner client, rather than its prompt invoker or an
   agent, are not counted by the run at all. This predates this feature.
-- Plans finished before 0.261.483 are not added to the activity logs retroactively, and their
+- Plans finished before 0.261.489 are not added to the activity logs retroactively, and their
   steps show no largest request.
 - Small helper calls in chat other than the older-message summary (the search-query summary and
   source review planning) still record no usage.

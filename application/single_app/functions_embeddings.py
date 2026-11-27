@@ -10,7 +10,7 @@ from collections.abc import Mapping
 import httpx
 from azure.core.exceptions import AzureError
 from azure.identity import get_bearer_token_provider
-from openai import APIError, OpenAI, RateLimitError
+from openai import APIError, Omit, OpenAI, RateLimitError
 
 from functions_ai_connections import (
     AIConnectionError,
@@ -22,6 +22,7 @@ from functions_ai_connections import (
 from functions_appinsights import log_event
 from functions_embedding_profile import resolve_embedding_profile
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_providers import get_model_endpoint_provider
 from functions_model_endpoint_types import custom_endpoint_validation_view
 
 
@@ -79,25 +80,35 @@ def _build_embedding_connection_client(binding, settings):
         from functions_model_endpoint_auth import resolve_api_key_header
         from functions_model_endpoint_runtime import build_custom_openai_client_kwargs
 
-        custom = custom_endpoint_validation_view(endpoint)
-        custom["connection"] = {
-            **(custom.get("connection") or {}), "endpoint": profile.base_url, "url_mode": "exact",
+        custom = {
+            **custom_endpoint_validation_view(endpoint),
+            "connection": {**(endpoint.get("connection") or {}), "endpoint": profile.base_url},
         }
-        if profile.api == "azure_openai":
-            custom["connection"]["api_version"] = profile.api_version
+        descriptor = get_model_endpoint_provider(profile.api)
+        key_header = None
         if operation.get("auth_header") and auth_type != "bearer":
-            header, prefix = resolve_api_key_header(
+            key_header, prefix = resolve_api_key_header(
                 auth, "Authorization" if auth_header == "authorization" else auth_header,
-                "Bearer" if auth_header == "authorization" else "",
+                "Bearer" if auth_header == "authorization" and "api_key_prefix" not in auth else "",
             )
-            custom["auth"] = {**auth, "api_key_header": header, "api_key_prefix": prefix}
-        return OpenAI(
-            **build_custom_openai_client_kwargs(
-                custom, settings, request_model=profile.deployment,
-                default_headers=build_model_endpoint_identity_headers(settings, endpoint_config=endpoint),
-            ),
-            max_retries=0, timeout=httpx.Timeout(60.0, connect=10.0),
+            custom["auth"] = {**auth, "api_key_header": key_header, "api_key_prefix": prefix}
+        elif auth_type in ("api_key", "key") and descriptor is not None:
+            key_header, _ = resolve_api_key_header(
+                auth, descriptor.default_api_key_header, descriptor.default_api_key_prefix,
+            )
+        options = build_custom_openai_client_kwargs(
+            custom, settings,
+            resolved_route={
+                "api_type": profile.api, "api_base": profile.base_url,
+                "api_version": profile.api_version,
+            },
+            default_headers=build_model_endpoint_identity_headers(settings, endpoint_config=endpoint),
         )
+        if key_header and key_header.lower() != "authorization":
+            # Do not let the SDK send a second copy of the key as a bearer token.
+            options["default_headers"]["Authorization"] = Omit()
+        options.update(max_retries=0, timeout=httpx.Timeout(60.0, connect=10.0))
+        return OpenAI(**options)
     token_provider = None
     api_key = ""
     if auth_type in ("key", "api_key"):

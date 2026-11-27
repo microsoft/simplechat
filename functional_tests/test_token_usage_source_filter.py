@@ -2,8 +2,8 @@
 # test_token_usage_source_filter.py
 """
 Functional test for the token usage source filter and older-message summary usage logging.
-Version: 0.261.483
-Implemented in: 0.261.483
+Version: 0.261.489
+Implemented in: 0.261.489
 
 This test ensures that Control Center can tell token usage from ordinary chat, orchestration
 plans and workflows apart on both the dashboard and the activity logs, and that the request

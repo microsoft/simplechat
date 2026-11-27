@@ -241,8 +241,10 @@ def _build_custom_image_runtime_client(endpoint, settings, deployment, route, ap
                 runtime_endpoint['connection']['endpoint'], 'images', deployment=deployment, api_version='v1',
             )
         kwargs['default_query'] = {}
+    # Paid image requests are never retried; replace the chat client retry default.
+    kwargs['max_retries'] = 0
     try:
-        return _ImageOpenAIClient(image_auth_header='authorization', max_retries=0, **kwargs)
+        return _ImageOpenAIClient(image_auth_header='authorization', **kwargs)
     except (TypeError, ValueError):
         kwargs['http_client'].close()
         raise

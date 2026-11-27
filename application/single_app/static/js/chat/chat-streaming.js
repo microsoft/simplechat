@@ -17,6 +17,7 @@ import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStrea
 import { destroyInlineCharts, hydrateInlineCharts } from './chat-inline-charts.js';
 import { destroyInlineDiagrams, hydrateInlineDiagrams } from './chat-inline-diagrams.js';
 import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
+import { hydrateMath } from './chat-math.js';
 import { escapeHtml } from './chat-utils.js';
 import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
 import { getMessageReasoningAdjustments, renderMessageReasoningAdjustments } from './chat-reasoning.js';
@@ -659,12 +660,19 @@ async function requestStreamCancellation(streamContext = currentStreamContext) {
                 'Content-Type': 'application/json',
             },
             credentials: 'same-origin',
-            body: JSON.stringify({ reason: 'user_requested' }),
+            body: JSON.stringify({ reason: 'user_requested', submission_id: streamContext.submissionId }),
         });
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.error || `Failed to stop stream (${response.status})`);
+        }
+        const result = await response.json();
+        if (streamContext.submissionId && !['accepted', 'already_completed'].includes(result.outcome)) {
+            throw new Error('Stopping could not be confirmed. Refresh to check saved work.');
+        }
+        if (result.outcome === 'already_completed') {
+            showToast('This response already completed. Refresh to see the saved answer.', 'info');
         }
 
         return true;
@@ -747,12 +755,12 @@ export function applyStreamingUserMessagePersistence(data = {}, tempUserMessageI
     return persistedUserMessageId;
 }
 
-async function getStreamingStatus(conversationId) {
+async function getStreamingStatus(conversationId, submissionId = null) {
     if (!conversationId) {
         return null;
     }
 
-    const statusResponse = await fetch(`/api/chat/stream/status/${conversationId}`, {
+    const statusResponse = await fetch(`/api/chat/stream/status/${encodeURIComponent(conversationId)}${submissionId ? `?submission_id=${encodeURIComponent(submissionId)}` : ''}`, {
         credentials: 'same-origin',
     });
     const statusData = await statusResponse.json().catch(() => ({}));
@@ -772,6 +780,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
         reconnectStatusLabel = 'Reconnecting...',
         persistedUserMessageId = null,
         analysisContextRevision = getAnalysisContextRevision(),
+        submissionId = null,
     } = options;
 
     if (!conversationId) {
@@ -779,7 +788,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
     }
 
     try {
-        const statusData = await getStreamingStatus(conversationId);
+        const statusData = await getStreamingStatus(conversationId, submissionId);
         if (!statusData?.pending) {
             void reportClientStreamEvent('stream_recovery_unavailable', {
                 conversation_id: conversationId,
@@ -811,7 +820,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
             status: statusData?.status || null,
         });
         return consumeStreamingResponse(
-            signal => fetch(`/api/chat/stream/reattach/${conversationId}`, {
+            signal => fetch(`/api/chat/stream/reattach/${encodeURIComponent(conversationId)}${submissionId ? `?submission_id=${encodeURIComponent(submissionId)}` : ''}`, {
                 method: 'GET',
                 credentials: 'same-origin',
                 signal,
@@ -827,6 +836,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
                 reconnectStatusLabel,
                 initialPersistedUserMessageId: persistedUserMessageId,
                 analysisContextRevision,
+                submissionId,
             },
         );
     } catch (error) {
@@ -850,6 +860,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         actionRecoveryBody = null,
         actionRecoveryRevision = getActionRecoveryRevision(),
         analysisContextRevision = getAnalysisContextRevision(),
+        submissionId = null,
     } = options;
 
     if (currentStreamController) {
@@ -867,6 +878,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         explicitCancelEndpoint: Boolean(cancelEndpoint),
         cancelEndpoint: resolveCancelEndpoint(recoveryConversationId, cancelEndpoint),
         cancellationRequested: false,
+        submissionId,
     };
     currentStreamContext = streamContext;
     attachStreamingStopButton(tempAiMessageId, streamContext);
@@ -888,7 +900,6 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 updateUserMessageId(
                     tempUserMessageId,
                     persistedUserMessageId,
-                    analysisContextRevision,
                     { refreshExpandedMetadata: true }
                 );
             } else {
@@ -1352,6 +1363,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                                     reconnectStatusLabel,
                                     persistedUserMessageId,
                                     analysisContextRevision,
+                                    submissionId,
                                 },
                             );
                             if (recovered) {
@@ -1431,6 +1443,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                             onFinally,
                             reconnectStatusLabel,
                             persistedUserMessageId,
+                            submissionId,
                             analysisContextRevision,
                         },
                     );
@@ -1538,6 +1551,9 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
 export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
     const { endpoint = '/api/chat/stream' } = options;
+    if (!messageData.image_generation && !messageData.analysis_result_context && !messageData.workflow_result_context) {
+        messageData = { ...messageData, submission_id: messageData.submission_id || crypto.randomUUID() };
+    }
     void requestDesktopNotificationPermissionIfNeeded();
     const tempAiMessageId = createStreamingPlaceholder();
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
@@ -1568,6 +1584,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         tempUserMessageId,
         {
             ...options,
+            submissionId: messageData.submission_id,
             actionRecoveryBody: messageData,
             actionRecoveryRevision: getActionRecoveryRevision(),
             recoveryConversationId,
@@ -1612,9 +1629,10 @@ export async function reattachStreamingConversation(conversationId, options = {}
             return false;
         }
 
+        const submissionId = statusData.submission_id || null;
         const tempAiMessageId = createStreamingPlaceholder(statusLabel);
         return consumeStreamingResponse(
-            signal => fetch(`/api/chat/stream/reattach/${conversationId}`, {
+            signal => fetch(`/api/chat/stream/reattach/${encodeURIComponent(conversationId)}${submissionId ? `?submission_id=${encodeURIComponent(submissionId)}` : ''}`, {
                 method: 'GET',
                 credentials: 'same-origin',
                 signal,
@@ -1626,6 +1644,7 @@ export async function reattachStreamingConversation(conversationId, options = {}
                 recoveryConversationId: conversationId,
                 reconnectStatusLabel: statusLabel,
                 analysisContextRevision,
+                submissionId,
             },
         );
     } catch (error) {
@@ -1648,6 +1667,7 @@ export function updateStreamingMessage(messageId, content) {
             const renderedContent = renderAiMessageContent(content);
             contentElement.innerHTML = renderedContent.htmlContent;
             restoreStableStreamingChartNodes(contentElement, stableChartNodes);
+            void hydrateMath(contentElement);
             hydrateInlineCharts(messageElement);
             hydrateInlineDiagrams(messageElement);
             hydrateInlineImageProposals(messageElement);
@@ -1726,7 +1746,7 @@ function restoreStableStreamingChartNodes(contentElement, stableChartNodes) {
     });
 }
 
-function appendStoppedResponseBanner(messageElement, hasPartialContent) {
+function appendStoppedResponseBanner(messageElement, hasPartialContent, reason = 'provider_interrupted') {
     const contentElement = messageElement?.querySelector('.message-text');
     if (!contentElement || contentElement.querySelector('.stream-stopped-banner')) {
         return;
@@ -1741,7 +1761,7 @@ function appendStoppedResponseBanner(messageElement, hasPartialContent) {
     banner.appendChild(icon);
 
     const strong = document.createElement('strong');
-    strong.textContent = 'Stopped by you.';
+    strong.textContent = reason === 'user_requested' ? 'Stopped by you.' : 'Response interrupted.';
     banner.appendChild(strong);
 
     banner.appendChild(document.createTextNode(
@@ -1751,7 +1771,7 @@ function appendStoppedResponseBanner(messageElement, hasPartialContent) {
     contentElement.appendChild(banner);
 }
 
-function renderStoppedContent(messageElement, partialContent) {
+function renderStoppedContent(messageElement, partialContent, reason) {
     const contentElement = messageElement?.querySelector('.message-text');
     if (!contentElement) {
         return;
@@ -1767,6 +1787,7 @@ function renderStoppedContent(messageElement, partialContent) {
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
             const renderedContent = renderAiMessageContent(normalizedContent);
             contentElement.innerHTML = renderedContent.htmlContent;
+            void hydrateMath(contentElement);
             hydrateInlineCharts(messageElement);
             hydrateInlineDiagrams(messageElement);
         } else {
@@ -1776,7 +1797,7 @@ function renderStoppedContent(messageElement, partialContent) {
         contentElement.textContent = 'Response stopped before any content was received.';
     }
 
-    appendStoppedResponseBanner(messageElement, Boolean(normalizedContent));
+    appendStoppedResponseBanner(messageElement, Boolean(normalizedContent), reason);
 }
 
 export function resolveStreamContent(data, fallbackContent = '') {
@@ -1834,7 +1855,8 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
 
         appendStoppedResponseBanner(
             document.querySelector(`[data-message-id="${finalData.message_id}"]`),
-            Boolean(String(partialContent || '').trim())
+            Boolean(String(partialContent || '').trim()),
+            finalData.cancel_reason
         );
         renderMessageReasoningAdjustments(
             getStreamingMessageElement(finalData.message_id),
@@ -1844,8 +1866,19 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
             finalData.conversation_id,
             false
         );
+    } else if (messageElement && String(partialContent || '').trim()) {
+        renderStoppedContent(messageElement, partialContent, finalData.cancel_reason);
     } else if (messageElement) {
-        renderStoppedContent(messageElement, partialContent);
+        messageElement.remove();
+        const userElement = getStreamingMessageElement(finalData.user_message_id || userMessageId);
+        if (userElement && !userElement.querySelector('.message-interruption-status')) {
+            const notice = document.createElement('p');
+            notice.className = 'message-interruption-status small text-muted';
+            notice.setAttribute('role', 'status');
+            notice.textContent = finalData.cancel_reason === 'user_requested'
+                ? 'Stopped by you before any response content was received.' : 'This response was interrupted.';
+            userElement.appendChild(notice);
+        }
     }
 
     markStreamingConversationReadIfActive(finalData.conversation_id, 'stream cancellation');
@@ -1914,6 +1947,7 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
         // Parse markdown for partial content
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
             contentElement.innerHTML = renderAiMessageContent(finalContent).htmlContent;
+            void hydrateMath(contentElement);
         } else {
             contentElement.textContent = finalContent;
         }

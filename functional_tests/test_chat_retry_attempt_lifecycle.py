@@ -1,7 +1,7 @@
 # test_chat_retry_attempt_lifecycle.py
 """
 Functional regression coverage for durable chat retry attempts.
-Version: 0.261.320
+Version: 0.261.430
 Implemented in: 0.261.317
 
 Real replay, route admission, history, and background-worker functions run with
@@ -18,7 +18,9 @@ import sys
 from types import SimpleNamespace
 import uuid
 
-from azure.cosmos.exceptions import CosmosResourceExistsError
+from azure.core import MatchConditions
+from azure.cosmos._cosmos_responses import CosmosDict
+from azure.cosmos.exceptions import CosmosBatchOperationError
 from flask import Flask, g, jsonify, request
 import pytest
 
@@ -26,6 +28,7 @@ from test_chat_soft_deleted_message_visibility_fix import (
     CONVERSATION, USER, FakeContainer, message, soft_deleted,
 )
 from test_support.offline_bootstrap import offline_app_imports
+from test_support.orchestration_revisions import AtomicMemoryContainer
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / 'application' / 'single_app'
@@ -39,22 +42,53 @@ AGENT = {
 }
 
 
-class AttemptContainer(FakeContainer):
+class AttemptContainer(AtomicMemoryContainer):
+    """Keep the existing query interpreter; use SDK-default atomic point/batch I/O."""
+
     def __init__(self, items=()):
-        super().__init__(items)
+        items = list(items)
+        super().__init__('conversation_id' if items and 'conversation_id' in items[0] else 'id')
+        for item in items:
+            self.create_item(body=item)
         self.after_replace = None
 
-    def create_item(self, body, **kwargs):
-        if body['id'] in self.items:
-            raise CosmosResourceExistsError(status_code=409, message='Exists')
-        return self._store(body)
+    def get(self, item_id):
+        return next((deepcopy(item) for (_partition, identifier), item in self.items.items()
+                     if identifier == item_id), None)
 
-    def replace_item(self, **kwargs):
-        result = super().replace_item(**kwargs)
+    def query_items(self, query, parameters=None, partition_key=None, **kwargs):
+        interpreter = FakeContainer()
+        interpreter.items = {item['id']: deepcopy(item) for item in self.items.values()}
+        self.queries.append((query, deepcopy(parameters), partition_key))
+        return interpreter.query_items(query, parameters, partition_key, **kwargs)
+
+    def replace_item(self, *args, **kwargs):
+        result = super().replace_item(*args, **kwargs)
         if self.after_replace:
             callback, self.after_replace = self.after_replace, None
             callback()
         return result
+
+
+def test_attempt_container_defaults_to_sdk_points_and_atomic_partitioned_batches():
+    container = AttemptContainer([{
+        'id': 'question', 'conversation_id': CONVERSATION, 'role': 'user',
+    }])
+    current = container.read_item('question', CONVERSATION)
+    assert type(current) is CosmosDict
+    with pytest.raises(CosmosBatchOperationError):
+        container.execute_item_batch([
+            ('replace', ('question', {**current, 'content': 'must roll back'}),
+             {'if_match_etag': current['_etag']}),
+            ('create', (dict(current),)),
+        ], partition_key=CONVERSATION)
+    assert 'content' not in container.read_item('question', CONVERSATION)
+    updated = container.replace_item(
+        'question', {**current, 'content': 'retained'}, etag=current['_etag'],
+        match_condition=MatchConditions.IfNotModified,
+    )
+    assert type(updated) is CosmosDict and updated['_etag'] != current['_etag']
+    assert type(container.query_items('SELECT * FROM c', partition_key=CONVERSATION)[0]) is dict
 
 
 @pytest.fixture(scope='module')
@@ -175,7 +209,7 @@ def test_reloaded_prepared_question_reconciles_without_a_new_attempt(context):
 
 def test_hard_deleted_source_cannot_be_reconciled(context):
     prepared = context.prepare()
-    context.messages.items.pop('q1')
+    context.messages.items.pop((CONVERSATION, 'q1'))
     with pytest.raises(context.replay.ChatRetryError) as failure:
         context.replay.reconcile_prepared_retry(context.messages, context.store, USER, prepared)
     assert failure.value.code == 'retry_source_changed'
@@ -337,6 +371,26 @@ def test_real_invocation_admission_ignores_tampered_browser_selections(context, 
     assert duplicate.status_code == 409
     assert len(calls) == 1
     assert context.messages.get(question['id'])['metadata']['response_attempt']['state'] == 'completed'
+
+
+def test_retry_submission_mismatch_is_refused_without_consuming_the_prepared_attempt(context):
+    question = context.prepare()
+    calls = []
+
+    @context.chats._with_prepared_chat_retry
+    def invoke():
+        calls.append(True)
+        return jsonify({"reply": "Must not run."})
+
+    context.app.add_url_rule("/invoke", view_func=invoke, methods=["POST"])
+    response = context.app.test_client().post("/invoke", json={
+        "conversation_id": CONVERSATION, "retry_user_message_id": question["id"],
+        "submission_id": "different-submission",
+    })
+    assert response.status_code == 409
+    assert response.json["code"] == "submission_conflict"
+    assert calls == []
+    assert context.messages.get(question["id"])["metadata"]["response_attempt"]["state"] == "prepared"
 
 
 def test_removed_model_fails_the_admitted_attempt_without_provider_work(context):

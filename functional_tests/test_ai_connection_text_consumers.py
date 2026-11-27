@@ -1,10 +1,12 @@
 # test_ai_connection_text_consumers.py
 """Behavioral regression tests for shared AI Connection text-consumer guards.
 
-Version: 0.261.163
+Version: 0.261.463
 Implemented in: 0.261.105
 Canonical endpoint protocol and strict credential regressions: 0.261.106
 Custom request identity and strict hydration merge coverage: 0.261.113
+Post-merge shared chat-catalog coverage updated in: 0.261.429
+Model persona consumer coverage updated in: 0.261.461 and scoped in: 0.261.463
 
 Execute the real consumer function bodies with the real import-safe capability
 module. SDK, credential, settings-store, and authorization seams stay in memory;
@@ -13,6 +15,7 @@ these tests do not initialize the application or contact Azure.
 
 import ast
 import base64
+import copy
 import io
 import json
 import mimetypes
@@ -31,6 +34,7 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 # Only the pure capability modules are imported after establishing the app path.
 import functions_ai_connections as connections
+from functions_chat_model_catalog import build_chat_model_catalog
 from functions_model_capabilities import (
     REASONING_IDENTIFIER_FIELDS,
     is_vision_capable_model,
@@ -47,6 +51,8 @@ from functions_model_endpoint_types import (
 )
 from functions_workflow_context import wrap_workflow_model_client
 from functions_model_endpoint_validation import ModelEndpointValidationError
+from functions_model_endpoint_urls import routing_schema_version
+from functions_model_persona import active_model_persona_markdown
 from functions_model_endpoint_urls import normalize_endpoint_text
 
 
@@ -109,6 +115,7 @@ def load_boundaries(filename, names, extra=None, *, constants=(), register_chat=
         "ModelEndpointValidationError": ModelEndpointValidationError,
         "get_model_endpoint_provider": get_model_endpoint_provider,
         "get_model_endpoint_api_type": get_model_endpoint_api_type,
+        "routing_schema_version": routing_schema_version,
         "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "resolve_capability_model_selection": connections.resolve_capability_model_selection,
         "register_capability_client_factory": connections.register_capability_client_factory,
@@ -118,12 +125,25 @@ def load_boundaries(filename, names, extra=None, *, constants=(), register_chat=
         "keyvault_model_endpoint_get_helper": Mock(side_effect=lambda value, *args, **kwargs: deepcopy(value)),
         "SecretReturnType": SimpleNamespace(VALUE="value"),
         "build_model_endpoint_identity_headers": Mock(return_value={}),
+        "active_model_persona_markdown": active_model_persona_markdown,
+        "bind_model_endpoint_request_policy": (
+            lambda client, _route, **_kwargs: client
+        ),
         "debug_print": Mock(),
+        "ensure_governance_access": lambda *_args, **_kwargs: None,
         "cognitive_services_scope": "https://cognitiveservices.azure.com/.default",
         "MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI": "azure_openai",
         "MODEL_ENDPOINT_PROTOCOL_ANTHROPIC": "anthropic",
         "MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE": "openai_style",
         "infer_model_endpoint_protocol": lambda *args: "azure_openai",
+        "resolve_model_inference_endpoint": lambda endpoint, **kwargs: endpoint,
+        "resolve_model_token_budget": Mock(return_value=sentinel.budget),
+        "model_endpoint_inference_api": lambda *args, **kwargs: "chat_completions",
+        "AnthropicSemanticKernelChatCompletion": type(
+            "AnthropicSemanticKernelChatCompletion", (), {}
+        ),
+        "copy": copy,
+        "validate_model_endpoint_api_version": lambda *args, **kwargs: None,
         "AzureOpenAI": Mock(return_value=sentinel.client),
         "_build_azure_chat_completion": Mock(return_value=sentinel.service),
     }
@@ -157,32 +177,106 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         shared = endpoint(records)
         original = deepcopy(shared)
         governance_checks = []
-        helpers = load_boundaries("route_frontend_chats.py", {
-            "_build_chat_model_catalog", "_chat_model_reasoning_metadata",
-        }, {
-            "_filter_chat_model_endpoints_by_governance": lambda user, values, feature: (
-                governance_checks.append((user, feature)) or values
+        with (
+            patch(
+                "functions_chat_model_catalog.filter_chat_model_endpoints_by_governance",
+                side_effect=lambda user, values, feature: (
+                    governance_checks.append((user, feature)) or values
+                ),
             ),
-            "get_group_model_endpoints": lambda group: [shared],
-        })
-        catalog = helpers["_build_chat_model_catalog"](
-            user_id="reader",
-            settings={
-                "enable_multi_model_endpoints": True,
-                "model_endpoints": [shared],
-                "allow_user_custom_endpoints": True,
-                "enable_group_workspaces": True,
-                "allow_group_custom_endpoints": True,
-            },
-            user_settings_dict={"personal_model_endpoints": [shared]},
-            user_groups_raw=[{"id": "group-one", "name": "Group"}],
-        )
+            patch("functions_chat_model_catalog._get_group_model_endpoints", return_value=[shared]),
+            patch(
+                "functions_chat_model_catalog._normalize_model_endpoints",
+                side_effect=lambda values: (values, False),
+            ),
+            patch(
+                "functions_chat_model_catalog._sanitize_model_endpoints_for_frontend",
+                side_effect=lambda values, **kwargs: values,
+            ),
+        ):
+            catalog = build_chat_model_catalog(
+                user_id="reader",
+                settings={
+                    "enable_multi_model_endpoints": True,
+                    "model_endpoints": [shared],
+                    "allow_user_custom_endpoints": True,
+                    "enable_group_workspaces": True,
+                    "allow_group_custom_endpoints": True,
+                },
+                user_settings_dict={"personal_model_endpoints": [shared]},
+                user_groups_raw=[{"id": "group-one", "name": "Group"}],
+            )
         self.assertEqual(len(catalog), 6)
         self.assertEqual({item["model_id"] for item in catalog}, {"selected-model", "legacy"})
         self.assertEqual(len({item["selection_key"] for item in catalog}), 6)
         self.assertEqual({item["scope_type"] for item in catalog}, {"global", "personal", "group"})
         self.assertEqual(len(governance_checks), 3)
         self.assertEqual(shared, original)
+
+    def test_chat_catalog_exposes_persona_state_and_visible_text_only(self):
+        shared = endpoint([model(
+            persona_enabled=True,
+            persona_markdown="Be concise.",
+            persona_text_visible=True,
+        )])
+        with (
+            patch(
+                "functions_chat_model_catalog.filter_chat_model_endpoints_by_governance",
+                side_effect=lambda user, values, feature: values,
+            ),
+            patch(
+                "functions_chat_model_catalog._normalize_model_endpoints",
+                side_effect=lambda values: (values, False),
+            ),
+            patch(
+                "functions_chat_model_catalog._sanitize_model_endpoints_for_frontend",
+                side_effect=lambda values, **kwargs: values,
+            ),
+        ):
+            catalog = build_chat_model_catalog(
+                user_id="reader",
+                settings={
+                    "enable_multi_model_endpoints": True,
+                    "model_endpoints": [shared],
+                },
+                user_settings_dict={},
+                user_groups_raw=[],
+            )
+        self.assertTrue(catalog[0]["persona_enabled"])
+        self.assertTrue(catalog[0]["persona_text_visible"])
+        self.assertEqual(catalog[0]["persona_markdown"], "Be concise.")
+
+        shared["models"][0]["persona_text_visible"] = False
+        hidden = deepcopy(shared["models"][0])
+        hidden.pop("persona_markdown")
+        with (
+            patch(
+                "functions_chat_model_catalog.filter_chat_model_endpoints_by_governance",
+                side_effect=lambda user, values, feature: values,
+            ),
+            patch(
+                "functions_chat_model_catalog._normalize_model_endpoints",
+                side_effect=lambda values: (values, False),
+            ),
+            patch(
+                "functions_chat_model_catalog._sanitize_model_endpoints_for_frontend",
+                side_effect=lambda values, **kwargs: [
+                    {**values[0], "models": [hidden]}
+                ],
+            ),
+        ):
+            hidden_catalog = build_chat_model_catalog(
+                user_id="reader",
+                settings={
+                    "enable_multi_model_endpoints": True,
+                    "model_endpoints": [shared],
+                },
+                user_settings_dict={},
+                user_groups_raw=[],
+            )
+        self.assertTrue(hidden_catalog[0]["persona_enabled"])
+        self.assertFalse(hidden_catalog[0]["persona_text_visible"])
+        self.assertEqual(hidden_catalog[0]["persona_markdown"], "")
 
     def test_scoped_context_resolution_rejects_images_before_secret_hydration(self):
         for scope in ("global", "user", "group"):
@@ -372,6 +466,7 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         )
         self.assertIs(client, sentinel.client)
         self.assertEqual(protocol, "anthropic")
+
         infer.assert_called_once_with("new_foundry", selected["connection"]["endpoint"], "claude-sonnet-4", "")
         with self.assertRaises(connections.AIConnectionError):
             helpers["build_model_endpoint_sync_chat_client"](
@@ -388,6 +483,36 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         self.assertIs(client, sentinel.client)
         self.assertEqual(protocol, "anthropic")
         self.assertEqual(infer.call_args.args[-2], "claude-sonnet-4")
+
+    def test_sync_factory_does_not_infer_persona_without_exact_model_id(self):
+        selected = endpoint([model(
+            persona_enabled=True,
+            persona_markdown="Only exact identity receives this.",
+        )])
+        binder = Mock(side_effect=lambda client, *_args, **_kwargs: client)
+        helpers = load_boundaries("functions_model_endpoint_runtime.py", {
+            "_require_chat_model_for_endpoint", "build_model_endpoint_sync_chat_client",
+        }, {
+            "bind_model_endpoint_request_policy": binder,
+            "infer_model_endpoint_protocol": lambda *_args: "azure_openai",
+        })
+
+        helpers["build_model_endpoint_sync_chat_client"](
+            selected["auth"], "aoai", selected["connection"]["endpoint"],
+            selected["connection"]["openai_api_version"],
+            selected["models"][0]["deploymentName"],
+            endpoint_config=selected,
+        )
+        assert binder.call_args.kwargs["persona_markdown"] == ""
+
+        helpers["build_model_endpoint_sync_chat_client"](
+            selected["auth"], "aoai", selected["connection"]["endpoint"],
+            selected["connection"]["openai_api_version"],
+            selected["models"][0]["deploymentName"],
+            endpoint_config=selected,
+            model_id="selected-model",
+        )
+        assert binder.call_args.kwargs["persona_markdown"] == "Only exact identity receives this."
 
     def test_chat_binding_strict_credentials_fail_safely_before_client_creation(self):
         selected = endpoint()
@@ -482,7 +607,7 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         settings = {"model_endpoints": [image, project], "enable_multi_model_endpoints": False}
         original = deepcopy(settings)
         helpers = load_boundaries("route_backend_agents.py", {
-            "build_combined_model_endpoints", "get_global_agent_settings",
+            "collect_agent_model_endpoints", "build_combined_model_endpoints", "get_global_agent_settings",
         }, {
             "get_settings": lambda: settings,
             "get_global_agents": lambda: [],
@@ -505,7 +630,7 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         # The real Key Vault reminder helper both editor option builders share is loaded
         # with the builder, so the test exercises the block the route actually returns.
         helpers = load_boundaries("functions_workspace_authoring.py", {
-            "build_agent_editor_options", "build_secret_reminder_defaults",
+            "_project_agent_editor_endpoints", "build_agent_editor_options", "build_secret_reminder_defaults",
         }, {
             "ensure_editor_options_access": lambda user, settings: True,
             "ensure_editor_access": Mock(),
@@ -540,6 +665,54 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         self.assertEqual(binding["deployment"], "custom-deployment")
         self.assertEqual(runtime["keyvault_model_endpoint_get_helper"].call_args.kwargs["scope"], "group")
 
+    def test_agent_service_factory_explicitly_disables_model_personas(self):
+        builder = Mock(return_value=(sentinel.agent_service, "azure_openai"))
+        helpers = load_boundaries(
+            "semantic_kernel_loader.py",
+            {"create_model_endpoint_chat_completion_service"},
+            {"build_semantic_kernel_chat_service_for_model": builder},
+        )
+        resolved_endpoint = endpoint()
+        service = helpers["create_model_endpoint_chat_completion_service"](
+            {
+                "endpoint": resolved_endpoint["connection"]["endpoint"],
+                "deployment": "custom-deployment",
+                "model_provider": "aoai",
+                "model_endpoint_id": resolved_endpoint["id"],
+                "model_id": "selected-model",
+                "resolved_model_endpoint": resolved_endpoint,
+            },
+            "agent-test",
+            settings={},
+        )
+        self.assertIs(service, sentinel.agent_service)
+        self.assertFalse(builder.call_args.kwargs["apply_model_persona"])
+
+    def test_semantic_kernel_model_context_can_disable_agent_tabular_personas(self):
+        selected = endpoint([model(
+            persona_enabled=True,
+            persona_markdown="Do not send to agent tabular work.",
+        )])
+        service = SimpleNamespace(client=SimpleNamespace())
+        binder = Mock(side_effect=lambda client, *_args, **_kwargs: client)
+        helpers = load_boundaries("functions_model_endpoint_runtime.py", {
+            "_require_chat_model_for_endpoint", "build_semantic_kernel_chat_service_for_model",
+        }, {
+            "_build_azure_chat_completion": Mock(return_value=service),
+            "bind_model_endpoint_request_policy": binder,
+        })
+        helpers["build_semantic_kernel_chat_service_for_model"](
+            "custom-deployment",
+            {},
+            model_context={
+                "endpoint_id": selected["id"],
+                "model_id": "selected-model",
+                "apply_model_persona": False,
+            },
+            resolved_model_endpoint=selected,
+        )
+        binder.assert_not_called()
+
     def test_personal_and_group_workflow_bindings_require_text_models(self):
         for filename in ("functions_personal_workflows.py", "functions_group_workflows.py"):
             helpers = load_boundaries(filename, {"_summarize_model_binding"})
@@ -550,6 +723,152 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
                         helpers["_summarize_model_binding"]([selected], selected["id"], record["id"])
             selected = endpoint([model("private-chat-alias")])
             self.assertTrue(helpers["_summarize_model_binding"]([selected], selected["id"], "selected-model")["valid"])
+
+    def test_agent_workflow_auxiliary_model_resolves_without_persona(self):
+        builder = Mock(return_value=(sentinel.client, "deployment", "aoai"))
+        helpers = load_boundaries(
+            "functions_workflow_runner.py",
+            {"_resolve_model_workflow_client"},
+            {
+                "_get_workflow_group_id": lambda workflow: "",
+                "_build_multi_endpoint_client": builder,
+            },
+        )
+        workflow = {
+            "user_id": "reader",
+            "runner_type": "agent",
+            "model_endpoint_id": "endpoint-one",
+            "model_id": "model-one",
+        }
+        helpers["_resolve_model_workflow_client"](workflow, {})
+        assert builder.call_args.kwargs["apply_model_persona"] is False
+
+        group_workflow = {
+            "user_id": "reader",
+            "group_id": "group-one",
+            "runner_type": "model",
+            "model_endpoint_id": "global-endpoint",
+            "model_id": "model-one",
+            "model_binding_summary": {"scope": "global"},
+        }
+        helpers["_resolve_model_workflow_client"](group_workflow, {})
+        assert builder.call_args.kwargs["requested_scope_type"] == "global"
+        assert builder.call_args.kwargs["requested_scope_id"] == "global"
+
+        historical_default_workflow = {
+            "user_id": "reader",
+            "group_id": "group-one",
+            "runner_type": "model",
+            "model_binding_summary": {
+                "mode": "default_selection",
+                "endpoint_id": "global-endpoint",
+                "model_id": "model-one",
+            },
+        }
+        builder.reset_mock()
+        helpers["_resolve_model_workflow_client"](
+            historical_default_workflow,
+            {"default_model_selection": {
+                "endpoint_id": "current-default-endpoint",
+                "model_id": "current-default-model",
+            }},
+        )
+        assert builder.call_args.args[1:3] == (
+            "current-default-endpoint", "current-default-model",
+        )
+        assert builder.call_args.kwargs["requested_scope_type"] == "global"
+        assert builder.call_args.kwargs["requested_scope_id"] == "global"
+
+    def test_task_model_override_replaces_parent_scope_and_agent_clears_it(self):
+        normalized_model = {
+            "type": "model",
+            "model_endpoint_id": "shared-endpoint",
+            "model_id": "shared-model",
+            "model_scope_type": "group",
+            "model_scope_id": "group-one",
+            "model_provider": "aoai",
+            "model_binding_summary": {
+                "scope": "group",
+                "scope_type": "group",
+                "scope_id": "group-one",
+            },
+        }
+
+        def normalize_runner(_user_id, _group_id, requested_runner, **_kwargs):
+            if requested_runner.get("type") == "agent":
+                return {"type": "agent", "selected_agent": {"id": "agent-one"}}
+            return normalized_model
+
+        helpers = load_boundaries(
+            "functions_workflow_runner.py",
+            {"_resolve_workflow_task_runner"},
+            {
+                "_get_workflow_group_id": lambda workflow: workflow.get("group_id") or "",
+                "_get_workflow_task_requested_runner_mode": lambda task: (
+                    (task.get("runner") or {}).get("type") or "inherit"
+                ),
+                "normalize_group_workflow_task_runner": normalize_runner,
+                "normalize_personal_workflow_task_runner": Mock(),
+                "_build_workflow_task_runner_audit": lambda *_args: {},
+                "current_workflow_execution": lambda: None,
+            },
+        )
+        parent = {
+            "user_id": "reader",
+            "group_id": "group-one",
+            "runner_type": "model",
+            "model_scope_type": "global",
+            "model_scope_id": "global",
+        }
+        resolved, _ = helpers["_resolve_workflow_task_runner"](
+            parent,
+            {"runner": {"type": "model"}},
+            {},
+            actor_user_id="reader",
+        )
+        assert resolved["model_scope_type"] == "group"
+        assert resolved["model_scope_id"] == "group-one"
+        agent_resolved, _ = helpers["_resolve_workflow_task_runner"](
+            parent,
+            {"runner": {"type": "agent"}},
+            {},
+            actor_user_id="reader",
+        )
+        assert agent_resolved["model_scope_type"] == ""
+        assert agent_resolved["model_scope_id"] == ""
+
+    def test_v2_auto_routing_removes_complete_model_identity(self):
+        composer_source = (
+            APP_ROOT.parent / "v2_ui" / "src" / "components" / "chat" / "Composer.tsx"
+        ).read_text(encoding="utf-8")
+        assert "'model_scope_type', 'model_scope_id'" in composer_source
+
+    def test_unscoped_analysis_checkpoints_keep_legacy_fingerprint_shape(self):
+        helpers = load_boundaries(
+            "functions_workflow_runner.py",
+            {"_configure_analysis_checkpoints"},
+            {
+                "json": json,
+                "analysis_source_snapshot": lambda manifest: manifest,
+            },
+        )
+        checkpoints = SimpleNamespace(operation_request=None, operation_sources=None)
+        workflow = {
+            "task_prompt": "Analyze",
+            "runner_type": "model",
+            "model_endpoint_id": "endpoint-one",
+            "model_id": "model-one",
+            "model_provider": "aoai",
+            "legacy_model_deployment": "",
+            "selected_agent": {},
+        }
+        helpers["_configure_analysis_checkpoints"](
+            {"_analysis_checkpoints": checkpoints, **workflow},
+            {"type": "analyze"},
+            [],
+        )
+        assert "model_scope_type" not in checkpoints.operation_request["runner"]
+        assert "model_scope_id" not in checkpoints.operation_request["runner"]
 
     def test_workflow_defaults_validate_real_model_references(self):
         helpers = load_boundaries("functions_personal_workflows.py", {"_build_default_model_summary", "first_if_comma"})
@@ -567,6 +886,8 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
                 self.assertEqual(summary["mode"], "default_selection")
                 if summary["valid"]:
                     self.assertEqual(summary["provider"], "aoai")
+                    self.assertEqual(summary["scope_type"], "global")
+                    self.assertEqual(summary["scope_id"], "global")
         self.assertFalse(helpers["_build_default_model_summary"]({
             "default_model_selection": {"endpoint_id": "missing"}, "enable_gpt_apim": True,
         })["valid"])

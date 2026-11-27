@@ -14,6 +14,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { answerElicitation, reconcileElicitationAnswer } from '../../lib/orchestrationController';
 import {
     buildElicitationAnswer,
+    ELICITATION_PENDING_UPLOAD_MESSAGE,
     elicitationFieldKind,
     elicitationFieldLabel,
     elicitationFieldReferences,
@@ -23,7 +24,7 @@ import {
 } from '../../lib/elicitationAnswers';
 import { messageToPlainText } from '../../lib/messageText';
 import { AGREEMENT_PENDING_MESSAGE } from '../../lib/userAgreement';
-import type { ComposerDraft } from '../../lib/composerDraft';
+import { composerDraftHasPendingUploads, type ComposerDraft } from '../../lib/composerDraft';
 import type { Elicitation, ElicitationAction, ElicitationContext, ElicitationResponse } from '../../lib/orchestration';
 import type { PromptResolutionContext } from '../../lib/promptVariables';
 
@@ -165,8 +166,21 @@ export function ElicitationForm({
     const isReview = pageIndex === pages.length;
     const agreementHeld = agreementHolds.size > 0;
     const canFinish = Object.keys(answer.errors).length === 0 && !answer.pendingUploads && !agreementHeld;
-    const currentErrors = (pages[pageIndex] ?? []).filter((name) => answer.errors[name]);
-    const canAdvance = isReview ? canFinish : currentErrors.length === 0 && !agreementHeld;
+    const currentPage = pages[pageIndex] ?? [];
+    const pendingUploadFields = new Set(currentPage.filter((name) => {
+        const editor = draft.editors[name];
+        return editor ? composerDraftHasPendingUploads(editor) : false;
+    }));
+    const currentErrors = currentPage.filter((name) => answer.errors[name]);
+    const isLastQuestionPage = !isReview && pageIndex === pages.length - 1;
+    const canAdvance = isReview || isLastQuestionPage
+        ? canFinish
+        : currentErrors.every((name) =>
+            pendingUploadFields.has(name)
+            && answer.errors[name] === ELICITATION_PENDING_UPLOAD_MESSAGE
+        ) && !agreementHeld;
+    const currentPageUploads = [...pendingUploadFields].flatMap((name) =>
+        draft.editors[name]?.uploads ?? []);
     const updateDraft = onDraftChange;
     const changePage = (index: number) =>
         updateDraft((current) => ({ ...current, pageIndex: index }));
@@ -338,7 +352,7 @@ export function ElicitationForm({
                         <p>{agreementHeld
                             ? AGREEMENT_PENDING_MESSAGE
                             : answer.pendingUploads
-                                ? 'Wait for the attached files to finish processing.'
+                                ? ELICITATION_PENDING_UPLOAD_MESSAGE
                                 : 'Complete this answer before continuing.'}</p>
                         {Object.keys(answer.errors).filter((name) => !pages[pageIndex]?.includes(name)).map((name) => (
                             <button key={name} type="button" className="ml-3 text-accent underline"
@@ -347,6 +361,13 @@ export function ElicitationForm({
                             </button>
                         ))}
                     </div>
+                ) : null}
+                {!isReview && currentPageUploads.length > 0 ? (
+                    <p className="mt-2 text-right text-xs text-text-3" aria-live="polite">
+                        {currentPageUploads.some((upload) => upload.state === 'uploading')
+                            ? 'Continuing now interrupts the upload. Return to this answer to retry or remove it.'
+                            : 'File processing continues while you answer the next question.'}
+                    </p>
                 ) : null}
                 {!isReview ? <p className="mt-3 text-xs text-text-3">Nothing is sent until you review and submit all answers.</p> : null}
             </form>

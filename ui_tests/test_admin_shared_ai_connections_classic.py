@@ -1,12 +1,13 @@
 # test_admin_shared_ai_connections_classic.py
 """
 Classic shared connection manager, independent defaults, recovery and operation tests.
-Version: 0.261.108
+Version: 0.261.436
 Implemented in: 0.261.105; embeddings added in 0.261.106
 """
 
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -183,7 +184,7 @@ def test_classic_manual_alias_keeps_the_underlying_model_without_an_api_override
     assert model["modelName"] == "gpt-image-1"
     assert "image_generation_api" not in model
     assert "supportsChat" not in model and "supportsImageGeneration" not in model
-    assert classic_ui.image_tests == [] and classic_ui.connection_writes == []
+    assert classic_ui.image_tests == [] and len(classic_ui.connection_writes) == 1
 
 
 def test_classic_custom_image_metadata_preserves_separate_edit_and_mask_flags(classic_ui):
@@ -206,7 +207,7 @@ def test_classic_custom_image_metadata_preserves_separate_edit_and_mask_flags(cl
     assert model["supportsImageEditing"] is True
     assert model["supportsImageMasking"] is False
     assert model["image_generation_api"] == "responses"
-    assert classic_ui.image_tests == [] and classic_ui.connection_writes == []
+    assert classic_ui.image_tests == [] and len(classic_ui.connection_writes) == 1
 
 def test_classic_edit_preserves_an_omitted_raw_gateway_key_prefix(classic_ui):
     source = classic_ui.endpoints[1]
@@ -383,7 +384,7 @@ def test_classic_custom_embedding_provider_is_api_key_only_and_manual(classic_ui
     dialog.get_by_label("Embedding API base URL", exact=True).fill("https://gateway.example.test/prefix/api/v1")
     page.locator("#model-endpoint-api-key").fill("fixture-only-not-a-service-key")
     page.locator("#model-endpoint-add-model-btn").click()
-    dialog.locator("input[data-deployment-name-for]").fill("private-embed")
+    dialog.get_by_label("Deployment Name", exact=True).fill("private-embed")
     dialog.get_by_label("Text embedding support", exact=True).select_option("true")
     page.locator("#model-endpoint-save-btn").click()
     expect(dialog).to_be_visible()
@@ -391,6 +392,8 @@ def test_classic_custom_embedding_provider_is_api_key_only_and_manual(classic_ui
     dialog.get_by_label("Embedding dimensions", exact=True).fill("768")
     dialog.get_by_label("Embedding input token limit", exact=True).fill("2048")
     dialog.get_by_label("Embedding model revision", exact=True).fill("release-1")
+    dialog.get_by_text("Embedding routing", exact=True).click()
+    dialog.get_by_label("Use model-specific embedding routing", exact=True).check()
     dialog.get_by_label("Embedding authentication header", exact=True).select_option("authorization")
     expect(dialog.get_by_role("button", name="Test chat", exact=True)).not_to_be_visible()
     dialog.get_by_role("button", name="Test embeddings", exact=True).click()
@@ -399,15 +402,19 @@ def test_classic_custom_embedding_provider_is_api_key_only_and_manual(classic_ui
     expect(dialog).not_to_be_visible()
     payload = json.loads(page.locator("#model_endpoints_json").input_value())[-1]
     assert payload["provider"] == "openai_compatible"
+    assert payload.get("routing_schema_version", 1) == 1
     assert payload["connection"]["endpoint"] == "https://gateway.example.test/prefix/api/v1"
-    assert payload["connection"]["operation_settings"]["embeddings"] == {"auth_header": "authorization"}
-    assert set(payload["auth"]) == {"type", "api_key"}
+    assert payload["models"][0]["embedding_operation"] == {"auth_header": "authorization"}
+    assert "embeddings" not in payload["connection"].get("operation_settings", {})
+    assert payload["auth"] == {"type": "api_key"} and payload["has_api_key"] is True
+    assert len(classic_ui.connection_writes) == 1
+    assert classic_ui.connection_writes[0]["auth"]["api_key"] == "fixture-only-not-a-service-key"
     assert payload["management"] == {}
     assert not {"project_name", "project_api_version", "openai_api_version"} & payload["connection"].keys()
     assert payload["models"][0]["embedding_config"] == {"dimensions": 768, "max_input_tokens": 2048, "model_revision": "release-1"}
     assert payload["models"][0]["supportsEmbeddings"] is True
-    expect(page.locator("#embedding-model-notice")).to_contain_text("Save the connection first")
-    expect(page.locator("#embedding-default-model optgroup")).to_have_count(1)
+    expect(page.locator('#embedding-default-model optgroup[label="Custom Vector Gateway"]')).to_have_count(1)
+    assert classic_ui.selection_writes == []
     assert classic_ui.embedding_tests == [] and classic_ui.connection_tests == []
 
 
@@ -429,7 +436,10 @@ def test_classic_operation_edits_preserve_mixed_gateway_settings_and_catalog_def
     page = classic_ui.page
     page.locator("#model-endpoints-tbody tr").filter(has_text="Team OpenAI").get_by_role("button", name="Edit", exact=True).click()
     dialog = page.locator("#modelEndpointModal")
-    expect(dialog.get_by_label("Embedding inference base URL", exact=True)).to_have_value("https://gateway.example.test/team/vectors")
+    embedding_row = dialog.locator("[data-model-row-id]").nth(1)
+    embedding_row.get_by_text("Capability metadata", exact=True).click()
+    embedding_row.get_by_text("Embedding routing", exact=True).click()
+    expect(embedding_row).to_contain_text("Inherited embedding base: https://gateway.example.test/team/vectors")
     dialog.get_by_label("Endpoint Name", exact=True).fill("Reviewed mixed connection")
     page.locator("#model-endpoint-save-btn").click()
     expect(dialog).not_to_be_visible()
@@ -490,12 +500,15 @@ def test_classic_foundry_embedding_endpoint_is_explicit_and_not_a_project_rewrit
     page.locator("#model-endpoint-save-btn").click()
     expect(page.locator("#fixture-toasts")).to_contain_text("explicit embedding inference base URL ending /openai/v1/")
     expect(dialog).to_be_visible()
+    dialog.get_by_text("Capability metadata", exact=True).click()
+    dialog.get_by_text("Embedding routing", exact=True).click()
+    dialog.get_by_label("Use model-specific embedding routing", exact=True).check()
     dialog.get_by_label("Embedding inference base URL", exact=True).fill("https://foundry.example.test/openai/v1/")
     page.locator("#model-endpoint-save-btn").click()
     expect(dialog).not_to_be_visible()
     payload = json.loads(page.locator("#model_endpoints_json").input_value())[3]
     assert payload["connection"]["endpoint"].endswith("/api/projects/project")
-    assert payload["connection"]["operation_settings"]["embeddings"] == {"endpoint": "https://foundry.example.test/openai/v1/"}
+    assert payload["models"][-1]["embedding_operation"] == {"endpoint": "https://foundry.example.test/openai/v1/"}
 
 
 def test_classic_unsupported_embedding_model_is_not_published_as_chat_or_images(classic_ui):
@@ -576,12 +589,17 @@ def test_classic_custom_embeddings_keep_image_metadata_and_saved_request_identit
     dialog.get_by_role("button", name="Test embeddings", exact=True).click()
     expect(page.locator("#fixture-toasts")).to_contain_text("returned 1,536 dimensions. No vectors were stored")
     assert classic_ui.embedding_tests == [{"test_type": "embedding", "selection": reference("custom-vectors", "custom-embedding", "custom")}]
-    dialog.get_by_role("button", name="Test chat", exact=True).click()
+    dialog.get_by_role("button", name="Test Connection", exact=True).click()
     expect(page.locator("#fixture-toasts")).to_contain_text("Chat request succeeded.")
-    assert classic_ui.chat_tests[-1]["model"]["modelName"] == "gpt-5.6-sol"
+    identifier = "deploymentName" if api_type == "azure_openai" else "modelName"
+    assert classic_ui.chat_tests[-1]["model"][identifier] == original["models"][0][identifier]
     assert classic_ui.chat_tests[-1]["api_type"] == api_type
-    dialog.get_by_label("Embedding inference base URL", exact=True).fill("https://gateway.example.test/other/embedding-base")
-    dialog.get_by_label("Embedding authentication header", exact=True).select_option("authorization")
+    embedding_row = dialog.locator("[data-model-row-id]").nth(1)
+    embedding_row.get_by_text("Capability metadata", exact=True).click()
+    embedding_row.get_by_text("Embedding routing", exact=True).click()
+    embedding_row.get_by_label("Use model-specific embedding routing", exact=True).check()
+    embedding_row.get_by_label("Embedding inference base URL", exact=True).fill("https://gateway.example.test/other/embedding-base")
+    embedding_row.get_by_label("Embedding authentication header", exact=True).select_option("authorization")
     dialog.get_by_label("Endpoint Name", exact=True).fill("Reviewed Custom Mixed Gateway")
     page.locator("#model-endpoint-save-btn").click()
     expect(dialog).not_to_be_visible()
@@ -589,15 +607,14 @@ def test_classic_custom_embeddings_keep_image_metadata_and_saved_request_identit
     assert saved["provider"] == "custom" and saved["api_type"] == api_type
     assert saved["connection"]["endpoint"] == original["connection"]["endpoint"]
     assert saved["connection"]["url_mode"] == "exact"
-    expected_operations = copy.deepcopy(original["connection"]["operation_settings"])
-    expected_operations["embeddings"] = {
+    assert saved["connection"]["operation_settings"] == original["connection"]["operation_settings"]
+    assert saved["models"][1]["embedding_operation"] == {
         "endpoint": "https://gateway.example.test/other/embedding-base", "auth_header": "authorization",
     }
-    assert saved["connection"]["operation_settings"] == expected_operations
     if api_type == "azure_openai":
         assert saved["connection"]["api_version"] == original["connection"]["api_version"]
     assert saved["models"][1]["id"] == "custom-embedding"
-    assert saved["models"][1]["deploymentName"] == "embedding-wire-alias"
+    assert saved["models"][1][identifier] == wire_name
     assert saved["models"][1]["modelName"] == "text-embedding-3-small"
     assert saved["models"][1]["embedding_config"] == original["models"][1]["embedding_config"]
     assert saved["models"][1]["vendorOptions"] == original["models"][1]["vendorOptions"]
@@ -606,8 +623,7 @@ def test_classic_custom_embeddings_keep_image_metadata_and_saved_request_identit
     assert not {"api_key", "bearer_token", "client_secret"} & saved["auth"].keys()
     assert saved[f"has_{'api_key' if auth_type == 'api_key' else 'bearer_token'}"] is True
     assert classic_ui.selections == previous and classic_ui.selection_writes == []
-    assert classic_ui.connection_writes == []
-    expect(page.locator("#embedding-model-notice")).to_contain_text("Save the connection first")
+    assert len(classic_ui.connection_writes) == 1
 
 
 @pytest.mark.parametrize("api_type,auth_type", [
@@ -625,11 +641,21 @@ def test_classic_custom_unsupported_embeddings_leave_chat_controls_available(cla
     expect(dialog.get_by_label("Use for embeddings", exact=True).nth(1)).to_be_disabled()
     expect(dialog.get_by_role("button", name="Test embeddings", exact=True)).not_to_be_visible()
     expect(dialog.get_by_label("Use for chat", exact=True).first).to_be_checked()
-    expect(dialog.get_by_role("button", name="Test chat", exact=True).first).to_be_visible()
-    expect(page.locator("#model-endpoint-embedding-unavailable")).to_contain_text("Other Custom API types and OAuth2 embeddings are not supported.")
+    expect(dialog.get_by_role("button", name="Test Connection", exact=True).first).to_be_visible()
+    expect(dialog.get_by_text(re.compile("Other Custom API types and OAuth2 embeddings are not supported.")).first).to_be_visible()
     dialog.get_by_text("Capability metadata", exact=True).nth(1).click()
     expect(dialog.get_by_label("Text embedding support", exact=True).nth(1)).to_be_disabled()
     assert classic_ui.embedding_tests == [] and classic_ui.selection_writes == []
+
+
+def test_classic_embedding_default_opens_selected_models_routing(classic_ui):
+    classic_ui.open()
+    page = classic_ui.page
+    page.get_by_role("button", name="Edit embedding model in AI Connections", exact=True).click()
+    dialog = page.locator("#modelEndpointModal")
+    routing = dialog.locator("[data-model-row-id]").filter(has=page.get_by_label("Enable docs-embedding", exact=True))
+    expect(routing.get_by_text("Embedding routing", exact=True)).to_be_visible()
+    assert classic_ui.selection_writes == [] and classic_ui.connection_writes == []
 
 
 def test_classic_saved_embedding_alias_retains_provider_wire_name_and_path(classic_ui):
@@ -656,7 +682,7 @@ def test_classic_saved_embedding_alias_retains_provider_wire_name_and_path(class
     assert saved["models"][0]["modelName"] == "text-embedding-3-small"
     assert saved["auth"] == {"type": "api_key"} and saved["has_api_key"] is True
     assert classic_ui.embedding_tests == [{"test_type": "embedding", "selection": reference("alias-vectors", "alias-embedding", "openai_compatible")}]
-    assert classic_ui.selection_writes == [] and classic_ui.connection_writes == []
+    assert classic_ui.selection_writes == [] and len(classic_ui.connection_writes) == 1
 
 
 @pytest.mark.parametrize("model_name,api,description", [

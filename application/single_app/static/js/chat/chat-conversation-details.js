@@ -1122,6 +1122,8 @@ function getAvailableModelOptions() {
               data-deployment-name="${escapeHtml(opt.dataset.deploymentName || '')}"
               data-endpoint-id="${escapeHtml(opt.dataset.endpointId || '')}"
               data-provider="${escapeHtml(opt.dataset.provider || '')}"
+              data-scope-type="${escapeHtml(opt.dataset.scopeType || '')}"
+              data-scope-id="${escapeHtml(opt.dataset.scopeId || '')}"
               ${opt.selected ? 'selected' : ''}>${escapeHtml(opt.text)}</option>`;
   }
   return options || '<option value="">Default</option>';
@@ -1134,6 +1136,8 @@ function getSummaryModelSelection(selectElement) {
     modelEndpointId: selectedOption?.dataset?.endpointId || '',
     modelId: selectedOption?.dataset?.modelId || '',
     modelProvider: selectedOption?.dataset?.provider || '',
+    modelScopeType: selectedOption?.dataset?.scopeType || '',
+    modelScopeId: selectedOption?.dataset?.scopeId || '',
   };
 }
 
@@ -1142,7 +1146,7 @@ function getSummaryModelSelection(selectElement) {
  * @param {string} conversationId - The conversation ID
  * @param {string} modelDeployment - Selected model deployment
  */
-async function handleGenerateSummary(conversationId, modelDeployment, modelEndpointId = '', modelId = '', modelProvider = '') {
+async function handleGenerateSummary(conversationId, modelDeployment, modelEndpointId = '', modelId = '', modelProvider = '', modelScopeType = '', modelScopeId = '') {
   const cardBody = document.getElementById('summary-card-body');
   if (!cardBody) {
     return;
@@ -1166,6 +1170,8 @@ async function handleGenerateSummary(conversationId, modelDeployment, modelEndpo
         model_endpoint_id: modelEndpointId,
         model_id: modelId,
         model_provider: modelProvider,
+        model_scope_type: modelScopeType,
+        model_scope_id: modelScopeId,
       })
     });
 
@@ -1233,7 +1239,9 @@ document.addEventListener('click', function(e) {
       selection.modelDeployment,
       selection.modelEndpointId,
       selection.modelId,
-      selection.modelProvider
+      selection.modelProvider,
+      selection.modelScopeType,
+      selection.modelScopeId
     );
     return;
   }
@@ -1251,7 +1259,9 @@ document.addEventListener('click', function(e) {
       selection.modelDeployment,
       selection.modelEndpointId,
       selection.modelId,
-      selection.modelProvider
+      selection.modelProvider,
+      selection.modelScopeType,
+      selection.modelScopeId
     );
     return;
   }

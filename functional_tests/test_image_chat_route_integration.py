@@ -1,8 +1,9 @@
 # test_image_chat_route_integration.py
 """
 Functional test for the actual /api/chat Image-mode request path.
-Version: 0.261.192
+Version: 0.261.485
 Implemented in: 0.261.105
+Route wrappers, chat helpers, and replay-builder contracts updated in: 0.261.485
 
 Registers the complete production chat handler with its original Flask route decorator.
 Local normalization, metadata, threading, title, image binding, SDK, and persistence logic
@@ -93,6 +94,15 @@ def authenticated_test_user(function):
             return jsonify({"error": "User not authenticated"}), 401
         return function(*args, **kwargs)
     return wrapped
+
+
+def resolve_absent_conversation_references(_user_id, data, *, fallback_references=None, **_kwargs):
+    """Mirror the production branch for requests without conversation references."""
+    assert not (isinstance(data, dict) and data.get("conversation_references")) and not fallback_references
+    g.conversation_references = None
+    g.conversation_reference_revision = None
+    g.conversation_reference_prompt = ""
+    return None
 
 
 class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
@@ -187,7 +197,37 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
             "M365PolicyError": type("TestM365PolicyError", (Exception,), {}),
             "ModelTokenBudgetError": type("TestModelTokenBudgetError", (Exception,), {}),
             "ScreeningError": type("TestScreeningError", (Exception,), {}),
+            # except clauses evaluate these whenever an exception unwinds through chat_api.
+            "asyncio": __import__("asyncio"),
+            "ModelEndpointValidationError": __import__(
+                "functions_model_endpoint_validation"
+            ).ModelEndpointValidationError,
+            "CosmosResourceNotFoundError": __import__(
+                "azure.cosmos.exceptions", fromlist=["CosmosResourceNotFoundError"],
+            ).CosmosResourceNotFoundError,
+            **{
+                name: type(f"Test{name}", (Exception,), {})
+                for name in (
+                    "ActionCredentialsRequired", "ActionLoadRequired", "ActionRecoveryError",
+                    "ActionRecoveryRequired", "ConversationHandoffError", "ConversationReferenceError",
+                    "SemanticSearchQuotaExceededError", "UserInputRequired",
+                    "XsdGeneratedOutputValidationError", "XsdSchemaError",
+                )
+            },
             "_with_m365_pending_action_cards": lambda function: function,
+            # Retry, chat-link, and public-scope wrappers have dedicated coverage; image mode
+            # exercises the route body they wrap.
+            "_with_prepared_chat_retry": lambda function: function,
+            "_with_chat_link_request": lambda function: function,
+            "public_chat_scope_required": lambda *_args, **_kwargs: (lambda function: function),
+            "resolve_public_chat_workspace_ids": Mock(return_value=[]),
+            # No conversation handoff container is configured here, so production
+            # acquires no destination lease and has nothing to release.
+            "_acquire_chat_destination_lease": lambda *_args, **_kwargs: None,
+            "_release_chat_destination_lease": lambda *_args, **_kwargs: None,
+            "_resolve_chat_conversation_references": resolve_absent_conversation_references,
+            "deepcopy": copy.deepcopy,
+            "has_request_context": __import__("flask").has_request_context,
             "check_chat_content": Mock(return_value=types.SimpleNamespace(decision="allow", blocked=False)),
             "attach_chat_check": Mock(),
             "CLIENTS": {},
@@ -264,6 +304,8 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
             "_build_agent_selection_metadata", "_normalize_prior_grounded_document_refs",
             "_load_user_message_response_context", "_initialize_assistant_response_tracking",
             "_get_user_message_image_context", "_resolve_generated_image_bytes",
+            "_normalize_default_reasoning_effort", "_apply_admin_new_conversation_model_defaults",
+            "_save_chat_user_metadata",
             "build_web_search_query_text", "chat_api",
         ), namespace, strip_decorators=False)
         return namespace
@@ -427,8 +469,12 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
         conversations_source = (
             TEST_ROOT.parent / "application" / "single_app" / "route_backend_conversations.py"
         ).read_text(encoding="utf-8-sig")
-        self.assertGreaterEqual(conversations_source.count("chat_request['image_references'] = image_references"), 2)
-        self.assertGreaterEqual(conversations_source.count("chat_request['image_mask_dropped'] = True"), 2)
+        # Retry and edit replays share one authorized request builder.
+        builder_start = conversations_source.index("def _build_authorized_message_replay_request(")
+        builder = conversations_source[builder_start:conversations_source.index("\ndef ", builder_start + 1)]
+        self.assertIn("body['image_references'] = image_references", builder)
+        self.assertIn("body['image_mask_dropped'] = True", builder)
+        self.assertGreaterEqual(conversations_source.count("body = _build_authorized_message_replay_request("), 2)
 
 
 if __name__ == "__main__":

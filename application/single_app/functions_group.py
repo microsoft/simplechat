@@ -3,11 +3,13 @@
 import copy
 
 from azure.core import MatchConditions
+from functions_model_persona import validate_model_persona_settings_document
 
 from config import *
 import functions_authentication
 import functions_settings
 from typing import Iterable
+from azure.core import MatchConditions
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_appinsights import log_event
@@ -493,7 +495,14 @@ def get_group_model_endpoints(group_id: str):
     return []
 
 
-def update_group_model_endpoints(group_id: str, endpoints, *, user_id=None, outcome=None):
+def update_group_model_endpoints(
+    group_id: str,
+    endpoints,
+    *,
+    user_id=None,
+    outcome=None,
+    expected_etag=None,
+):
     """Replace the model endpoint list on the group document.
 
     This is the collection writer behind the legacy ``POST /api/group/model-endpoints``.
@@ -511,12 +520,25 @@ def update_group_model_endpoints(group_id: str, endpoints, *, user_id=None, outc
         raise ValueError("model_endpoints must be a list")
 
     def apply(group_doc):
+        if (
+            expected_etag is not None
+            and str(group_doc.get("_etag") or "") != str(expected_etag)
+        ):
+            raise GroupDocumentWriteConflict(
+                "The group model endpoint catalog changed. Reload and try again."
+            )
         if user_id is not None:
             role = get_user_role_in_group(group_doc, user_id)
             if not role:
                 raise PermissionError("User is not a member of this group")
             if role not in ("Owner", "Admin"):
                 raise PermissionError("Insufficient permissions for this group")
+            if group_doc.get("status", "active") != "active":
+                raise PermissionError("Model endpoint editing requires an active group")
+        validate_model_persona_settings_document({
+            **group_doc,
+            "model_endpoints": endpoints,
+        })
         previous = group_doc.get("model_endpoints")
         if outcome is not None:
             outcome.update(

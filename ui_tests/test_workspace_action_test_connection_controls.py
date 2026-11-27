@@ -2,7 +2,7 @@
 """
 UI test for the workspace action modal Test Connection controls.
 
-Version: 0.250.217
+Version: 0.261.062
 Implemented in: 0.250.217
 
 This test ensures every action type that supports connection testing renders a
@@ -86,6 +86,12 @@ def _fill_tableau(page):
     page.locator("#tableau-pat-secret").fill("pat-secret")
 
 
+def _fill_microsoft_decision(page):
+    page.locator("#microsoft-decision-endpoint").fill("https://contoso.services.ai.azure.com")
+    page.locator("#microsoft-decision-deployment-name").fill("decision-1")
+    page.locator("#microsoft-decision-api-key").fill("test-key")
+
+
 ACTION_TEST_CASES = [
     pytest.param(
         "openapi",
@@ -166,6 +172,16 @@ ACTION_TEST_CASES = [
         _fill_tableau,
         "#tableau-server-url",
         id="tableau",
+    ),
+    pytest.param(
+        "microsoft_decision",
+        "#microsoft-decision-config-section",
+        "microsoft-decision",
+        "**/api/plugins/test-microsoft-decision-connection",
+        "Decision Routing",
+        _fill_microsoft_decision,
+        "#microsoft-decision-deployment-name",
+        id="microsoft_decision",
     ),
 ]
 

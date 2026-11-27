@@ -74,7 +74,10 @@ def _fields(value, *, text=(), boolean=(), numeric=()):
 
 
 def _runner(value):
-    result = _fields(value, text=("type", "model_endpoint_id", "model_id", "model_provider"))
+    result = _fields(value, text=(
+        "type", "model_endpoint_id", "model_id", "model_scope_type", "model_scope_id",
+        "model_provider",
+    ))
     if any("://" in item for item in result.values()):
         raise WorkflowDefinitionError("Workflow runners must use configured identifiers, not provider URLs.")
     if "selected_agent" in value and value["selected_agent"] is not None:
@@ -280,7 +283,10 @@ def _configuration(workflow, node, tasks, compiled):
                 _row("Run limits", compiled["limits"]),
                 _row("Workflow runner", _runner({
                     "type": workflow.get("runner_type", "model"),
-                    **{key: workflow[key] for key in ("selected_agent", "model_endpoint_id", "model_id", "model_provider")
+                    **{key: workflow[key] for key in (
+                        "selected_agent", "model_endpoint_id", "model_id",
+                        "model_scope_type", "model_scope_id", "model_provider",
+                    )
                        if key in workflow},
                 })),
             ])

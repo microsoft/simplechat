@@ -17,7 +17,10 @@ STEP_TASKS = {
     "document_create_from_reference": "general",
     "document_refresh": "general",
 }
-MODEL_FIELDS = ("model_deployment", "model_id", "model_endpoint_id", "model_provider")
+MODEL_FIELDS = (
+    "model_deployment", "model_id", "model_endpoint_id", "model_provider",
+    "model_scope_type", "model_scope_id",
+)
 ROUTING_INSTRUCTIONS = """
 When model_routing is auto, set model_task on each model-backed step to one of the
 model_tasks categories. Choose the category from the actual work (for example coding,
@@ -58,6 +61,10 @@ def authorized_routing_candidates(settings, user_id):
             "model_id": row.get("model_id", ""),
             "model_endpoint_id": row.get("endpoint_id", ""),
             "model_provider": row.get("provider", "aoai"),
+            "model_scope_type": row.get("scope_type", ""),
+            "model_scope_id": row.get("scope_id") or (
+                "global" if row.get("scope_type") == "global" else ""
+            ),
         }
         candidates.append({
             "key": row["selection_key"], "selection": selection,
@@ -232,6 +239,15 @@ def step_model_context(
         context.model_context = {
             "model_id": model.model_id, "endpoint_id": model.endpoint_id,
             "provider": model.provider, "model_deployment": model.deployment,
+            "scope_type": (
+                getattr(model, "model_scope_type", "")
+                or binding.get("selection", {}).get("model_scope_type", "")
+            ),
+            "scope_id": (
+                getattr(model, "model_scope_id", "")
+                or binding.get("selection", {}).get("model_scope_id", "")
+            ),
+            "apply_model_persona": getattr(model, "apply_model_persona", False),
             "user_id": context.user_id, "active_group_ids": binding_seeds(seeds, binding)["active_group_ids"],
         }
         context.planner_client = (

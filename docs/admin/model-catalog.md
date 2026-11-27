@@ -88,7 +88,7 @@ Public keys are not credentials and do not require a customer Key Vault.
 Since **0.261.474**, **Allow online catalog update checks** is the only switch for
 `enable_model_catalog_online_updates`; V2 no longer repeats it under its raw key name.
 Publisher setup and key rotation are described in
-[Signed model catalog updates]({{ '/explanation/features/SIGNED_MODEL_CATALOG_UPDATES/' | relative_url }}).
+[Signed model catalog updates](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/SIGNED_MODEL_CATALOG_UPDATES.md).
 
 ## Find and inspect a profile in V2
 

@@ -1,7 +1,7 @@
 # test_model_catalog_management.py
 """
 Classic and real React V2 catalog workflows on Azure Playwright or local Chromium.
-Version: 0.261.425
+Version: 0.261.460
 Implemented in: 0.261.126
 Orchestrate model picker under Manual controls, Auto by default, since: 0.261.137
 Single orchestration contract updated in: 0.261.139

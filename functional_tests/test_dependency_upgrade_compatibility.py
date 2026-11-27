@@ -1,7 +1,7 @@
 # test_dependency_upgrade_compatibility.py
 """
 Functional tests for consolidated Dependabot dependency compatibility.
-Version: 0.261.403
+Version: 0.261.428
 Implemented in: 0.261.402
 
 Exercise real upgraded packages without Azure or Snowflake credentials. Fresh
@@ -12,13 +12,51 @@ other tests and exercise the asyncio backend in normal and optimized Python.
 import subprocess
 import sys
 import textwrap
+from importlib.metadata import requires, version
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "application" / "single_app"
+
+
+def test_snowflake_cryptography_pins_are_resolvable():
+    declared = {}
+    for raw_line in (APP_DIR / "requirements.txt").read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        requirement = Requirement(line)
+        declared[requirement.name.lower()] = requirement
+
+    snowflake = declared["snowflake-connector-python"]
+    cryptography = declared["cryptography"]
+    cryptography_pin = next(
+        Version(specifier.version)
+        for specifier in cryptography.specifier
+        if specifier.operator == "=="
+    )
+    constraints = [
+        requirement
+        for raw_requirement in requires("snowflake-connector-python") or []
+        if (requirement := Requirement(raw_requirement)).name.lower()
+        == "cryptography"
+    ]
+
+    assert constraints, "Snowflake's cryptography constraint was not discovered."
+    assert all(
+        cryptography_pin in constraint.specifier
+        for constraint in constraints
+        if constraint.marker is None or constraint.marker.evaluate()
+    )
+    assert snowflake.specifier.contains(
+        version("snowflake-connector-python"), prereleases=True
+    )
+    assert cryptography.specifier.contains(version("cryptography"), prereleases=True)
 
 
 def run_probe(source, *, optimized=False):

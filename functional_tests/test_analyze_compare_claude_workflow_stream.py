@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Analyze/Compare Claude workflow stream support.
-Version: 0.261.105
-Implemented in: 0.241.193
+Version: 0.261.428
+Implemented in: 0.241.193; workflow runtime fixtures and authorization coverage updated in 0.261.045
 
 This test ensures chat and workflow document actions can resolve Claude model
 endpoints through the Anthropic adapter and that Anthropic stream responses are
@@ -11,12 +11,17 @@ parsed without failing on SSE framing or final usage-only chunks.
 """
 
 import ast
+import copy
 import json
 import sys
 import traceback
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
 from test_support.versioning import assert_app_version_at_least
+from test_custom_model_endpoint_provider import load_model_endpoint_runtime_module, _restore_modules
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +42,9 @@ from model_endpoint_clients import (  # noqa: E402
     build_openai_style_chat_client,
     infer_model_endpoint_protocol,
 )
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
+from functions_model_endpoint_urls import resolve_model_endpoint_route, routing_schema_version
+from functions_workflow_context import wrap_workflow_model_client
 
 
 PROJECT_ENDPOINT = "https://eastus2.services.ai.azure.com/api/projects/project-eastus2-dev"
@@ -74,22 +82,24 @@ def load_workflow_helpers(function_names):
         "cognitive_services_scope": "https://cognitiveservices.azure.com/.default",
         "get_group_model_endpoints": lambda group_id: [],
         "get_user_settings": lambda user_id: {"settings": {}},
+        "assert_group_role": lambda *_args, **_kwargs: "User",
+        "ensure_governance_access": lambda *_args, **_kwargs: None,
         "infer_model_endpoint_protocol": infer_model_endpoint_protocol,
+        "routing_schema_version": routing_schema_version,
+        "get_model_endpoint_api_type": get_model_endpoint_api_type,
+        "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "keyvault_model_endpoint_get_helper": lambda endpoint, *args, **kwargs: endpoint,
         "normalize_model_endpoints": lambda endpoints: (list(endpoints or []), False),
         "AIConnectionError": AIConnectionError,
         "require_model_capability": require_model_capability,
         "build_model_endpoint_identity_headers": lambda *args, **kwargs: {},
+        "wrap_workflow_model_client": wrap_workflow_model_client,
     }
-    runtime_path = APP_DIR / "functions_model_endpoint_runtime.py"
-    runtime_tree = ast.parse(runtime_path.read_text(encoding="utf-8"))
-    runtime_nodes = [
-        node for node in runtime_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in {
-            "_require_chat_model_for_endpoint", "build_model_endpoint_sync_chat_client",
-        }
-    ]
-    exec(compile(ast.Module(body=runtime_nodes, type_ignores=[]), runtime_path, "exec"), namespace)
+    runtime, original_modules = load_model_endpoint_runtime_module()
+    try:
+        namespace["build_model_endpoint_sync_chat_client"] = runtime.build_model_endpoint_sync_chat_client
+    finally:
+        _restore_modules(original_modules)
     exec(compile(helper_module, WORKFLOW_RUNNER, "exec"), namespace)
     return namespace
 
@@ -180,6 +190,109 @@ def test_workflow_resolves_non_claude_foundry_endpoint_to_openai_style_client():
     assert_equal(provider, "new_foundry", "OpenAI-style provider")
 
 
+@pytest.mark.parametrize("scope", ("global", "user", "group"))
+@pytest.mark.parametrize("denied_at", ("feature", "item"))
+def test_workflow_policy_denial_precedes_storage_and_credentials(scope, denied_at):
+    helpers = load_workflow_helpers({"_build_multi_endpoint_client"})
+    events = []
+
+    def governance(feature, user_id, **kwargs):
+        events.append((feature, user_id, kwargs))
+        if feature == f"governance_{scope}_endpoints":
+            if denied_at == "feature" or kwargs.get("item_id") == "saved-endpoint":
+                raise PermissionError("Denied by current policy")
+
+    forbidden = Mock(side_effect=AssertionError("Denied endpoint must not be read or used"))
+    helpers.update({
+        "ensure_governance_access": governance,
+        "get_group_model_endpoints": forbidden,
+        "get_user_settings": forbidden,
+        "keyvault_model_endpoint_get_helper": forbidden,
+        "build_model_endpoint_sync_chat_client": forbidden,
+    })
+    settings = {
+        "enable_multi_model_endpoints": True,
+        "allow_user_custom_endpoints": scope == "user",
+        "allow_group_custom_endpoints": scope == "group",
+        "model_endpoints": [build_endpoint("saved-endpoint", "model")] if scope == "global" else [],
+    }
+    with pytest.raises((ValueError, PermissionError)):
+        helpers["_build_multi_endpoint_client"](
+            "actor", "saved-endpoint", "model", settings,
+            group_id="group-one" if scope == "group" else None,
+        )
+    forbidden.assert_not_called()
+    assert events
+
+
+def test_workflow_revoked_membership_precedes_group_endpoint_read():
+    helpers = load_workflow_helpers({"_build_multi_endpoint_client"})
+    forbidden = Mock(side_effect=AssertionError("Revoked group must not be read"))
+    helpers["assert_group_role"] = Mock(side_effect=PermissionError("Revoked membership"))
+    helpers["get_group_model_endpoints"] = forbidden
+    with pytest.raises((PermissionError, ValueError)):
+        helpers["_build_multi_endpoint_client"](
+            "actor", "saved-endpoint", "model",
+            {"enable_multi_model_endpoints": True, "allow_group_custom_endpoints": True},
+            group_id="group-one",
+        )
+    forbidden.assert_not_called()
+
+
+@pytest.mark.parametrize("scope", ("global", "user", "group"))
+def test_workflow_explicit_route_uses_fresh_selection_and_safe_context(scope):
+    helpers = load_workflow_helpers({"_build_multi_endpoint_client"})
+    endpoint = {
+        "id": "saved-endpoint", "provider": "custom", "enabled": True,
+        "routing_schema_version": 2,
+        "connection": {"endpoint": "https://gateway.example/shared/v1"},
+        "models": [{
+            "id": "model", "api_type": "openai", "modelName": "saved-model",
+            "url_mode": "auto", "api_path": "before", "enabled": True,
+        }],
+    }
+    updated = copy.deepcopy(endpoint)
+    updated["models"][0].update(api_path="fresh", modelName="current-model")
+    updated["auth"] = {"type": "api_key", "api_key": "test-only-secret"}
+    updated["_resolved_route"] = resolve_model_endpoint_route(updated, updated["models"][0])
+    resolve_context = Mock(return_value=updated)
+    build_client = Mock(return_value=(object(), "openai_style"))
+    helpers.update({
+        "get_user_settings": lambda _user: {"settings": {"personal_model_endpoints": [endpoint]}},
+        "get_group_model_endpoints": lambda _group: [endpoint],
+        "resolve_model_endpoint_from_context": resolve_context,
+        "build_model_endpoint_sync_chat_client": build_client,
+        "keyvault_model_endpoint_get_helper": Mock(side_effect=AssertionError("Use authorized resolution")),
+    })
+    settings = {
+        "enable_multi_model_endpoints": True,
+        "allow_user_custom_endpoints": scope == "user",
+        "allow_group_custom_endpoints": scope == "group",
+        "model_endpoints": [endpoint] if scope == "global" else [],
+    }
+    result = helpers["_build_multi_endpoint_client"](
+        "actor", "saved-endpoint", "model", settings,
+        group_id="group-one" if scope == "group" else None, include_context=True,
+    )
+    expected_context = {
+        "routing_schema_version": 2, "scope_type": scope,
+        "scope_id": {"global": "global", "user": "actor", "group": "group-one"}[scope],
+        "endpoint_id": "saved-endpoint", "model_id": "model",
+    }
+    resolve_context.assert_called_once_with(
+        settings, {**expected_context, "user_id": "actor"}, authorize=True
+    )
+    assert result[1:] == ("current-model", "custom", expected_context)
+    build_client.assert_not_called()
+    direct_result = helpers["_build_multi_endpoint_client"](
+        "actor", "saved-endpoint", "model", settings,
+        group_id="group-one" if scope == "group" else None,
+    )
+    assert len(direct_result) == 3
+    assert build_client.call_args.kwargs["resolved_route"] == updated["_resolved_route"]
+    assert "test-only-secret" not in json.dumps(result[3])
+
+
 def test_anthropic_stream_parser_handles_sse_bytes_and_usage_chunk():
     """Validate Anthropic streaming chunks parse text, usage, and byte lines."""
     client = AnthropicChatCompletionClient(endpoint=PROJECT_ENDPOINT, api_key="fake-key")
@@ -241,7 +354,7 @@ def test_chat_document_action_stream_uses_workflow_executor():
     required_markers = [
         "@bp.route('/api/chat/document-action/stream', methods=['POST'])",
         "@bp.route('/api/chat/analyze/stream', methods=['POST'])",
-        "from functions_workflow_runner import _execute_document_action_workflow",
+        "from functions_workflow_runner import (",
         "execution_result = _execute_document_action_workflow(",
     ]
     for marker in required_markers:

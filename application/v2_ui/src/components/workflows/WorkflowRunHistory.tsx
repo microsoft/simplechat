@@ -8,6 +8,8 @@ import { WorkflowDocumentChoiceDetails } from './WorkflowDocumentChoiceDetails';
 import { WorkflowRuntimePanel } from './WorkflowRuntimePanel';
 import { WorkflowFlowView } from './WorkflowFlowView';
 import { WorkflowRunAskInChat } from './WorkflowRunAskInChat';
+import { WorkflowFailureDetails } from './WorkflowFailureDetails';
+import { fetchWorkflowExecutionAttemptResult } from '../../lib/workflowExecutionHistory';
 import { WorkflowRunActivityLink } from '../workflowActivity/WorkflowActivityLinks';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { TaskCompletenessDetails } from '../ui/TaskCompletenessDetails';
@@ -182,7 +184,7 @@ function ResultExcerpt({
     const [error, setError] = useState('');
     const [requested, setRequested] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
-    const canLoad = Boolean(taskId);
+    const canLoad = Boolean(taskId && item.workflow_result?.result_ref);
 
     const load = (nextOffset = 0) => {
         if (!canLoad) {
@@ -194,7 +196,12 @@ function ResultExcerpt({
         setLoading(true);
         setError('');
         setRequested(true);
-        void fetchWorkflowTaskResult(scope, workflowId, runId, taskId, output, nextOffset, 2000, controller.signal)
+        const request = item.execution_id && Number.isInteger(item.attempt) && Number(item.attempt) > 0
+            ? fetchWorkflowExecutionAttemptResult(
+                scope, workflowId, runId, item.execution_id, Number(item.attempt), nextOffset, 2000, controller.signal, output,
+            )
+            : fetchWorkflowTaskResult(scope, workflowId, runId, taskId, output, nextOffset, 2000, controller.signal);
+        void request
             .then((result) => {
                 if (!controller.signal.aborted) {
                     setPage(result);
@@ -213,6 +220,16 @@ function ResultExcerpt({
     };
 
     useEffect(() => () => abortRef.current?.abort(), []);
+
+    if (!canLoad) {
+        return <p className="text-xs text-text-3" role="status">
+            {item.result_availability?.reason === 'legacy_preview_only'
+                ? 'This older run contains previews only, without a durable result.'
+                : item.result_availability?.reason === 'candidate_unverified'
+                    ? 'A generated candidate is unverified. No result artifact was committed.'
+                    : 'No result artifact was committed for this attempt. Generated work may still exist.'}
+        </p>;
+    }
 
     return (
         <div className="space-y-2 rounded-xl border border-edge p-3">
@@ -347,6 +364,7 @@ function RunItems({
                                     {String(item.label ?? item.task_name ?? item.task_id ?? `Task ${index + 1}`)}
                                 </span>
                             </div>
+                            <WorkflowFailureDetails failure={item} />
                             {validation ? <p className="flex flex-wrap items-center gap-1.5 text-xs text-text-3">
                                 <span>Validation:</span>
                                 <Pill tone={validationTone(item.workflow_validation)}>{validation}</Pill>

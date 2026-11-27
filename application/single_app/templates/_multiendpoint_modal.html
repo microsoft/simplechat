@@ -1,8 +1,8 @@
 <!-- Model Endpoint Modal -->
-<div class="modal fade" id="modelEndpointModal" tabindex="-1" aria-labelledby="modelEndpointModalLabel" aria-hidden="true" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" autocomplete="off">
+<div class="modal fade" id="modelEndpointModal" tabindex="-1" aria-labelledby="modelEndpointModalLabel" aria-hidden="true" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" autocomplete="off" data-model-library="{{ model_endpoint_library | default([]) | tojson | forceescape }}">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
-            <div class="modal-header">
+            <div class="modal-header flex-wrap gap-2">
                 <h5 class="modal-title" id="modelEndpointModalLabel">Model Endpoint</h5>
                 <div class="d-flex align-items-center gap-2">
                     <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#model-endpoint-inline-guidance" aria-expanded="false" aria-controls="model-endpoint-inline-guidance" data-testid="model-endpoint-inline-guidance-toggle">
@@ -13,6 +13,7 @@
             </div>
             <div class="modal-body">
                 <input type="hidden" id="model-endpoint-id" />
+                <div id="model-endpoint-routing-error" class="alert alert-danger d-none" role="alert" tabindex="-1"></div>
 
                 <div class="collapse" id="model-endpoint-inline-guidance">
                     <div class="alert alert-info mb-3" role="region" aria-label="Model endpoint setup guidance">
@@ -45,10 +46,39 @@
                             Choose Custom for a manually configured API type and model list.
                         </div>
                     </div>
+                    <div class="col-12 d-none" id="model-endpoint-profile-group">
+                        <label for="model-endpoint-profile" class="form-label">Custom profile</label>
+                        <select class="form-select" id="model-endpoint-profile">
+                            {% for profile in model_endpoint_profiles | default([{"id": "", "name": "Generic Custom"}, {"id": "genai_mil", "name": "GenAI.mil"}]) %}
+                            <option value="{{ profile.id }}">{{ profile.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">GenAI.mil supports text Chat Completions and backend model discovery. Only model, messages, temperature, max_tokens, and stream are sent. Tools, vision, structured output, and other generation options are not supported by its documented contract.</div>
+                        <div class="form-check mt-2 d-none" id="model-endpoint-origin-approval-group">
+                            <input type="checkbox" class="form-check-input" id="model-endpoint-origin-approved" />
+                            <label class="form-check-label" for="model-endpoint-origin-approved">I approve sending a freshly entered GenAI.mil key to this HTTPS API origin.</label>
+                            <div class="form-text">Changing the origin never reuses a stored key. Enter the key again and explicitly approve the destination.</div>
+                        </div>
+                    </div>
+                    <div class="col-12 d-none" id="model-endpoint-api-key-overrides">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="model-endpoint-api-key-header" class="form-label">Custom authentication header</label>
+                                <input type="text" class="form-control" id="model-endpoint-api-key-header" maxlength="128" autocomplete="off" />
+                                <div class="form-text" id="model-endpoint-api-key-header-help">APIM uses <code>Ocp-Apim-Subscription-Key</code> by default. Leave blank to use the selected model API's default header.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="model-endpoint-api-key-prefix" class="form-label">API key prefix</label>
+                                <input type="text" class="form-control" id="model-endpoint-api-key-prefix" maxlength="128" autocomplete="off" />
+                                <div class="form-text">For example, <code>Bearer</code> or <code>Token</code>. Leave blank to send the raw key.</div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="col-md-6 d-none" id="model-endpoint-api-type-group">
                         <label for="model-endpoint-api-type" class="form-label">API Type</label>
                         <select class="form-select" id="model-endpoint-api-type"
-                            data-api-types="{{ model_endpoint_api_types | tojson | forceescape }}">
+                            data-api-types="{{ model_endpoint_api_types | tojson | forceescape }}"
+                            data-routing-api-types="{{ model_endpoint_routing_api_types | default(model_endpoint_api_types) | tojson | forceescape }}">
                             {% for api_type in model_endpoint_api_types %}
                             <option value="{{ api_type.value }}">{{ api_type.label }}</option>
                             {% endfor %}
@@ -70,6 +100,15 @@
                                 path that cannot be inferred. Test Connection reports the URL actually called.
                             </div>
                         </div>
+                    </div>
+                    <div class="col-12 d-none" id="model-endpoint-ca-bundle-group">
+                        <label for="model-endpoint-ca-bundle" class="form-label">Certificate trust</label>
+                        <select class="form-select" id="model-endpoint-ca-bundle">
+                            <option value="inherit">Existing application trust (legacy path or public roots)</option>
+                            <option value="public">Public certificate authorities</option>
+                        </select>
+                        <div class="form-text">Admin-managed bundles replace public roots for this endpoint. TLS hostname verification remains enabled. Existing endpoints retain their previous trust unless you change it.</div>
+                        <div class="alert alert-warning mt-2 d-none" id="model-endpoint-ca-bundle-error" role="alert"></div>
                     </div>
                     <div class="col-md-3" id="model-endpoint-project-api-version-group">
                         <label for="model-endpoint-project-api-version" class="form-label">Project API Version</label>
@@ -207,8 +246,6 @@
                     </div>
                 </div>
 
-                <div id="model-endpoint-budget-editor"></div>
-
                 <div class="d-flex gap-2 mt-4">
                     <button type="button" class="btn btn-outline-primary" id="model-endpoint-fetch-btn">Fetch Models</button>
                 </div>
@@ -217,13 +254,14 @@
                     <h6>Available Models</h6>
                     <div class="form-text mb-2">
                         Set an optional response length on each model for its per-request generation allowance, not model capacity.
-                        Use Advanced model capacity for verified deployment limits and catalog identity.
+                        Configure verified limits on each model. Default model limits below apply only when a model has no override.
                     </div>
                     <button type="button" class="btn btn-sm btn-outline-primary mt-2 d-none" id="model-endpoint-add-model-btn">
                         <i class="bi bi-plus-circle me-1"></i>Add Model
                     </button>
                     <div id="model-endpoint-models-list" class="mt-2"></div>
                 </div>
+                <div id="model-endpoint-budget-editor"></div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>

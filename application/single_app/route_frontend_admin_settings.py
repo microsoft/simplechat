@@ -12,7 +12,8 @@ from functions_authentication import *
 from flask import current_app, jsonify, request
 from admin_settings_fields import get_field_definition
 
-from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
+from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper
+from functions_model_persona import validate_model_persona_settings_document
 from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_model_endpoint_validation import (
@@ -20,6 +21,7 @@ from functions_model_endpoint_validation import (
     validate_custom_model_endpoints,
 )
 from functions_settings import *
+from model_endpoint_ca_bundles import CABundleError
 from functions_appinsights import log_event
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_ai_connections import (
@@ -57,7 +59,7 @@ from functions_mcp_server_config import (
 )
 from functions_mcp_server_registry import get_inbound_mcp_tool_registry
 from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
-from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list
+from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list, peek_source_review_runtime_capabilities
 from functions_control_center_schedule import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
@@ -100,6 +102,7 @@ from functions_terms_of_use import (
     normalize_terms_of_use_redirect_url,
     normalize_terms_of_use_text,
 )
+from functions_terms_of_use_config import format_terms_of_use_version, get_terms_of_use_config
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
@@ -717,10 +720,18 @@ def register_route_frontend_admin_settings(bp):
 
         try:
             normalized_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []))
+            validate_model_persona_settings_document({
+                **settings,
+                "model_endpoints": normalized_endpoints,
+            })
         except (AIConnectionError, ModelTokenBudgetError) as exc:
             return jsonify({"error": exc.public_message, "code": exc.code}), 400
         settings['model_endpoints'] = normalized_endpoints
-        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints, catalog_settings=settings)
+        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(
+            normalized_endpoints,
+            include_hidden_persona_text=True,
+            catalog_settings=settings,
+        )
 
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:
@@ -733,6 +744,8 @@ def register_route_frontend_admin_settings(bp):
             settings['enable_desktop_notifications'] = False
         if 'enable_conversation_contents_drawer' not in settings:
             settings['enable_conversation_contents_drawer'] = True
+        if 'enable_context_usage_display' not in settings:
+            settings['enable_context_usage_display'] = True
         if 'require_member_of_chat_file_upload_user' not in settings:
             settings['require_member_of_chat_file_upload_user'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
@@ -1106,14 +1119,14 @@ def register_route_frontend_admin_settings(bp):
             user_id = get_current_user_id()
             user_settings = get_user_settings(user_id)
             settings_for_template = dict(settings)
+            terms_version = get_terms_of_use_config(settings)["version"]
+            settings_for_template['terms_of_use_version_label'] = (
+                format_terms_of_use_version(terms_version) if terms_version is not None else "Not numbered"
+            )
             normalize_inbound_mcp_settings(settings_for_template)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
-            audio_runtime_capabilities = get_audio_runtime_capabilities()
-            source_review_runtime_capabilities = get_source_review_runtime_capabilities()
-            settings_for_template['source_review_allow_js_rendering'] = normalize_source_review_js_rendering_enabled(
-                settings_for_template.get('source_review_allow_js_rendering'),
-                source_review_runtime_capabilities,
-            )
+            audio_runtime_capabilities = peek_audio_runtime_capabilities()
+            source_review_runtime_capabilities = peek_source_review_runtime_capabilities()
             settings_for_template = redact_admin_settings_secrets_for_form(settings_for_template)
             settings_for_template['enhanced_citations_storage_status'] = get_enhanced_citations_storage_status()
             inbound_mcp_easy_auth_script_context = get_inbound_mcp_easy_auth_script_context(settings_for_template)
@@ -1870,14 +1883,7 @@ def register_route_frontend_admin_settings(bp):
                 parsed_model_endpoints = list(parsed_model_endpoints) + migrated_endpoints
                 migrated_models = migrated_endpoints[0]['models'] if migrated_endpoints else []
                 debug_print(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.")
-                debug_print(
-                    f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}"
-                )
                 log_event(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.", level=logging.INFO)
-                log_event(
-                    f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}",
-                    level=logging.INFO,
-                )
                 log_general_admin_action(
                     admin_user_id=user_id,
                     admin_email=admin_email,
@@ -1915,6 +1921,14 @@ def register_route_frontend_admin_settings(bp):
                     parsed_model_endpoints,
                     custom_endpoint_validation_settings,
                 )
+                validate_model_endpoint_ca_choices(parsed_model_endpoints, custom_endpoint_validation_settings)
+            except CABundleError as exc:
+                log_event(
+                    "[MODEL_CA_BUNDLES] Global endpoint trust validation failed.",
+                    extra={"code": exc.code}, level=logging.WARNING,
+                )
+                flash(exc.public_message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
             except ModelEndpointValidationError as exc:
                 log_event(
                     "[MODEL_ENDPOINT] Custom model endpoint validation failed",
@@ -2671,6 +2685,7 @@ def register_route_frontend_admin_settings(bp):
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_chat_file_uploads': form_data.get('enable_chat_file_uploads') == 'on',
                 'enable_conversation_contents_drawer': form_data.get('enable_conversation_contents_drawer') == 'on',
+                'enable_context_usage_display': form_data.get('enable_context_usage_display') == 'on',
                 'require_member_of_chat_file_upload_user': require_member_of_chat_file_upload_user,
                 'allow_user_workflows': form_data.get('allow_user_workflows') == 'on',
                 'require_member_of_workflow_user': require_member_of_workflow_user,
@@ -3349,6 +3364,11 @@ def register_route_frontend_admin_settings(bp):
                 preflight_embedding_settings(
                     embedding_settings, {**embedding_settings, **new_settings},
                 )
+                validate_model_persona_settings_document({
+                    **embedding_settings,
+                    **new_settings,
+                    "model_endpoints": parsed_model_endpoints,
+                })
                 parsed_model_endpoints = [
                     keyvault_model_endpoint_save_helper(
                         endpoint,
@@ -3365,6 +3385,17 @@ def register_route_frontend_admin_settings(bp):
                 flash(f"Admin settings were not saved. {exc.public_message}", "danger")
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
             except AIConnectionError as exc:
+                for endpoint in parsed_model_endpoints:
+                    if not isinstance(endpoint, dict):
+                        continue
+                    endpoint_id = endpoint.get("id")
+                    if endpoint_id:
+                        keyvault_model_endpoint_cleanup_helper(
+                            endpoint,
+                            existing_endpoints_by_id.get(endpoint_id),
+                            endpoint_id,
+                            scope="global",
+                        )
                 flash(f"Admin settings were not saved. {exc.public_message}", "danger")
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
             except (AzureError, OSError, RuntimeError, ValueError) as exc:

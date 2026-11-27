@@ -23,6 +23,11 @@ import { initConversationInfoButton } from "./chat-conversation-info-button.js";
 import { initializeReasoningToggle } from "./chat-reasoning.js";
 import { initializeSpeechInput } from "./chat-speech-input.js";
 import { initChatTutorial } from "./chat-tutorial.js";
+import {
+    hasActiveChatLinkBinding,
+    initializeChatLinkControls,
+    launchChatLink,
+} from "./chat-links.js";
 
 const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel("lower_singular") : "public workspace";
 
@@ -90,6 +95,7 @@ async function handleLatestFeatureLaunch(featureAction) {
 
 window.addEventListener('DOMContentLoaded', async () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
+  initializeChatLinkControls();
 
     // Load conversations immediately (awaitable so deep-link can run after)
     await loadConversations();
@@ -113,7 +119,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // 1) Message Input Focus => Create conversation if none
   if (userInput && newConversationBtn) {
     userInput.addEventListener("focus", () => {
-      if (!currentConversationId) {
+      if (!currentConversationId && !hasActiveChatLinkBinding()) {
                 createNewConversation(null, { preserveSelections: true });
       }
     });
@@ -392,6 +398,16 @@ window.addEventListener('DOMContentLoaded', async () => {
           }
       }
 
+      const chatLinkReference = getUrlParameter('chat_link') || '';
+      if (chatLinkReference) {
+          try {
+              await launchChatLink(chatLinkReference);
+          } catch (error) {
+              console.error('Failed to launch chat link:', error);
+              showToast('The linked chat configuration could not be opened.', 'danger');
+          }
+          return;
+      }
 
       // Deep-link: conversationId query param
       const conversationId = getUrlParameter("conversationId") || getUrlParameter("conversation_id");
