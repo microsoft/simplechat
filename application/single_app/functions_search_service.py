@@ -50,7 +50,7 @@ from functions_model_endpoint_identity_header import build_model_endpoint_identi
 from functions_office_media import extract_docx_comments
 from functions_native_document_inspection import has_retained_native_source, inspect_native_document
 from functions_native_audit import build_native_audit
-from native_document_evidence import NativeInspectionRequestError, validate_native_report_sections
+from native_document_evidence import NativeInspectionRequestError, validate_native_report_request
 from model_endpoint_clients import build_openai_client_timeout_options
 from public_source_access import get_public_source_workspace_ids
 from public_source_policy import uses_all_public_sources
@@ -1275,7 +1275,10 @@ def get_document_accessibility_payload(
     file_name = str(current_document.get("file_name") or "")
     extension = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
     requested_sections = _normalize_accessibility_sections(sections)
-    validate_native_report_sections(extension.lstrip("."), requested_sections)
+    validate_native_report_request(
+        extension.lstrip("."), requested_sections, native_section=native_section,
+        native_cursor=native_cursor, sheet_name=sheet_name, cell_range=cell_range,
+    )
     native_inspection = None
     native_source_records = None
     if extension in (".pdf", ".pptx") and has_retained_native_source(current_document):
@@ -1296,8 +1299,7 @@ def get_document_accessibility_payload(
         stored_metadata = native_inspection["metadata"]
     word_inspection = None
     if "comments" in requested_sections and extension in NATIVE_WORD_COMMENT_EXTENSIONS:
-        if native_cursor or cell_range or sheet_name or native_section != "comments":
-            raise ValueError("Word comments do not accept Excel sections, cursors or cell filters.")
+        # validate_native_report_request has already refused paging or filter arguments here.
         word_inspection = _read_word_comment_inspection(document_context, user_id)
         current_document = document_context["document"]
         stored_metadata = current_document.get("accessibility_metadata")

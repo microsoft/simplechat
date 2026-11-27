@@ -11638,7 +11638,6 @@ def process_tabular_generated_output_run(run_id, user_id):
                             generation_plan=generation_plan,
                             transformation_spec=_get_tabular_run_transformation_spec(run),
                             semantic_validation_options=_get_tabular_semantic_validation_options(run),
-                            semantic_checkpoint_run=run,
                         )
                     )
                     batch_results.update(generated_batch_results)

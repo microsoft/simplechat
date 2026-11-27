@@ -1,9 +1,10 @@
 # test_task_completeness_engine.py
 """Grounded, bounded task checking and recovery.
 
-Version: 0.261.478
+Version: 0.261.490
 Implemented in: 0.261.382; 0.261.384; 0.261.416; 0.261.418; 0.261.422
 Input-budget numbers on an unavailable check added in: 0.261.478
+Those numbers logged under names telemetry keeps in: 0.261.490
 """
 
 import json
@@ -77,12 +78,18 @@ def test_assessment_transport_only_accepts_actual_evidence_keys(evidence):
 
 
 def test_a_check_whose_input_does_not_fit_logs_the_budget_numbers():
-    """0.261.478: an unavailable check says how far its input was over the model's budget."""
+    """0.261.478: an unavailable check says how far its input was over the model's budget.
+
+    0.261.490: under names telemetry keeps. The audit's own names contain "token", which the
+    telemetry filter takes for a credential and replaces with a present flag.
+    """
     class BudgetError(Exception):
         audit = {
             "input_tokens": 190000, "input_budget_tokens": 120000, "context_window_tokens": 128000,
-            "max_output_tokens": 8192, "limit_source": "catalog+configured", "limit_status": "known",
-            "decision": "exceeded", "model_id": "PRIVATE-DEPLOYMENT", "safety_tokens": True,
+            "max_output_tokens": 8192, "output_reserve_tokens": 8192,
+            "limit_source": "catalog+configured", "limit_status": "known",
+            "output_reservation": "requested", "token_estimator": "utf8_upper_bound",
+            "decision": "blocked", "model_id": "PRIVATE-DEPLOYMENT", "safety_tokens": True,
         }
 
     def invoke(messages, stage, *, response_format=None):
@@ -98,11 +105,18 @@ def test_a_check_whose_input_does_not_fit_logs_the_budget_numbers():
     assert result == "Evaluation" and state["status"] == "verification_unavailable"
     [diagnostic] = diagnostics
     assert diagnostic["error_type"] == "BudgetError"
-    assert (diagnostic["input_tokens"], diagnostic["input_budget_tokens"]) == (190000, 120000)
-    assert (diagnostic["context_window_tokens"], diagnostic["max_output_tokens"]) == (128000, 8192)
-    assert (diagnostic["limit_source"], diagnostic["limit_status"]) == ("catalog+configured", "known")
-    # Counts and closed tokens only: no model name, no boolean passed off as a count.
-    assert "model_id" not in diagnostic and "safety_tokens" not in diagnostic
+    assert (diagnostic["input_size"], diagnostic["input_budget"]) == (190000, 120000)
+    assert (diagnostic["context_window"], diagnostic["max_output"]) == (128000, 8192)
+    assert diagnostic["output_reserve"] == 8192
+    # A limit from two origins is one lowercase word, the only form telemetry keeps for a code.
+    assert (diagnostic["limit_source"], diagnostic["limit_status"]) == ("catalog_and_configured", "known")
+    assert (diagnostic["output_reservation"], diagnostic["budget_decision"]) == ("requested", "blocked")
+    # The estimator says whether the sizes above are tokens or a byte upper bound.
+    assert diagnostic["size_estimator"] == "utf8_upper_bound"
+    # Counts and closed codes only: no model name, no boolean passed off as a count, and no
+    # key the telemetry filter would hide.
+    assert "model_id" not in diagnostic and "safety_margin" not in diagnostic
+    assert not [key for key in diagnostic if "token" in key]
     assert "PRIVATE" not in json.dumps(diagnostic)
 
 
