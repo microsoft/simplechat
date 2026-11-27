@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_agents_plugins_blueprint_fix.py
 """
 Functional test for agents and plugins blueprint registration fix.
 Version: 0.228.002

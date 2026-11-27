@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_custom_pages_blueprint_endpoint.py
 """
 Functional test for custom pages Blueprint endpoint references.
 Version: 0.242.073

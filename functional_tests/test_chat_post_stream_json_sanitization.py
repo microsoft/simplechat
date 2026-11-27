@@ -14,6 +14,7 @@ import json
 import math
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +26,7 @@ from functions_message_artifacts import build_agent_citation_artifact_documents,
 
 ROUTE_FILE = APP_ROOT / "route_backend_chats.py"
 CONFIG_FILE = APP_ROOT / "config.py"
-FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "CHAT_STREAM_POST_FINALIZATION_JSON_SANITIZATION_FIX.md"
+FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "v0.241.001" / "CHAT_STREAM_POST_FINALIZATION_JSON_SANITIZATION_FIX.md"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:
@@ -97,7 +98,7 @@ def test_chat_routes_use_shared_serializer() -> None:
 
 
 def test_version_and_fix_doc() -> None:
-    assert_contains(CONFIG_FILE, 'VERSION = "0.240.063"')
+    assert_app_version_at_least("0.240.063")
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.240.063**")
 
 

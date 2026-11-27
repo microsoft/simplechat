@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_control_center_caching_validation.py
 """
 Control Center Metrics Caching Implementation Validation.
 Version: 0.230.025
@@ -11,6 +12,7 @@ by checking the code structure and validating the implementation components.
 import sys
 import os
 import re
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 def validate_caching_implementation():
     """Validate that all caching functionality has been implemented correctly."""
@@ -181,7 +183,7 @@ def validate_caching_implementation():
         with open(config_file, 'r', encoding='utf-8') as f:
             config_content = f.read()
             
-        if 'VERSION = "0.230.025"' in config_content:
+        if app_version_is_at_least("0.230.025"):
             print("✅ Version updated to 0.230.025")
             validation_results.append(True)
         else:

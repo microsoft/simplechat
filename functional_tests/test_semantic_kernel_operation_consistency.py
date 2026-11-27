@@ -2,6 +2,8 @@
 """
 Comprehensive test to verify that Semantic Kernel operations work consistently.
 This addresses the intermittent failure issue where getAppMetrics would sometimes fail.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys
@@ -72,7 +74,7 @@ def test_operation_consistency():
             for i in range(5):
                 try:
                     start_time = time.time()
-                    result = plugin.call_operation(operation_id=operation_id)
+                    plugin.call_operation(operation_id=operation_id)
                     duration = time.time() - start_time
                     success_count += 1
                     print(f"  ✅ Attempt {i+1}: Success ({duration:.2f}s)")
@@ -98,7 +100,7 @@ def test_operation_consistency():
             for i in range(3):
                 try:
                     start_time = time.time()
-                    result = plugin.call_operation(operation_id=fuzzy_name)
+                    plugin.call_operation(operation_id=fuzzy_name)
                     duration = time.time() - start_time
                     success_count += 1
                     print(f"  ✅ Attempt {i+1}: Success ({duration:.2f}s)")

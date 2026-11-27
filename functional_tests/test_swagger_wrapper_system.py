@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_swagger_wrapper_system.py
 """
 Functional test for Swagger Route Wrapper system.
 Version: 0.229.061
@@ -31,7 +32,7 @@ def test_swagger_wrapper_system():
     try:
         # Test 1: Check if /swagger endpoint returns HTML
         print("  📋 Testing /swagger endpoint...")
-        response = requests.get(f"{base_url}/swagger", timeout=10, verify=False)
+        response = requests.get(f"{base_url}/swagger", timeout=10)
         if response.status_code != 200:
             print(f"❌ /swagger endpoint failed with status {response.status_code}")
             return False
@@ -44,7 +45,7 @@ def test_swagger_wrapper_system():
         
         # Test 2: Check if /swagger.json returns valid OpenAPI spec
         print("  📋 Testing /swagger.json endpoint...")
-        response = requests.get(f"{base_url}/swagger.json", timeout=10, verify=False)
+        response = requests.get(f"{base_url}/swagger.json", timeout=10)
         if response.status_code != 200:
             print(f"❌ /swagger.json endpoint failed with status {response.status_code}")
             return False
@@ -101,7 +102,7 @@ def test_swagger_wrapper_system():
         
         # Test 4: Check route listing endpoint
         print("  📋 Testing /api/swagger/routes endpoint...")
-        response = requests.get(f"{base_url}/api/swagger/routes", timeout=10, verify=False)
+        response = requests.get(f"{base_url}/api/swagger/routes", timeout=10)
         if response.status_code != 200:
             print(f"❌ /api/swagger/routes endpoint failed with status {response.status_code}")
             return False
@@ -161,7 +162,7 @@ def test_swagger_wrapper_system():
         ]
         
         for route_path, expected_codes in test_routes:
-            response = requests.get(f"{base_url}{route_path}", timeout=10, verify=False)
+            response = requests.get(f"{base_url}{route_path}", timeout=10)
             if response.status_code not in expected_codes:
                 print(f"❌ Route {route_path} returned unexpected status {response.status_code}, expected one of {expected_codes}")
                 return False

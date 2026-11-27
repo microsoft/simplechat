@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_orchestration_auto_open.py
 """
 UI test for the V2 chat orchestration auto-open asymmetry.
 Version: 0.261.213

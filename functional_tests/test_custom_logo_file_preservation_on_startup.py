@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_custom_logo_file_preservation_on_startup.py
 """
 Functional test for startup custom logo file preservation.
 Version: 0.240.004

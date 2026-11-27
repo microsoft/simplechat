@@ -39,7 +39,11 @@ from ui_tests.fixtures.v2_notification_stubs import (
     conversation_mark_read_payload, is_notification_count, mark_read_conversation,
     notification_count_payload,
 )
-from ui_tests.fixtures.v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload
+from ui_tests.fixtures.v2_pending_action_stubs import (
+    background_poll_payload,
+    is_pending_actions_list,
+    pending_actions_payload,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -891,6 +895,10 @@ class WorkspaceAuthoringFixture:
             self._json(route, self.extra_posts[path])
         elif re.fullmatch(r"/api/user/(agents|plugins)(/[^/]+)?", path):
             self._resource(route, entry)
+        elif background_poll_payload(method, path) is not None:
+            # The chat's other background polls (credentials, guided input, orchestration
+            # questions): nothing waiting. Checked last so extra_gets can override them.
+            self._json(route, background_poll_payload(method, path))
         else:
             self.unexpected_requests.append(f"{method} {path}?{urlsplit(route.request.url).query}")
             route.fulfill(status=404, json={"error": "Unexpected workspace fixture request."})

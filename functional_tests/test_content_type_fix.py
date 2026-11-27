@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Test the fixed content type handling in swagger wrapper."""
+# test_content_type_fix.py
+"""Test the fixed content type handling in swagger wrapper.
+
+Version: 0.261.474
+Implemented in: 0.230.045
+"""
 
 import sys
 import os

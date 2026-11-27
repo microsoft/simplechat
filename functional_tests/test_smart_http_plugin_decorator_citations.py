@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# test_smart_http_plugin_decorator_citations.py
 """
 Test Smart HTTP Plugin citations with plugin logger decorator.
 Version: 0.228.012
 
 This test validates that the @plugin_function_logger decorator properly 
 integrates with the citation system to display function calls in agent responses.
+Implemented in: 0.229.001
 """
 
 import sys

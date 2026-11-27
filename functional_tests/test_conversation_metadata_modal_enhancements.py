@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_conversation_metadata_modal_enhancements.py
 """
 Test to verify that the conversation metadata modal width enhancements work correctly.
 
@@ -8,6 +9,8 @@ This test ensures that:
 3. The code styling prevents conversation ID wrapping
 
 Enhancement: Made conversation metadata modal wider to prevent conversation ID wrapping
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys
@@ -20,8 +23,8 @@ def test_modal_width_enhancement():
     
     try:
         # Read the chats template
-        template_path = os.path.join(os.path.dirname(__file__), "../templates/chats.html")
-        with open(template_path, 'r') as f:
+        template_path = os.path.join(os.path.dirname(__file__), "../application/single_app/templates/chats.html")
+        with open(template_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check for modal-xl class in the conversation details modal
@@ -62,8 +65,8 @@ def test_css_modal_xl_support():
     
     try:
         # Read the chats template
-        template_path = os.path.join(os.path.dirname(__file__), "../templates/chats.html")
-        with open(template_path, 'r') as f:
+        template_path = os.path.join(os.path.dirname(__file__), "../application/single_app/templates/chats.html")
+        with open(template_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check for modal-xl CSS styling
@@ -91,8 +94,8 @@ def test_code_element_styling():
     
     try:
         # Read the chats template
-        template_path = os.path.join(os.path.dirname(__file__), "../templates/chats.html")
-        with open(template_path, 'r') as f:
+        template_path = os.path.join(os.path.dirname(__file__), "../application/single_app/templates/chats.html")
+        with open(template_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check for code styling that prevents wrapping
@@ -141,8 +144,8 @@ def test_no_modal_lg_references():
     
     try:
         # Read the chats template
-        template_path = os.path.join(os.path.dirname(__file__), "../templates/chats.html")
-        with open(template_path, 'r') as f:
+        template_path = os.path.join(os.path.dirname(__file__), "../application/single_app/templates/chats.html")
+        with open(template_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check for any remaining modal-lg references in conversation details modal context

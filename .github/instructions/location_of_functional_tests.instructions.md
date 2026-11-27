@@ -51,7 +51,7 @@ The functional tests directory contains:
 test_agent_citations_fix.py              # Agent citation bug fix
 test_semantic_kernel_operation_consistency.py  # SK operation reliability
 test_openapi_operation_lookup.py         # OpenAPI plugin testing
-test_conversation_id_display.py          # UI feature testing
+test_control_center_activity_logs_auto_refresh.py  # UI feature testing
 test_migration.py                        # Database migration testing
 AGENT_MODEL_DISPLAY_FIXES.md            # Fix documentation
 ```

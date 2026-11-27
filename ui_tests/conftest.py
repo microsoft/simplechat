@@ -93,3 +93,32 @@ def pytest_pyfunc_call(pyfuncitem):
         )
     return result
 # --- end pytest return-False guard (#1572) ---
+
+
+# Import paths every UI test can rely on, however pytest is started and whichever
+# file runs first: the repository root (for "from ui_tests.fixtures.x import ..."),
+# ui_tests/fixtures (for "from playwright_connection import ..."), and
+# functional_tests (for "from test_support.x import ..."). Before 0.261.491 some
+# files only imported because an earlier file had added one of these.
+import sys as _sys  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+_REPO_ROOT = _Path(__file__).resolve().parents[1]
+for _path in (_REPO_ROOT, _REPO_ROOT / "ui_tests" / "fixtures", _REPO_ROOT / "functional_tests"):
+    if str(_path) not in _sys.path:
+        _sys.path.append(str(_path))
+
+# Per-test-file sys.modules isolation shared with functional_tests. See
+# functional_tests/test_support/module_isolation.py; set
+# SIMPLECHAT_TEST_MODULE_ISOLATION=0 to disable.
+
+try:
+    from test_support.module_isolation import (  # noqa: E402,F401
+        pytest_make_collect_report,
+        pytest_runtest_protocol,
+    )
+except ModuleNotFoundError as _error:
+    # This conftest copied outside the repository (the return-False guard's own
+    # tests do that) runs without the isolation plugin.
+    if _error.name not in ("test_support", "test_support.module_isolation"):
+        raise

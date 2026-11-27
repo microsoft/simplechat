@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_agents_catalog_feature.py
 """
 Functional test for the Agents catalog page and agent icon/tag metadata.
 Version: 0.242.072

@@ -12,6 +12,7 @@ personal workflow gate for personal activity links.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -61,7 +62,7 @@ def test_group_workflow_activity_view_gate():
     activity_route = _extract_workflow_activity_route(frontend_chats)
 
     checks = [
-        _assert_contains(config, 'VERSION = "0.241.179"', "version bump"),
+        assert_app_version_at_least("0.241.179"),
         _assert_contains(frontend_chats, "def _authorize_workflow_activity_view", "scope-aware activity authorization helper"),
         _assert_contains(frontend_chats, "scope == 'group'", "group activity scope branch"),
         _assert_contains(frontend_chats, "allow_group_workflows", "group workflow feature gate"),

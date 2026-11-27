@@ -13,12 +13,13 @@ an implementation mistake.
 import ast
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET_FILE = ROOT / 'application' / 'single_app' / 'route_backend_chats.py'
 CONFIG_FILE = ROOT / 'application' / 'single_app' / 'config.py'
-FIX_DOC_FILE = ROOT / 'docs' / 'explanation' / 'fixes' / 'REDUNDANT_CONVERSATION_ID_ASSIGNMENT_FIX.md'
+FIX_DOC_FILE = ROOT / 'docs' / 'explanation' / 'fixes' / 'v0.241.001' / 'REDUNDANT_CONVERSATION_ID_ASSIGNMENT_FIX.md'
 CURRENT_VERSION = '0.239.148'
 
 
@@ -55,7 +56,7 @@ def test_route_backend_chats_redundant_assignment() -> bool:
         formatted_matches = ', '.join(f'{name} at line {line}' for name, line in matches)
         raise AssertionError(f'Found redundant self-assignments: {formatted_matches}')
 
-    assert_contains(CONFIG_FILE, f'VERSION = "{CURRENT_VERSION}"')
+    assert_app_version_at_least(CURRENT_VERSION)
     assert_contains(FIX_DOC_FILE, f'Fixed/Implemented in version: **{CURRENT_VERSION}**')
 
     print('route_backend_chats.py redundant self-assignment checks passed!')

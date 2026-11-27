@@ -34,7 +34,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 import harness_build as hb  # noqa: E402
 from functions_chat_content_checks import strip_private_chat_checks  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402,F401
-from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
+from v2_pending_action_stubs import background_poll_payload, is_pending_actions_list, pending_actions_payload  # noqa: E402
 from test_group_collaboration_source_storage_fix import (  # noqa: E402
     COLLABORATION_FILE,
     GROUP_ID,
@@ -162,6 +162,10 @@ class ParticipantApi:
                     route.fulfill(content_type="text/event-stream", body=": connected\n\n")
                     return
 
+        poll = background_poll_payload(request.method, path)
+        if poll is not None:
+            route.fulfill(json=poll)
+            return
         self.unexpected.append(f"{request.method} {path}")
         route.fulfill(status=404, json={"error": "Unexpected test endpoint."})
 

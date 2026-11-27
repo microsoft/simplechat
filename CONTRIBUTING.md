@@ -87,6 +87,8 @@ Before opening a pull request, run the tests that match your change.
 
 - Add or update functional tests for bug fixes and new features when appropriate.
 - Run relevant tests from `functional_tests/` and `ui_tests/` when your change affects those areas.
+- Use `python scripts/run_tests.py functional` (or `js`, `ui`, `all`) to run whole suites. [Running the Tests](docs/contributing/testing.md) covers setup, tests that need a live deployment, and the test file conventions.
+- Never assert an exact `config.py` VERSION in a test; use `assert_app_version_at_least` from `functional_tests/test_support/versioning.py`.
 - If you change Flask routes, keep the existing Swagger route decorator pattern intact.
 
 Pull requests are reviewed by the SimpleChat team and go through repository validation. Depending on the files changed, that can include Python syntax checks, release-note validation, Swagger route validation, and additional maintainer review. Maintainers may also run additional security or AI-assisted review before merge.

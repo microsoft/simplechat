@@ -16,6 +16,7 @@ Foundry agent/workflow API-key invocation was restricted to Entra/RBAC in 0.241.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -286,7 +287,7 @@ def test_modal_uses_delegated_user_auth_and_safe_consent_link() -> None:
 
 def test_version_bumped_for_delegated_foundry_auth() -> None:
     """Validate version traceability for this auth model change."""
-    assert_contains(CONFIG_FILE, 'VERSION = "0.241.196"')
+    assert_app_version_at_least("0.241.196")
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.241.186**")
     assert_contains(API_KEY_FIX_DOC_FILE, "Superseded in version: **0.241.196**")
     assert_contains(WORKFLOW_API_KEY_FIX_DOC_FILE, "Superseded in version: **0.241.196**")

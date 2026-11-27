@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Test the form data detection on real admin endpoint."""
+# test_admin_endpoint.py
+"""Test the form data detection on real admin endpoint.
+
+Version: 0.261.474
+Implemented in: 0.230.045
+"""
 
 import sys
 import os

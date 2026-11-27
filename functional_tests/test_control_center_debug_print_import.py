@@ -13,6 +13,7 @@ regressions when admin settings routes load Control Center helpers.
 import re
 import sys
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -47,7 +48,7 @@ def test_control_center_uses_debug_shim():
     if "from config import debug_print" in control_center_source:
         raise AssertionError("functions_control_center.py must not import debug_print from config.py")
 
-    if get_config_version() != EXPECTED_VERSION:
+    if not app_version_is_at_least(EXPECTED_VERSION):
         raise AssertionError(f"Expected config VERSION {EXPECTED_VERSION}, found {get_config_version()}")
 
     print("Control Center debug_print import source is correct.")

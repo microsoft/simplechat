@@ -14,6 +14,7 @@ and reload the collaborative timeline in the browser.
 import sys
 import traceback
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -126,7 +127,7 @@ def test_version_bump_contract():
     """Validate the feature version is recorded in config.py."""
     print("🔍 Testing version bump contract...")
     config_source = read_repo_file('application/single_app/config.py')
-    assert_contains(config_source, 'VERSION = "0.241.176"', '0.241.176 version bump')
+    assert_app_version_at_least("0.241.176")
     print("✅ Version bump contract is present")
     return True
 

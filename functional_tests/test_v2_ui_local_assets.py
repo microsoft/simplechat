@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_ui_local_assets.py
 """
 Functional test for V2 UI local browser asset compliance.
 

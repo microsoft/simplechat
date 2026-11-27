@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_sidebar_navigation_tab_preservation.py
 """
 Functional test for admin settings sidebar navigation tab preservation fix.
 Version: 0.229.046

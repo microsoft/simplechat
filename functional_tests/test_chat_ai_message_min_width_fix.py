@@ -20,6 +20,7 @@ FIX_DOC_FILE = os.path.join(
     'docs',
     'explanation',
     'fixes',
+    'v0.241.001',
     'AI_MESSAGE_MIN_WIDTH_FIX.md',
 )
 

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
+# test_activity_api.py
 """
 Direct test of the activity trends data function
+Version: 0.261.474
+Implemented in: 0.230.011
 """
 
 import sys

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_workspace_plugin_stepper_script_gating.py
 """
 Functional test for personal workspace plugin stepper script gating.
 Version: 0.250.032

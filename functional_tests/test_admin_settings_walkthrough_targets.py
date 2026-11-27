@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_admin_settings_walkthrough_targets.py
 """
 Functional test for the Admin Settings setup walkthrough targets.
 Version: 0.260.018

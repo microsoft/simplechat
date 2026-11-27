@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_diagram_viewer_controls.py
 """
 Functional test for the V2 diagram viewer: sizing, resizing, expanding and render recovery.
 

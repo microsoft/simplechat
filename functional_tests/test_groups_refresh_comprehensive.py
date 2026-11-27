@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
+# test_groups_refresh_comprehensive.py
 """
 Final validation test for Groups Tab Refresh Fix.
 Version: 0.230.055
 
 This test performs comprehensive validation of the groups refresh functionality
 to ensure the fix completely resolves the issue.
+Implemented in: 0.230.055
 """
 
 import sys
 import os
 import re
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def test_comprehensive_groups_refresh():
@@ -161,7 +164,7 @@ def test_comprehensive_groups_refresh():
         with open(config_file, 'r', encoding='utf-8') as f:
             config_content = f.read()
         
-        if 'VERSION = "0.230.055"' in config_content:
+        if app_version_is_at_least("0.230.055"):
             print("   ✅ Version properly updated to 0.230.055")
         else:
             print("   ❌ Version not updated properly")

@@ -1,4 +1,9 @@
 // test_mcp_stdio_removal_ui.js
+/*
+ * Version: 0.261.474
+ * Implemented in: 0.261.029
+ */
+
 // Version: 0.261.029
 // Implemented in: 0.261.029
 // Offline behavioral tests of the real modal, table/card, and personal bulk-save modules.

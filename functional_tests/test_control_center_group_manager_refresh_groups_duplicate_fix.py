@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_control_center_group_manager_refresh_groups_duplicate_fix.py
 """
 Functional test for control center GroupManager refreshGroups duplicate fix.
 Version: 0.239.145

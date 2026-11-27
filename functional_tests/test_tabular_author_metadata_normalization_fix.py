@@ -13,6 +13,7 @@ enhanced citation processing.
 import ast
 import os
 import sys
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -111,7 +112,7 @@ def test_version_bump_applied():
 
     try:
         version = read_config_version()
-        assert version == '0.240.028', version
+        assert app_version_is_at_least('0.240.028'), version
 
         print('✅ Config version bump passed')
         return True

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_workspace_prompt_markdown_toolbar_fix.py
 """
 Functional test for app-wide markdown editor fixes.
 Version: 0.239.198

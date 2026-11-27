@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_personal_agent_dropdown_scope_fix.py
 """
 Functional test for personal agent dropdown scope in chats.
 Version: 0.236.062

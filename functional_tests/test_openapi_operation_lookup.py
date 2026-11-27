@@ -2,6 +2,8 @@
 """
 Test script to verify the improved operation lookup in OpenAPI plugin.
 This tests the fuzzy matching for operation names.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

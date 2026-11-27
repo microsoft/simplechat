@@ -16,6 +16,7 @@ import re
 import sys
 import traceback
 from test_support.templates import compose_if_admin_settings
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -193,7 +194,7 @@ def test_app_role_definitions_and_versions_are_updated():
     fix_doc_source = read_file(FIX_DOC_FILE)
     version = read_version()
 
-    assert version == CURRENT_VERSION, f"Expected config VERSION to be {CURRENT_VERSION}, found {version}"
+    assert app_version_is_at_least(CURRENT_VERSION), f"Expected config VERSION to be {CURRENT_VERSION}, found {version}"
     assert '"value": "ChatFileUploadUser"' in app_roles_source
     assert '"id": "3f6ec07d-db95-4c0e-ab03-0645b95736e3"' in app_roles_source
     assert 'value                = "ChatFileUploadUser"' in terraform_source

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_assist_thread.py
 """
 Functional test for the shared AI-assist thread in the V2 revision editors.
 Version: 0.261.200

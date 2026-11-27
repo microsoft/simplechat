@@ -12,6 +12,7 @@ MFA challenges, and preserves the existing non-MFA cached-token workflow.
 
 from pathlib import Path
 import sys
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -88,7 +89,7 @@ def test_entra_application_graph_mfa_auth_flow() -> bool:
         "unchecked app registration lookup pipeline",
     )
 
-    require_contains(config_content, 'VERSION = "0.241.018"', "config version bump")
+    assert_app_version_at_least("0.241.018")
     require_contains(
         fix_doc_content,
         "Fixed/Implemented in version: **0.241.010**",

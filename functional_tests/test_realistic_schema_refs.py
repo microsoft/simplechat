@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Test schema references with realistic routes."""
+# test_realistic_schema_refs.py
+"""Test schema references with realistic routes.
+
+Version: 0.261.474
+Implemented in: 0.230.039
+"""
 
 import sys
 import os

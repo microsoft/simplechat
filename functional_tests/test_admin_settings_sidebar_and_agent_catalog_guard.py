@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_admin_settings_sidebar_and_agent_catalog_guard.py
 """
 Functional test for Admin Settings sidebar and agent catalog guard.
 Version: 0.242.072

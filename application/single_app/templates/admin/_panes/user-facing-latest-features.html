@@ -9,7 +9,7 @@
                         <a href="#support-menu-section" data-admin-link="support-menu-section">Support Menu</a>.
                     </div>
 
-                    <div id="support_latest_features_settings" {% if not settings.enable_support_latest_features %}style="display: none;"{% endif %}>
+                    <div id="support_latest_features_settings"{% if not settings.enable_support_latest_features %} class="d-none"{% endif %}>
                         <div class="form-check form-switch mb-3">
                             <input class="form-check-input" type="checkbox" id="enable_support_latest_feature_documentation_links" name="enable_support_latest_feature_documentation_links"
                                 {% if settings.enable_support_latest_feature_documentation_links %}checked{% endif %}>

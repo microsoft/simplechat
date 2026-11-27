@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_collaboration_visual_style_fix.py
 """
 Functional test for saving diagram and chart colours in shared conversations.
 

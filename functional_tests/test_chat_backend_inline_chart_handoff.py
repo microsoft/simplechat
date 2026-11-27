@@ -15,6 +15,7 @@ import re
 import sys
 import traceback
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,7 +89,7 @@ def load_route_chart_helpers():
 def test_version_matches_feature_header():
     """Validate the feature test header tracks the current app version."""
     print('Testing version header...')
-    assert read_current_version() == EXPECTED_VERSION
+    assert app_version_is_at_least(EXPECTED_VERSION)
     print('PASS: version header')
 
 

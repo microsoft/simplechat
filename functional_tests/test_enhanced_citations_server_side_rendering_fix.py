@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_enhanced_citations_server_side_rendering_fix.py
 """
 Functional test for enhanced citations with server-side rendering fix.
 Version: 0.228.005

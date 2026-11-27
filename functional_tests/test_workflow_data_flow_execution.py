@@ -14,6 +14,7 @@ import json
 
 import pytest
 
+from cosmos_document_utils import normalize_cosmos_document  # noqa: E402
 from test_workflow_task_result_handoff import build_inventory_run
 from functions_workflow_bindings import WorkflowInputError, load_workflow_reference
 from functions_workflow_results import authorize_workflow_task_result_read, load_workflow_task_input
@@ -181,11 +182,13 @@ def test_real_run_entrypoint_persists_the_deliverable_outcome(expected_count, al
         "read_user_settings_snapshot": unexpected_owner_lookup,
         # The inventory workflow selects no agent, so it has no Microsoft 365 actions to authorize.
         "workflow_m365_manifests": lambda workflow: ([], dict(workflow)),
+        "get_personal_workflow": lambda user_id, workflow_id: dict(workflow),
         "get_personal_workflow_run": read_saved_run,
+        "normalize_cosmos_document": normalize_cosmos_document,
         "WorkflowRunCancelledError": type("WorkflowRunCancelledError", (BaseException,), {}),
         "_save_workflow_run_record": lambda workflow, record: saved_runs.append(json.loads(json.dumps(record))) or record,
         "_execute_workflow_file_sync": lambda *args: None,
-        "_ensure_workflow_conversation": lambda workflow: {"id": "conversation-inventory", "user_id": "owner"},
+        "_ensure_workflow_conversation": lambda workflow, run_record, run_id: {"id": "conversation-inventory", "user_id": "owner"},
         "_create_user_message": lambda *args: {"id": "user-message"},
         # Like the real helper, a stored assistant message id is reused; a new run gets its own.
         "_initialize_workflow_assistant_tracking": lambda *args, assistant_message_id=None: (
@@ -196,6 +199,8 @@ def test_real_run_entrypoint_persists_the_deliverable_outcome(expected_count, al
         "_create_assistant_message": lambda *args, **kwargs: {"id": "assistant-message"},
         "_mirror_workflow_visualizations_to_created_conversations": lambda *args: None,
         "_add_workflow_activity_thought": lambda *args, **kwargs: activity.append(kwargs),
+        # The inventory workflow delivers no results to a conversation, so the real one returns None.
+        "publish_workflow_results": lambda *args, **kwargs: None,
         "_create_workflow_priority_alert": lambda *args, **kwargs: None,
         "log_workflow_run": lambda **kwargs: None,
     })

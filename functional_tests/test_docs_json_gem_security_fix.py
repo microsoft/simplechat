@@ -11,13 +11,14 @@ version and that the lockfile resolves to a non-vulnerable release.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
 GEMFILE_PATH = ROOT / "docs" / "Gemfile"
 LOCKFILE_PATH = ROOT / "docs" / "Gemfile.lock"
 CONFIG_PATH = ROOT / "application" / "single_app" / "config.py"
-FIX_DOC_PATH = ROOT / "docs" / "explanation" / "fixes" / "DOCS_JSON_GEM_SECURITY_FIX.md"
+FIX_DOC_PATH = ROOT / "docs" / "explanation" / "fixes" / "v0.241.001" / "DOCS_JSON_GEM_SECURITY_FIX.md"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:
@@ -32,7 +33,7 @@ def test_docs_json_gem_security_fix() -> bool:
     assert_contains(GEMFILE_PATH, 'gem "json", ">= 2.19.2"')
     assert_contains(LOCKFILE_PATH, 'json (2.19.2)')
     assert_contains(LOCKFILE_PATH, 'json (>= 2.19.2)')
-    assert_contains(CONFIG_PATH, 'VERSION = "0.239.136"')
+    assert_app_version_at_least("0.239.136")
     assert_contains(FIX_DOC_PATH, 'Fixed/Implemented in version: **0.239.136**')
 
     print("Docs json gem security fix checks passed!")

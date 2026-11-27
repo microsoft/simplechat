@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_find_group_modal_enhancements.py
 """
 Test to verify that the "Find a Group to Join" modal enhancements work correctly.
 
@@ -9,6 +10,8 @@ This test ensures that:
 4. The backend API returns owner and member_count data
 
 Enhancement: Added Owner and Members columns to the Find Group modal
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys
@@ -21,8 +24,8 @@ def test_modal_width_enhancement():
     
     try:
         # Read the my_groups template
-        template_path = os.path.join(os.path.dirname(__file__), "../templates/my_groups.html")
-        with open(template_path, 'r') as f:
+        template_path = os.path.join(os.path.dirname(__file__), "../application/single_app/templates/my_groups.html")
+        with open(template_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check for modal-xl class
@@ -50,8 +53,8 @@ def test_table_columns():
     
     try:
         # Read the my_groups template
-        template_path = os.path.join(os.path.dirname(__file__), "../templates/my_groups.html")
-        with open(template_path, 'r') as f:
+        template_path = os.path.join(os.path.dirname(__file__), "../application/single_app/templates/my_groups.html")
+        with open(template_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check for the correct table headers
@@ -97,8 +100,8 @@ def test_javascript_rendering():
     
     try:
         # Read the my_groups template
-        template_path = os.path.join(os.path.dirname(__file__), "../templates/my_groups.html")
-        with open(template_path, 'r') as f:
+        template_path = os.path.join(os.path.dirname(__file__), "../application/single_app/templates/my_groups.html")
+        with open(template_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Find the renderGlobalGroupResults function
@@ -145,8 +148,8 @@ def test_backend_api_enhancement():
     
     try:
         # Read the route_backend_groups.py file
-        route_file = os.path.join(os.path.dirname(__file__), "../route_backend_groups.py")
-        with open(route_file, 'r') as f:
+        route_file = os.path.join(os.path.dirname(__file__), "../application/single_app/route_backend_groups.py")
+        with open(route_file, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check for the specific patterns we added

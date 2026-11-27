@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_chat_inline_diagram_rendering.py
 """
 Functional test for classic-UI inline Mermaid diagram rendering.
 Version: 0.261.031

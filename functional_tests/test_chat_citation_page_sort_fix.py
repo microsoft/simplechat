@@ -23,6 +23,7 @@ FIX_DOC = os.path.join(
     'docs',
     'explanation',
     'fixes',
+    'v0.241.001',
     'CHAT_CITATION_PAGE_SORT_FIX.md',
 )
 TARGET_FUNCTIONS = {

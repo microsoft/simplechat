@@ -14,6 +14,7 @@ along with its endpoint, so only the trend and export requests are checked.
 
 from pathlib import Path
 import sys
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -122,7 +123,7 @@ def test_config_version_bumped_for_token_filters() -> bool:
     print("Testing config version bump...")
     config_content = read_text("application/single_app/config.py")
 
-    if 'VERSION = "0.239.164"' not in config_content:
+    if not app_version_is_at_least("0.239.164"):
         print("Config version was not bumped to 0.239.164")
         return False
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_agent_citations_fix.py
 """
 Test script to validate the agent citations cross-conversation contamination fix.
 
@@ -6,6 +7,8 @@ This script tests the logic of the plugin invocation logger to ensure that:
 1. Invocations are properly filtered by user_id and conversation_id
 2. No cross-contamination occurs between different conversations
 3. The filtering methods work as expected
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

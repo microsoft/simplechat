@@ -107,6 +107,15 @@ def test_every_partial_is_reachable_from_the_parent():
     for target in re.findall(r'\{%\s*include\s+"(admin/[^"]+)"\s*%\}', composed):
         referenced.add((TEMPLATE_DIR / target).resolve())
 
+    # A partial may be included by another partial that is itself reachable.
+    pending = list(referenced)
+    while pending:
+        for target in re.findall(r'\{%\s*include\s+"(admin/[^"]+)"\s*%\}', pending.pop().read_text(encoding="utf-8")):
+            partial = (TEMPLATE_DIR / target).resolve()
+            if partial not in referenced:
+                referenced.add(partial)
+                pending.append(partial)
+
     on_disk = {path.resolve() for path in PARTIAL_DIR.rglob("*.html")}
     orphans = sorted(path.name for path in on_disk - referenced)
 

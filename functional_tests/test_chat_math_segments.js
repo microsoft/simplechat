@@ -1,5 +1,8 @@
 // test_chat_math_segments.js
-// Version: 0.261.047. Implemented in: 0.261.047.
+/*
+ * Version: 0.261.491
+ * Implemented in: 0.261.047
+ */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

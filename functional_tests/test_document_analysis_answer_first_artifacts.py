@@ -12,6 +12,7 @@ preview sections in the chat UI, with CSV artifacts previewed as rows.
 
 from pathlib import Path
 import traceback
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +41,7 @@ def test_backend_answer_first_reply_contract() -> None:
     current_version = read_current_version()
     workflow_runner_content = read_text(WORKFLOW_RUNNER_FILE)
 
-    assert current_version == EXPECTED_VERSION, (
+    assert app_version_is_at_least(EXPECTED_VERSION), (
         f"Expected config.py version {EXPECTED_VERSION} for the answer-first analysis artifact fix."
     )
     assert "def _build_document_analysis_answer_summary(" in workflow_runner_content, (

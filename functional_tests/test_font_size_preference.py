@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_font_size_preference.py
 """
 Functional test for the global font size preference.
 Version: 0.250.073

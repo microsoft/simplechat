@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_vision_model_parameter_fix.py
 """
 Functional test for Multi-Modal Vision Analysis parameter fix.
 Version: 0.233.201

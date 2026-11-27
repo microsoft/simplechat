@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_group_member_deleted_activity_logging.py
 """
 Functional test for group member deletion activity logging.
 Version: 0.234.025

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_export_mermaid_browser_rasterizer.py
 """
 Functional test for the browser-side Mermaid export rasterizer.
 Version: 0.261.027

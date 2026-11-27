@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import traceback
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -195,7 +196,7 @@ def test_version_and_fix_documentation_alignment():
     version = _read_version()
     fix_doc_source = _read(FIX_DOC_FILE)
 
-    if version != EXPECTED_VERSION:
+    if not app_version_is_at_least(EXPECTED_VERSION):
         raise AssertionError(f'Expected config VERSION to be {EXPECTED_VERSION}, found {version}')
     if f'Fixed/Implemented in version: **{EXPECTED_VERSION}**' not in fix_doc_source:
         raise AssertionError('Fix documentation is missing the implemented version section')

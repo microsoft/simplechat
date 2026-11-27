@@ -12,6 +12,7 @@ frontend reports stream failures back to the backend for correlation.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,7 +58,7 @@ def test_chat_stream_lifecycle_observability() -> None:
     assert_contains(STREAMING_FILE, "void reportClientStreamEvent('stream_recovery_unavailable'")
     assert_contains(STREAMING_FILE, "void reportClientStreamEvent('stream_aborted'")
 
-    assert_contains(CONFIG_FILE, f'VERSION = "{CURRENT_VERSION}"')
+    assert_app_version_at_least(CURRENT_VERSION)
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.241.109**")
     assert_contains(FIX_DOC_FILE, "client-event endpoint")
     assert_contains(FIX_DOC_FILE, "detach, reattach, keepalive, queue backpressure, and terminal status")

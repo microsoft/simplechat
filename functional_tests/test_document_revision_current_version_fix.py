@@ -27,7 +27,7 @@ PUBLIC_TEMPLATE = os.path.join(REPO_ROOT, 'application', 'single_app', 'template
 GROUP_TEMPLATE = os.path.join(REPO_ROOT, 'application', 'single_app', 'templates', 'group_workspaces.html')
 WORKSPACE_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'workspace', 'workspace-documents.js')
 PUBLIC_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'public', 'public_workspace.js')
-FIX_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'fixes', 'DOCUMENT_REVISION_CURRENT_VERSION_FIX.md')
+FIX_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'fixes', 'v0.241.001', 'DOCUMENT_REVISION_CURRENT_VERSION_FIX.md')
 
 
 def read_file_text(file_path):

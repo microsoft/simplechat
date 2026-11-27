@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_message_image_revisions.py
 """
 Functional test for generated image revision storage and editing.
 Version: 0.261.058
@@ -60,7 +61,6 @@ from functions_image_edit import (  # noqa: E402
     normalize_mask,
     prepare_source_image,
     resolve_image_edit_capability,
-    _optional_parameters,
 )
 
 IMPLEMENTED_IN = "0.261.058"
@@ -451,23 +451,27 @@ def test_capability_matches_what_the_deployment_can_actually_do():
     def with_model(name):
         return capability(image_gen_model={'selected': [{'deploymentName': 'd', 'modelName': name}]})
 
-    for editable in ('gpt-image-1', 'gpt-image-1-mini', 'gpt-image-2', 'dall-e-2'):
+    for editable in ('gpt-image-1', 'gpt-image-1-mini', 'gpt-image-2'):
         assert with_model(editable)['mode'] == 'masked', editable
 
-    # DALL-E 3 has no edit endpoint at all. Offering a region would fail after the reader had
-    # already selected one and waited for the request.
-    refused = with_model('dall-e-3')
-    assert refused['mode'] == 'regenerate' and 'cannot edit' in refused['reason']
+    # DALL-E models are retired or outside the dedicated image catalog (0.261.x provider-aware
+    # image generation). Offering a region would fail after the reader had already selected one.
+    for retired in ('dall-e-2', 'dall-e-3'):
+        refused = with_model(retired)
+        assert refused['mode'] == 'unavailable' and refused['editing'] is False, retired
+        assert refused['reason'], retired
 
-    # An APIM route records no model name, so the capability is unknown and the safe answer wins.
+    # An APIM route with no deployment selected cannot edit or generate.
     unknown = capability(enable_image_gen_apim=True)
-    assert unknown['mode'] == 'regenerate' and 'does not report' in unknown['reason']
+    assert unknown['mode'] == 'unavailable' and unknown['editing'] is False
+
+    # A deployment that records no model name is treated as generation only.
     assert capability(image_gen_model={'selected': [{'deploymentName': 'd'}]})['mode'] == 'regenerate'
 
-    # An old API version cannot route the request, and the reason names the setting to change.
+    # An old API version cannot route the request, and the reason names the version required.
     stale = capability(azure_openai_image_gen_api_version='2024-02-01')
     assert stale['mode'] == 'regenerate'
-    assert '2025-04-01-preview' in stale['reason'] and '2024-02-01' in stale['reason']
+    assert '2025-04-01-preview' in stale['reason']
 
     assert resolve_image_edit_capability({'enable_image_generation': False})['enabled'] is False
     assert resolve_image_edit_capability(None)['enabled'] is False
@@ -477,17 +481,6 @@ def test_capability_matches_what_the_deployment_can_actually_do():
     assert image_api_version_supports_edit('nonsense') is False
     print("  ok  capability tracks the model, the API version and the APIM unknown")
 
-
-def test_optional_parameters_are_filtered_to_what_the_api_accepts():
-    """These travel in extra_body, so a typo would reach the service rather than raise here."""
-    assert _optional_parameters(quality='high', background='transparent', input_fidelity='high') == {
-        'quality': 'high',
-        'background': 'transparent',
-        'input_fidelity': 'high',
-    }
-    assert _optional_parameters(quality='ultra', background='rainbow', input_fidelity='max') == {}
-    assert _optional_parameters() == {}
-    print("  ok  only recognised optional parameters are sent")
 
 
 def test_an_oversized_image_is_refused_before_it_is_decoded():
@@ -583,7 +576,6 @@ if __name__ == "__main__":
         test_junk_is_refused_before_anything_is_generated,
         test_the_prompt_describes_the_finished_image,
         test_capability_matches_what_the_deployment_can_actually_do,
-        test_optional_parameters_are_filtered_to_what_the_api_accepts,
         test_an_oversized_image_is_refused_before_it_is_decoded,
         test_serialized_history_survives_a_round_trip,
     ]

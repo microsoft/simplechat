@@ -12,6 +12,7 @@ and final stream completion so local troubleshooting remains visible.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +37,7 @@ def test_chat_stream_debug_logging() -> None:
     assert_contains(ROUTE_FILE, '[Streaming][Plugin Callback] Registering callback for key=')
     assert_contains(ROUTE_FILE, '[Streaming][Plugin Callback] Deregistered callback after successful stream for key=')
     assert_contains(ROUTE_FILE, '[Streaming] Finalizing stream response | ')
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.185"')
+    assert_app_version_at_least("0.239.185")
 
     print("Chat stream debug logging checks passed!")
 

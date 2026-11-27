@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+# test_group_ai_search_fix.py
 """
 Test to verify group AI Search calculation fix.
 Version: 0.230.051
 
 Verifies that groups now use the same AI search calculation as users.
+Implemented in: 0.230.053
 """
 
 import sys

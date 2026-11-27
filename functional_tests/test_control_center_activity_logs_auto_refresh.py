@@ -2,22 +2,22 @@
 #!/usr/bin/env python3
 """
 Functional test for Control Center Activity Logs auto-refresh.
-Version: 0.241.029
-Implemented in: 0.241.028
+Version: 0.261.491
+Implemented in: 0.241.028; restored in 0.261.491
 
 This test ensures that the Activity Logs tab exposes browser-side auto-refresh
 controls, persists refresh settings, and guards the polling loop from running
 while the page is hidden or repeatedly failing.
 """
 
-import re
 import sys
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "application" / "single_app"
-CURRENT_VERSION = "0.241.029"
+CURRENT_VERSION = "0.261.491"
 IMPLEMENTED_VERSION = "0.241.028"
 
 if str(APP_DIR) not in sys.path:
@@ -29,16 +29,7 @@ def read_text(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def get_config_version() -> str:
-    """Read the current application version from config.py."""
-    config_content = read_text("application/single_app/config.py")
-    match = re.search(r'VERSION = "([^"]+)"', config_content)
-    if not match:
-        raise AssertionError("Could not find VERSION in config.py")
-    return match.group(1)
-
-
-def test_activity_logs_template_contains_auto_refresh_controls() -> bool:
+def test_activity_logs_template_contains_auto_refresh_controls() -> None:
     """Validate the template exposes the auto-refresh toolbar and controls."""
     print("Testing activity logs auto-refresh template hooks...")
     template_content = read_text("application/single_app/templates/control_center.html")
@@ -57,15 +48,12 @@ def test_activity_logs_template_contains_auto_refresh_controls() -> bool:
     ]
 
     missing_snippets = [snippet for snippet in required_snippets if snippet not in template_content]
-    if missing_snippets:
-        print(f"Missing activity logs auto-refresh template snippets: {missing_snippets}")
-        return False
+    assert not missing_snippets, f"Missing activity logs auto-refresh template snippets: {missing_snippets}"
 
     print("Activity logs auto-refresh template hooks found.")
-    return True
 
 
-def test_activity_logs_javascript_contains_auto_refresh_logic() -> bool:
+def test_activity_logs_javascript_contains_auto_refresh_logic() -> None:
     """Validate the client stores, schedules, and pauses auto-refresh."""
     print("Testing activity logs auto-refresh JavaScript wiring...")
     js_content = read_text("application/single_app/static/js/control-center.js")
@@ -90,22 +78,17 @@ def test_activity_logs_javascript_contains_auto_refresh_logic() -> bool:
     ]
 
     missing_snippets = [snippet for snippet in required_snippets if snippet not in js_content]
-    if missing_snippets:
-        print(f"Missing activity logs auto-refresh JavaScript snippets: {missing_snippets}")
-        return False
+    assert not missing_snippets, f"Missing activity logs auto-refresh JavaScript snippets: {missing_snippets}"
 
     print("Activity logs auto-refresh JavaScript wiring found.")
-    return True
 
 
-def test_activity_logs_auto_refresh_documentation_and_version() -> bool:
+def test_activity_logs_auto_refresh_documentation_and_version() -> None:
     """Validate feature documentation and config version are aligned."""
     print("Testing activity logs auto-refresh documentation and version...")
     documentation_content = read_text("docs/explanation/features/CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md")
 
-    if get_config_version() != CURRENT_VERSION:
-        print(f"Config version was not bumped to {CURRENT_VERSION}")
-        return False
+    assert app_version_is_at_least(CURRENT_VERSION), f"Config version is older than {CURRENT_VERSION}"
 
     required_documentation_snippets = [
         f"Fixed/Implemented in version: **{IMPLEMENTED_VERSION}**",
@@ -118,26 +101,12 @@ def test_activity_logs_auto_refresh_documentation_and_version() -> bool:
     ]
 
     missing_snippets = [snippet for snippet in required_documentation_snippets if snippet not in documentation_content]
-    if missing_snippets:
-        print(f"Missing activity logs auto-refresh documentation snippets: {missing_snippets}")
-        return False
+    assert not missing_snippets, f"Missing activity logs auto-refresh documentation snippets: {missing_snippets}"
 
     print("Activity logs auto-refresh documentation and version are aligned.")
-    return True
 
 
 if __name__ == "__main__":
-    checks = [
-        test_activity_logs_template_contains_auto_refresh_controls,
-        test_activity_logs_javascript_contains_auto_refresh_logic,
-        test_activity_logs_auto_refresh_documentation_and_version,
-    ]
-
-    results = []
-    for check in checks:
-        print(f"\nRunning {check.__name__}...")
-        results.append(check())
-
-    success = all(results)
-    print(f"\nResults: {sum(results)}/{len(results)} checks passed")
-    raise SystemExit(0 if success else 1)
+    test_activity_logs_template_contains_auto_refresh_controls()
+    test_activity_logs_javascript_contains_auto_refresh_logic()
+    test_activity_logs_auto_refresh_documentation_and_version()

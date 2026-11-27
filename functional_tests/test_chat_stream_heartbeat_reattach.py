@@ -13,6 +13,7 @@ reopens an active conversation.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +22,7 @@ APP_CACHE_FILE = ROOT / "application" / "single_app" / "app_settings_cache.py"
 STREAMING_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-streaming.js"
 CONVERSATIONS_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-conversations.js"
 CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
-FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "CHAT_STREAM_HEARTBEAT_REATTACH_FIX.md"
+FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "v0.241.001" / "CHAT_STREAM_HEARTBEAT_REATTACH_FIX.md"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:
@@ -64,7 +65,7 @@ def test_chat_stream_heartbeat_and_reattach() -> None:
     assert_contains(CONVERSATIONS_FILE, "await loadMessages(conversationId);")
     assert_contains(CONVERSATIONS_FILE, "await streamingModule.reattachStreamingConversation(conversationId);")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.185"')
+    assert_app_version_at_least("0.239.185")
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.239.183**")
     assert_contains(FIX_DOC_FILE, "Redis-backed session metadata and event replay")
 

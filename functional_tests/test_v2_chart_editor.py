@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_chart_editor.py
 """
 Functional test for the inline chart editor.
 Version: 0.261.061

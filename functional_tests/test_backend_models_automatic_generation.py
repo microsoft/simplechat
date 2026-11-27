@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# test_backend_models_automatic_generation.py
 """
 Test automatic swagger generation for route_backend_models.py
 Version: 0.229.063
 Testing: How the simplified decorators work with the actual backend models
 
 This test demonstrates the automatic generation working with real route files.
+Implemented in: 0.229.068
 """
 
 import sys

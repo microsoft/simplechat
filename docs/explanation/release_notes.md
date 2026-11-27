@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.491)**
+### **(v0.261.492)**
 
 #### Bug Fixes
 
@@ -19,6 +19,30 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The message shown when a background export or analysis starts now reads as an application status ("The app started a background job to generate the complete JSON for all 826 rows") instead of the assistant agreeing to do it.
     *   The background export card has an **Answer in chat instead** button that cancels the run and answers the same request in chat. Classic interface only.
     *   (Ref: `route_backend_chats.py`, `chat-messages.js`, `ui_tests/test_chat_background_generated_export_status.py`)
+
+### **(v0.261.491)**
+
+#### Bug Fixes
+
+*   **Activity Logs Auto-Refresh Is Back in the Control Center**
+    *   The Activity Logs tab's auto-refresh toggle and interval, added earlier, had been lost in a later change to the Control Center. They are restored. Auto-refresh pauses while the tab is hidden or another tab is open, waits for a running request to finish instead of starting a second one, and ignores an emptied interval box while you type.
+    *   A newer request (a filter change, a page change or a manual reload) now replaces one still running, so an older response can no longer overwrite newer results.
+    *   (Ref: `control-center.js`, `control_center.html`, `test_control_center_activity_logs_auto_refresh.py`, `CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md`)
+
+*   **Latest Features Settings No Longer Share an Element ID**
+    *   Admin Settings rendered two elements with the ID `support_latest_features_settings` (the support menu hint and the Latest Features pane), so turning the feature off only hid one of them. The hint now has its own ID and both are shown or hidden with Bootstrap's `d-none` class.
+    *   (Ref: `support-menu.html`, `user-facing-latest-features.html`, `admin_settings.js`, `test_admin_latest_features_visibility_toggle.py`, `ADMIN_LATEST_FEATURES_VISIBILITY_FIX.md`)
+
+#### New Features
+
+*   **Test Suites Run Offline, in Forks, and Across Version Bumps**
+    *   The functional tests no longer need the SimpleChat team's Azure resources. With no Cosmos DB account configured, `config.py` imports against an in-memory Cosmos client, and the few tests that need a real deployment skip themselves and say which setting is missing.
+    *   Each test file now runs with its own `sys.modules` stubs, so one file's stubs no longer break the files that run after it, and every file can be run on its own.
+    *   About 95 tests that compared an exact version string, and so failed on every version bump (including a fork's), now check for a minimum version instead.
+    *   `functional_tests/known_failures.txt` lists the tests that are still out of date, each with a reason. They run as expected failures, so a run passes while only listed tests fail and any new failure stands out. A listed test that starts passing fails the run until its line is removed, so the list can only shrink.
+    *   `scripts/run_tests.py` runs the functional, JavaScript and UI suites with the flags each needs, now including the 114 `.mjs` JavaScript tests it used to miss. `scripts/normalize_test_headers.py` checks and updates test file headers. `docs/contributing/testing.md` explains setup, the suites and the known-failures list.
+    *   40 tests for removed features (the old workflow and PII analysis pages, debugging scripts and tests that needed real data) were deleted after review.
+    *   (Ref: `functional_tests/conftest.py`, `test_support/known_failures.py`, `test_support/offline_cosmos.py`, `test_support/module_isolation.py`, `test_support/live_services.py`, `test_support/versioning.py`, `known_failures.txt`, `run_tests.py`, `normalize_test_headers.py`, `test_functional_known_failures_list.py`, `testing.md`, `TEST_SUITE_NORMALIZATION.md`)
 
 ### **(v0.261.488)**
 

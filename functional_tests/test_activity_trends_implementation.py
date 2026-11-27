@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_activity_trends_implementation.py
 """
 Functional test for Activity Trends implementation in Control Center.
 Version: 0.230.003
@@ -10,6 +11,7 @@ including API endpoint functionality, chart data generation, and frontend integr
 
 import sys
 import os
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import requests
@@ -79,7 +81,7 @@ def test_route_definition():
         # Check if the route is defined in the backend file
         backend_file = "../application/single_app/route_backend_control_center.py"
         if os.path.exists(backend_file):
-            with open(backend_file, 'r') as f:
+            with open(backend_file, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
             # Check for activity trends API endpoint
@@ -120,7 +122,7 @@ def test_frontend_integration():
         # Check the control center HTML template
         template_file = "../application/single_app/templates/control_center.html"
         if os.path.exists(template_file):
-            with open(template_file, 'r') as f:
+            with open(template_file, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
             # Check for activity trends chart canvas and container
@@ -178,7 +180,7 @@ def test_chartjs_local_file():
                 return False
                 
             # Check file content
-            with open(chartjs_file, 'r') as f:
+            with open(chartjs_file, 'r', encoding='utf-8') as f:
                 content = f.read(200)  # Read first 200 chars
                 if "chart" in content.lower() or "Chart" in content:
                     print("✅ Chart.js file contains expected content")
@@ -203,7 +205,7 @@ def test_javascript_functionality():
         # Check the control center JavaScript file
         js_file = "../application/single_app/static/js/control-center.js"
         if os.path.exists(js_file):
-            with open(js_file, 'r') as f:
+            with open(js_file, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
             # Check for activity trends methods
@@ -251,10 +253,10 @@ def test_config_version_update():
     try:
         config_file = "../application/single_app/config.py"
         if os.path.exists(config_file):
-            with open(config_file, 'r') as f:
+            with open(config_file, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
-            if 'VERSION = "0.230.003"' in content:
+            if app_version_is_at_least("0.230.003"):
                 print("✅ Config version properly updated to 0.230.003")
                 return True
             else:
@@ -275,7 +277,7 @@ def test_real_data_containers():
     try:
         config_file = "../application/single_app/config.py"
         if os.path.exists(config_file):
-            with open(config_file, 'r') as f:
+            with open(config_file, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
             # Check for required containers that provide real activity data
