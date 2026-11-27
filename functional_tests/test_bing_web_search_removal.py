@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_bing_web_search_removal.py
 """
 Functional test for Bing Web Search removal.
 Version: 0.227.007
@@ -23,6 +24,7 @@ def test_bing_functions_file_removed():
         # Check if the functions_bing_search.py file exists
         functions_bing_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'application', 'single_app',
             'functions_bing_search.py'
         )
         
@@ -55,6 +57,7 @@ def test_config_bing_removal():
         # Read config.py file
         config_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'application', 'single_app',
             'config.py'
         )
         
@@ -87,6 +90,7 @@ def test_settings_bing_removal():
         # Read functions_settings.py file
         settings_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'application', 'single_app',
             'functions_settings.py'
         )
         
@@ -124,6 +128,7 @@ def test_route_backend_bing_removal():
         # Read route_backend_chats.py file
         route_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'application', 'single_app',
             'route_backend_chats.py'
         )
         
@@ -162,6 +167,7 @@ def test_template_bing_removal():
         # Check admin_settings.html
         admin_settings_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'application', 'single_app',
             'templates',
             'admin_settings.html'
         )
@@ -181,6 +187,7 @@ def test_template_bing_removal():
         # Check chats.html
         chats_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'application', 'single_app',
             'templates',
             'chats.html'
         )
@@ -214,6 +221,7 @@ def test_version_updated():
         # Read config.py file
         config_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'application', 'single_app',
             'config.py'
         )
         

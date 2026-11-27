@@ -12,6 +12,7 @@ complete.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +51,7 @@ def test_chat_early_conversation_title():
     """Verify early title derivation, persistence, and streaming hooks exist."""
     print("Testing early conversation title assignment...")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.241.042"')
+    assert_app_version_at_least("0.241.042")
     assert_contains(OPERATIONS_FILE, "def derive_conversation_title_from_message(content: str) -> str:")
     assert_contains(OPERATIONS_FILE, "normalized_content = re.sub")
 

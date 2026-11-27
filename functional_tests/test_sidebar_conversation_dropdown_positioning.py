@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_sidebar_conversation_dropdown_positioning.py
 """
 Functional test for sidebar conversation dropdown positioning.
 Version: 0.239.159

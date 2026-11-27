@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
+# test_final_executor_validation.py
 """
 Final validation test for file uploads across all workspace types.
 Version: 0.228.008
 
 This test validates that file upload functionality works correctly
 across personal, group, and public workspaces after executor fixes.
+Implemented in: 0.229.001
 """
 
 import sys
 import os
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app'))
 
@@ -124,7 +127,7 @@ def test_configuration():
         config_checks = {
             'SECRET_KEY': 'SECRET_KEY' in app.app.config,
             'SESSION_TYPE': app.app.config.get('SESSION_TYPE') == 'filesystem',
-            'VERSION': app.app.config.get('VERSION') == '0.228.008',
+            'VERSION': app_version_is_at_least('0.228.008'),
             'EXECUTOR_TYPE': app.app.config.get('EXECUTOR_TYPE') == 'thread'
         }
         

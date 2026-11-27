@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# test_storage_account_size_debug.py
 """
 Functional test for storage account size debug - specifically for user 07e61033-ea1a-4472-a1e7-6b9ac874984a.
 This test investigates why a user with 33 files shows 0 storage account size when enhanced citations is enabled.
 
 Version: 0.230.033
 Created to debug: Storage account sizing evaluation broken after rollback
+Implemented in: 0.230.034
 """
 
 import sys

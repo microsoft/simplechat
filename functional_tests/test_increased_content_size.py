@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+# test_increased_content_size.py
 """
 Test to verify increased content size limit of 75k characters (≈50k tokens).
 Version: 0.228.004
+Implemented in: 0.229.001
 """
 
 import sys

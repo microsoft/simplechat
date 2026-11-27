@@ -10,6 +10,7 @@ before the scope-lock modal and conversation-details modal render HTML.
 
 import sys
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -91,7 +92,7 @@ def test_conversation_details_modal_escapes_untrusted_metadata_fields() -> None:
 def test_fix_documentation_and_version_are_in_sync() -> None:
     """Verify the version bump and fix documentation were added together."""
     version = read_version()
-    assert version == "0.241.022", f"Expected config.py version 0.241.022, found {version}"
+    assert app_version_is_at_least("0.241.022"), f"Expected config.py version 0.241.022, found {version}"
     assert FIX_DOC.exists(), f"Expected fix documentation file at {FIX_DOC}"
 
     fix_doc = read_text(FIX_DOC)

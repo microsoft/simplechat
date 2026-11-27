@@ -13,6 +13,7 @@ requiring live Cosmos DB connectivity.
 from pathlib import Path
 import sys
 from test_support.templates import compose_if_admin_settings
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +45,7 @@ def test_custom_pages_configuration():
     config = read_text("application/single_app/config.py")
     settings = read_text("application/single_app/functions_settings.py")
 
-    assert_contains(config, 'VERSION = "0.250.106"', "version bump")
+    assert_app_version_at_least("0.250.106")
     assert_contains(config, 'cosmos_custom_pages_container_name = "custom_pages"', "custom pages container name")
     assert_contains(config, 'cosmos_custom_pages_container = cosmos_database.create_container_if_not_exists', "custom pages container creation")
     assert_contains(settings, "'enable_custom_pages': False", "custom pages disabled default")

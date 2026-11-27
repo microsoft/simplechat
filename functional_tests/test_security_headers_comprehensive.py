@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_security_headers_comprehensive.py
 """
 Functional test for comprehensive security headers implementation.
 Version: 0.229.019
@@ -31,7 +32,7 @@ def test_security_headers():
         
         # Test the main page
         print("📡 Testing main page headers...")
-        response = requests.get(f"{base_url}/", timeout=10, verify=False)  # Skip SSL verification for local testing
+        response = requests.get(f"{base_url}/", timeout=10)
         
         # Expected security headers
         expected_headers = {
@@ -67,7 +68,7 @@ def test_security_headers():
         
         # Test JSON endpoint if available
         try:
-            json_response = requests.get(f"{base_url}/api/health", timeout=5, verify=False)
+            json_response = requests.get(f"{base_url}/api/health", timeout=5)
             if 'X-Content-Type-Options' in json_response.headers:
                 print(f"✅ JSON endpoint has X-Content-Type-Options: {json_response.headers['X-Content-Type-Options']}")
             else:
@@ -77,7 +78,7 @@ def test_security_headers():
         
         # Test robots.txt
         try:
-            robots_response = requests.get(f"{base_url}/robots.txt", timeout=5, verify=False)
+            robots_response = requests.get(f"{base_url}/robots.txt", timeout=5)
             if 'X-Content-Type-Options' in robots_response.headers:
                 print(f"✅ robots.txt has X-Content-Type-Options: {robots_response.headers['X-Content-Type-Options']}")
             else:
@@ -120,7 +121,7 @@ def test_mime_sniffing_protection():
         
         for endpoint in test_endpoints:
             try:
-                response = requests.get(f"{base_url}{endpoint}", timeout=5, verify=False)
+                response = requests.get(f"{base_url}{endpoint}", timeout=5)
                 
                 # Check for X-Content-Type-Options header
                 if 'X-Content-Type-Options' in response.headers:
@@ -151,7 +152,7 @@ def test_configuration_accessibility():
     
     try:
         # Try to read the config file directly and check for security headers
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
         
         # Check for security configuration

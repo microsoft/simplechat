@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_storage_container_creation_fix.py
 """
 Functional test for storage account container creation fix.
 Version: 0.229.016
@@ -124,7 +125,7 @@ def test_initialization_logic():
         # Read the config.py file to check the logic structure
         config_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'config.py')
         
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
         
         # Check for proper indentation and structure

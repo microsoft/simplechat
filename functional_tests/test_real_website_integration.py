@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+# test_real_website_integration.py
 """
 Quick integration test for Smart HTTP Plugin with real websites.
 Tests the actual functionality that was causing token limit issues.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

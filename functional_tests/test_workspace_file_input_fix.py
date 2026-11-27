@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_workspace_file_input_fix.py
 """
 Test to verify that workspace file upload uses correct endpoint and element IDs.
 
@@ -7,6 +8,8 @@ to prevent conflicts where workspace uploads would incorrectly use chat upload e
 
 Bug Fixed: File uploads from workspace were creating conversations instead of uploading
 to workspace because both templates shared the same file input ID.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys
@@ -19,13 +22,13 @@ def test_file_input_id_separation():
     
     try:
         # Read workspace template
-        workspace_path = os.path.join(os.path.dirname(__file__), "../templates/workspace.html")
-        with open(workspace_path, 'r') as f:
+        workspace_path = os.path.join(os.path.dirname(__file__), "../application/single_app/templates/workspace.html")
+        with open(workspace_path, 'r', encoding='utf-8') as f:
             workspace_content = f.read()
         
         # Read chat template
-        chat_path = os.path.join(os.path.dirname(__file__), "../templates/chats.html")
-        with open(chat_path, 'r') as f:
+        chat_path = os.path.join(os.path.dirname(__file__), "../application/single_app/templates/chats.html")
+        with open(chat_path, 'r', encoding='utf-8') as f:
             chat_content = f.read()
         
         # Check workspace uses workspace-file-input
@@ -63,8 +66,8 @@ def test_workspace_javascript_references():
     
     try:
         # Read workspace documents JavaScript
-        js_path = os.path.join(os.path.dirname(__file__), "../static/js/workspace/workspace-documents.js")
-        with open(js_path, 'r') as f:
+        js_path = os.path.join(os.path.dirname(__file__), "../application/single_app/static/js/workspace/workspace-documents.js")
+        with open(js_path, 'r', encoding='utf-8') as f:
             js_content = f.read()
         
         # Check it references workspace-file-input
@@ -92,8 +95,8 @@ def test_workspace_upload_endpoint():
     
     try:
         # Read workspace documents JavaScript
-        js_path = os.path.join(os.path.dirname(__file__), "../static/js/workspace/workspace-documents.js")
-        with open(js_path, 'r') as f:
+        js_path = os.path.join(os.path.dirname(__file__), "../application/single_app/static/js/workspace/workspace-documents.js")
+        with open(js_path, 'r', encoding='utf-8') as f:
             js_content = f.read()
         
         # Check it uses the correct API endpoint
@@ -121,8 +124,8 @@ def test_chat_upload_endpoint():
     
     try:
         # Read chat input actions JavaScript
-        js_path = os.path.join(os.path.dirname(__file__), "../static/js/chat/chat-input-actions.js")
-        with open(js_path, 'r') as f:
+        js_path = os.path.join(os.path.dirname(__file__), "../application/single_app/static/js/chat/chat-input-actions.js")
+        with open(js_path, 'r', encoding='utf-8') as f:
             js_content = f.read()
         
         # Check it uses the correct upload endpoint

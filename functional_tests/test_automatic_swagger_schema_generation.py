@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# test_automatic_swagger_schema_generation.py
 """
 Test automatic swagger schema generation.
 Version: 0.229.062
 Testing: Automatic parameter and response schema inference from function code
 
 This test demonstrates the enhanced swagger wrapper with automatic schema generation.
+Implemented in: 0.229.068
 """
 
 import sys

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_group_status_ui_visibility.py
 """
 Functional test for Group Status UI Visibility.
 Version: 0.234.005
@@ -13,6 +14,7 @@ Fix: Updated updateRoleDisplay() to consider both role AND status when showing u
 
 import sys
 import os
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 # Add the parent directory to sys.path so we can import modules from the main app
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app'))
@@ -192,7 +194,7 @@ def test_version_updated():
         with open(config_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        if 'VERSION = "0.234.005"' in content:
+        if app_version_is_at_least("0.234.005"):
             print(f"  ✅ Version updated to 0.234.005")
             return True
         else:

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_stream_reconnect.py
 """
 Functional test for V2 chat stream reconnection.
 

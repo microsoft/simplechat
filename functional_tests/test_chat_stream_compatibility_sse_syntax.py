@@ -12,12 +12,13 @@ the f-string expression so parser regressions are caught early.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_chats.py"
 CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
-FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "CHAT_STREAM_COMPATIBILITY_SSE_SYNTAX_FIX.md"
+FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "v0.241.001" / "CHAT_STREAM_COMPATIBILITY_SSE_SYNTAX_FIX.md"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:
@@ -36,7 +37,7 @@ def test_chat_stream_compatibility_sse_syntax() -> None:
     assert_contains(ROUTE_FILE, "image_request_event = {")
     assert_contains(ROUTE_FILE, "image_ready_event = {")
     assert_contains(ROUTE_FILE, 'yield f"data: {json.dumps(image_prompt_event)}\\n\\n"')
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.185"')
+    assert_app_version_at_least("0.239.185")
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.239.134**")
 
     print("Chat stream compatibility SSE syntax checks passed!")

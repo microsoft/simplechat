@@ -16,9 +16,9 @@ import os
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 BACKEND_SETTINGS = os.path.join(REPO_ROOT, 'application', 'single_app', 'route_backend_settings.py')
 ACTIVITY_LOGGING = os.path.join(REPO_ROOT, 'application', 'single_app', 'functions_activity_logging.py')
-FIX_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'fixes', 'ADMIN_MAILTO_SAFE_LOGGING_FIX.md')
-SEND_FEEDBACK_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'SEND_FEEDBACK_ADMIN.md')
-RELEASE_NOTIFICATIONS_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'RELEASE_NOTIFICATIONS_REGISTRATION.md')
+FIX_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'fixes', 'v0.241.001', 'ADMIN_MAILTO_SAFE_LOGGING_FIX.md')
+SEND_FEEDBACK_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'v0.241.001', 'SEND_FEEDBACK_ADMIN.md')
+RELEASE_NOTIFICATIONS_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'v0.241.001', 'RELEASE_NOTIFICATIONS_REGISTRATION.md')
 
 
 def read_file_text(file_path):

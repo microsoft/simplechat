@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_chat_streaming_background_unread_guard.py
 """
 Functional test for background chat streaming unread-state guard.
 Version: 0.250.036

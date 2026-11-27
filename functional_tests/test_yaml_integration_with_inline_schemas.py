@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_yaml_integration_with_inline_schemas.py
 """
 Integration test for YAML generation with inline schema generation.
 Version: 0.230.042

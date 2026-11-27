@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_tabular_enhanced_citations_schema_summary_fix.py
 """
 Functional test for enhanced-citation tabular schema summary fallback fix.
 Version: 0.261.408

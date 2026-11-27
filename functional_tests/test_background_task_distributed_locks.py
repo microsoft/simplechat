@@ -12,6 +12,7 @@ across multiple workers and App Service instances.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +37,7 @@ def test_background_task_distributed_locks() -> bool:
     assert_contains(BACKGROUND_TASKS_FILE, "acquire_distributed_task_lock('approval_expiry', lease_seconds=1800)")
     assert_contains(BACKGROUND_TASKS_FILE, "acquire_distributed_task_lock('retention_policy', lease_seconds=3600)")
     assert_contains(BACKGROUND_TASKS_FILE, 'release_distributed_task_lock(lock_document)')
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.129"')
+    assert_app_version_at_least("0.239.129")
 
     print('Distributed background task lock checks passed!')
     return True

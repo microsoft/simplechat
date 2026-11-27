@@ -11,6 +11,7 @@ endpoints, and preserve existing agent Responses API version handling.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,7 +56,7 @@ def test_new_foundry_endpoint_api_version_handling() -> None:
     assert_contains(endpoint_modal, 'Split model families into separate endpoints')
     assert_contains(endpoint_modal, 'Claude deployments are detected from the model name')
     assert_contains(endpoint_modal, 'If the project endpoint includes /api/projects/&lt;project&gt;')
-    assert_contains(config_file, 'VERSION = "0.250.006"')
+    assert_app_version_at_least("0.250.006")
 
     print("✅ New Foundry endpoint API version handling verified.")
 

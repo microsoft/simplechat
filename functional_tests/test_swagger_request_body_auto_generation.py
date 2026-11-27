@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_swagger_request_body_auto_generation.py
 """
 Functional test for automatic request body schema generation in swagger_wrapper.
 Version: 0.230.038
@@ -190,12 +191,12 @@ def test_request_body_spec_generation():
         )
         def test_post_endpoint():
             """Test POST endpoint with auto request body."""
-            from flask import request
+            from flask import jsonify, request
             data = request.get_json()
             name = data.get('name')
             age = data['age']
             active = data.get('active', True)
-            return {"success": True, "name": name}
+            return jsonify({"success": True, "name": name})
         
         # Generate OpenAPI spec
         with app.app_context():

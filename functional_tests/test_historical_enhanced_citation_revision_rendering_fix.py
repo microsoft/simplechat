@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_historical_enhanced_citation_revision_rendering_fix.py
 """
 Functional test for historical enhanced citation revision rendering fix.
 Version: 0.240.025
@@ -10,6 +11,7 @@ revision becomes the current workspace document.
 """
 
 import os
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -17,7 +19,7 @@ CONFIG_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'config.py')
 CHAT_DOCUMENTS_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'static', 'js', 'chat', 'chat-documents.js')
 CHAT_ENHANCED_CITATIONS_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'static', 'js', 'chat', 'chat-enhanced-citations.js')
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_enhanced_citations.py')
-FIX_DOC = os.path.join(ROOT_DIR, 'docs', 'explanation', 'fixes', 'HISTORICAL_ENHANCED_CITATION_REVISION_RENDERING_FIX.md')
+FIX_DOC = os.path.join(ROOT_DIR, 'docs', 'explanation', 'fixes', 'v0.241.001', 'HISTORICAL_ENHANCED_CITATION_REVISION_RENDERING_FIX.md')
 
 
 def read_text(file_path):
@@ -71,7 +73,7 @@ def test_version_and_fix_documentation_alignment():
     version = read_config_version()
     fix_doc_content = read_text(FIX_DOC)
 
-    assert version == '0.240.025', version
+    assert app_version_is_at_least('0.240.025'), version
     assert 'Fixed/Implemented in version: **0.240.025**' in fix_doc_content
     assert 'older chat citations' in fix_doc_content.lower()
     assert 'archived PDF and tabular content' in fix_doc_content

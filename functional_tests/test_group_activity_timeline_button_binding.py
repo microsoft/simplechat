@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_group_activity_timeline_button_binding.py
 """
 Functional test for Group Activity Timeline button binding fix.
 Version: 0.234.027

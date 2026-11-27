@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_backend_group_documents_swagger_integration.py
 """
 Functional test for Group Documents Backend Swagger Integration.
 Version: 0.229.070
@@ -11,6 +12,7 @@ Tests group document management, sharing, and permission-based access control.
 
 import sys
 import os
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def test_swagger_route_imports():
@@ -21,7 +23,7 @@ def test_swagger_route_imports():
         # Read the route file to check for swagger imports
         route_file_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_backend_group_documents.py')
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check for swagger imports
@@ -49,7 +51,7 @@ def test_swagger_decorators_on_endpoints():
         # Read the route file
         route_file_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_backend_group_documents.py')
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Expected endpoints that should have swagger decorators
@@ -106,7 +108,7 @@ def test_group_documents_endpoint_coverage():
         # Read the route file
         route_file_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_backend_group_documents.py')
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Count @app.route decorators
@@ -143,7 +145,7 @@ def test_authentication_security_configuration():
         # Read the route file
         route_file_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_backend_group_documents.py')
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check that all swagger decorators use get_auth_security()
@@ -186,7 +188,7 @@ def test_group_document_endpoints_functionality():
         # Read the route file
         route_file_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_backend_group_documents.py')
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Key functionality patterns that should be preserved
@@ -247,11 +249,11 @@ def test_version_consistency():
         # Read config.py to check version
         config_file_path = os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'config.py')
         
-        with open(config_file_path, 'r') as f:
+        with open(config_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check for version 0.229.070
-        if 'VERSION = "0.229.070"' not in content:
+        if not app_version_is_at_least("0.229.070"):
             print("❌ Version not updated to 0.229.070 in config.py")
             return False
         

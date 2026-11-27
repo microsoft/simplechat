@@ -11,6 +11,7 @@ configure and select New Foundry resources.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,7 +42,7 @@ def test_new_foundry_ui_visibility() -> None:
 
     assert_contains(endpoint_modal, '<option value="new_foundry">New Foundry</option>')
     assert_contains(settings_file, 'return normalized_provider in {"aoai", "aifoundry", "new_foundry"}')
-    assert_contains(config_file, 'VERSION = "0.239.180"')
+    assert_app_version_at_least("0.239.180")
 
     print("✅ New Foundry UI visibility verified.")
 

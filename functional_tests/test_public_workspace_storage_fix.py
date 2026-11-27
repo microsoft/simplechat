@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_public_workspace_storage_fix.py
 """
 Test script to verify public workspace storage calculation fix.
 Version: 0.230.082

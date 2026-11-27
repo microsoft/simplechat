@@ -18,6 +18,7 @@ committed copy's value.
 import re
 import sys
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -185,7 +186,7 @@ def test_download_settings_visibility_is_admin_gated() -> None:
 
 def test_fix_documentation_and_version_are_in_sync() -> None:
     """Verify the version bump and fix documentation landed together."""
-    assert read_config_version() == CURRENT_VERSION, f"Expected config VERSION {CURRENT_VERSION}"
+    assert app_version_is_at_least(CURRENT_VERSION), f"Expected config VERSION {CURRENT_VERSION}"
     assert FIX_DOC.exists(), f"Expected fix documentation at {FIX_DOC}"
 
     fix_doc = read_text(FIX_DOC)

@@ -17,6 +17,7 @@ import re
 import sys
 import traceback
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,7 +79,7 @@ def load_chart_helpers():
 
 def test_version_bumped_for_feature() -> None:
     print("Testing version bump...")
-    assert read_current_version() == EXPECTED_VERSION
+    assert app_version_is_at_least(EXPECTED_VERSION)
     print("PASS: version bump")
 
 

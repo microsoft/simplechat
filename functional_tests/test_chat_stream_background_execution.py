@@ -13,12 +13,13 @@ later reattached consumer.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_chats.py"
 CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
-FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "CHAT_STREAM_BACKGROUND_EXECUTION_FIX.md"
+FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "v0.241.001" / "CHAT_STREAM_BACKGROUND_EXECUTION_FIX.md"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:
@@ -43,7 +44,7 @@ def test_chat_stream_background_execution() -> None:
     assert_contains(ROUTE_FILE, "return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)")
     assert_contains(ROUTE_FILE, "return build_background_stream_response(generate, stream_session=stream_session)")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.185"')
+    assert_app_version_at_least("0.239.185")
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.239.129**")
 
     print("Chat stream background execution checks passed!")

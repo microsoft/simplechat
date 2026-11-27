@@ -13,6 +13,7 @@ versioned documentation.
 import re
 import sys
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +43,7 @@ def get_config_version():
 
 def test_profile_workspace_tabs_static_contract():
     """Validate the static contract for profile workspace tabs."""
-    assert get_config_version() == CURRENT_VERSION, f"Expected config VERSION {CURRENT_VERSION}"
+    assert app_version_is_at_least(CURRENT_VERSION), f"Expected config VERSION {CURRENT_VERSION}"
 
     profile_route_text = read_text(APP_ROOT / "route_frontend_profile.py")
     for token in [

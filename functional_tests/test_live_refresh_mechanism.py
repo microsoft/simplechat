@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+# test_live_refresh_mechanism.py
 """
 Test live refresh mechanism against running Flask app.
 Version: [will check config.py]
 
 This test validates the refresh mechanism by making direct API calls 
 to the running Flask application.
+Version: 0.261.474
+Implemented in: 0.230.034
 """
 
 import requests

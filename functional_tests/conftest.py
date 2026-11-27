@@ -93,3 +93,58 @@ def pytest_pyfunc_call(pyfuncitem):
         )
     return result
 # --- end pytest return-False guard (#1572) ---
+
+
+import os  # noqa: E402
+import sys  # noqa: E402
+
+
+# Let a test file import application modules and test_support when it is run alone.
+# Appended, so a path a test file inserts itself still wins. Before 0.261.491 many
+# files only imported because an earlier file had added the application folder.
+for _path in (
+    os.path.dirname(os.path.abspath(__file__)),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "application", "single_app"),
+):
+    _path = os.path.abspath(_path)
+    if os.path.isdir(_path) and _path not in sys.path:
+        sys.path.append(_path)
+
+
+# Per-test-file sys.modules isolation, so stub modules one file installs at import
+# time cannot leak into the files collected after it. See
+# test_support/module_isolation.py; set SIMPLECHAT_TEST_MODULE_ISOLATION=0 to disable.
+try:
+    from test_support.module_isolation import (  # noqa: E402,F401
+        pytest_make_collect_report,
+        pytest_runtest_protocol,
+    )
+except ModuleNotFoundError as _error:
+    # This conftest copied outside the repository (the return-False guard's own
+    # tests do that) runs without the isolation plugin.
+    if _error.name not in ("test_support", "test_support.module_isolation"):
+        raise
+
+
+# With no Cosmos DB account configured, let tests import the real config.py against an
+# in-memory Cosmos client. See test_support/offline_cosmos.py.
+try:
+    from test_support.offline_cosmos import install_offline_cosmos  # noqa: E402
+except ModuleNotFoundError as _error:
+    if _error.name not in ("test_support", "test_support.offline_cosmos"):
+        raise
+else:
+    install_offline_cosmos()
+
+
+# Tests listed in known_failures.txt are expected to fail until they are fixed; a
+# listed test that passes fails the run so it comes off the list. See
+# test_support/known_failures.py; set SIMPLECHAT_IGNORE_KNOWN_FAILURES=1 to disable.
+def pytest_configure(config):
+    try:
+        from test_support.known_failures import register
+    except ModuleNotFoundError as error:
+        if error.name not in ("test_support", "test_support.known_failures"):
+            raise
+        return
+    register(config, os.path.dirname(os.path.abspath(__file__)))

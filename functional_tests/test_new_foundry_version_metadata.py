@@ -11,6 +11,7 @@ entry in the agent modal.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +43,7 @@ def test_new_foundry_version_metadata() -> None:
     assert_contains(modal_html_path, 'id="agent-new-foundry-application-version"')
     assert_contains(modal_html_path, 'type="hidden" id="agent-new-foundry-application-version"')
     assert_not_contains(modal_html_path, '<label for="agent-new-foundry-application-version" class="form-label">Version</label>')
-    assert_contains(config_path, 'VERSION = "0.239.180"')
+    assert_app_version_at_least("0.239.180")
 
     print("✅ New Foundry version metadata handling verified.")
 

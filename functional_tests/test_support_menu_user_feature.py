@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_support_menu_user_feature.py
 """
 Functional test for support menu sidebar visibility, access behavior, and
 latest-feature image preview support.

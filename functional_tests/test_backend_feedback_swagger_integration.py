@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_backend_feedback_swagger_integration.py
 """
 Functional test for backend feedback swagger integration.
 Version: 0.250.075
@@ -25,7 +26,7 @@ def test_feedback_swagger_imports():
             'route_backend_feedback.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Verify swagger imports are present
@@ -54,7 +55,7 @@ def test_feedback_swagger_decorators():
             'route_backend_feedback.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Expected endpoints that should have swagger decorators
@@ -113,7 +114,7 @@ def test_feedback_decorator_order():
             'route_backend_feedback.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         lines = content.split('\n')
@@ -157,7 +158,7 @@ def test_feedback_endpoint_coverage():
             'route_backend_feedback.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Expected feedback management functions
@@ -209,7 +210,7 @@ def test_feedback_auth_security_integration():
             'route_backend_feedback.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Count occurrences of security integration
@@ -246,7 +247,7 @@ def test_feedback_role_based_access():
             'route_backend_feedback.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Count admin and user required decorators
@@ -285,7 +286,7 @@ def test_feedback_enabled_required_preservation():
             'route_backend_feedback.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # All feedback endpoints should have @enabled_required("enable_user_feedback")

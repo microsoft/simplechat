@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_sql_query_plugin_schema_awareness.py
 """
 Functional test for SQL Query Plugin Schema Awareness improvements.
 Version: 0.239.014

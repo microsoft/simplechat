@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+# test_plugin_validation_compatibility.py
 """
 Test Plugin Validation Compatibility
 
 This test ensures that the SQL plugin validation fix doesn't break
 validation for OpenAPI plugins or other plugin types. It verifies
 that all plugin types still work correctly after the changes.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_ai_search_index_management_fix.py
 """
 Functional test for AI Search index management and agent settings fixes.
 Version: 0.227.010
@@ -21,7 +22,7 @@ def test_agent_settings_conditional_loading():
     
     try:
         # Read the JavaScript file
-        admin_js_path = os.path.join(os.path.dirname(__file__), "../static/js/admin/admin_settings.js")
+        admin_js_path = os.path.join(os.path.dirname(__file__), "../application/single_app/static/js/admin/admin_settings.js")
         if not os.path.exists(admin_js_path):
             raise FileNotFoundError(f"admin_settings.js not found at {admin_js_path}")
         
@@ -61,7 +62,7 @@ def test_ai_search_index_error_handling():
     
     try:
         # Read the backend settings file
-        settings_path = os.path.join(os.path.dirname(__file__), "../route_backend_settings.py")
+        settings_path = os.path.join(os.path.dirname(__file__), "../application/single_app/route_backend_settings.py")
         if not os.path.exists(settings_path):
             raise FileNotFoundError(f"route_backend_settings.py not found at {settings_path}")
         
@@ -101,7 +102,7 @@ def test_index_creation_endpoint():
     
     try:
         # Read the backend settings file
-        settings_path = os.path.join(os.path.dirname(__file__), "../route_backend_settings.py")
+        settings_path = os.path.join(os.path.dirname(__file__), "../application/single_app/route_backend_settings.py")
         if not os.path.exists(settings_path):
             raise FileNotFoundError(f"route_backend_settings.py not found at {settings_path}")
         
@@ -140,7 +141,7 @@ def test_javascript_index_management():
     
     try:
         # Read the JavaScript file
-        admin_js_path = os.path.join(os.path.dirname(__file__), "../static/js/admin/admin_settings.js")
+        admin_js_path = os.path.join(os.path.dirname(__file__), "../application/single_app/static/js/admin/admin_settings.js")
         if not os.path.exists(admin_js_path):
             raise FileNotFoundError(f"admin_settings.js not found at {admin_js_path}")
         
@@ -215,7 +216,7 @@ def test_version_consistency():
     print("🔍 Testing Version Consistency...")
     
     try:
-        config_path = os.path.join(os.path.dirname(__file__), "../config.py")
+        config_path = os.path.join(os.path.dirname(__file__), "../application/single_app/config.py")
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"config.py not found at {config_path}")
         

@@ -48,7 +48,7 @@ from functions_prompt_metadata import build_prompt_selection_metadata  # noqa: E
 from test_v2_chat_context_selection import ContextApi, open_picker, pick_context  # noqa: E402
 from composer_helpers import open_composer_tools  # noqa: E402
 from v2_admin_settings import connect_options  # noqa: E402, F401
-from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
+from v2_pending_action_stubs import background_poll_payload, is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -201,6 +201,10 @@ class PromptApi:
             "/api/documents", "/api/group_documents", "/api/public_workspace_documents"
         )):
             self.context.handle(route)
+            return
+        poll = background_poll_payload(request.method, path)
+        if poll is not None:
+            route.fulfill(json=poll)
             return
         self.unexpected.append(f"{request.method} {path}")
         route.fulfill(status=404, json={"error": "Unexpected prompt fixture request."})

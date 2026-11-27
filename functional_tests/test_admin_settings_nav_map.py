@@ -79,7 +79,7 @@ def test_every_nav_destination_exists():
     print("Testing Admin Settings nav destinations...")
 
     composed = read_admin_settings_template()
-    panes = set(re.findall(r'<div class="tab-pane[^"]*" id="([^"]+)"', composed))
+    panes = set(re.findall(r'<div class="tab-pane[^"]*"\s+id="([^"]+)"', composed))
     element_ids = set(re.findall(r'\sid="([^"]+)"', composed))
 
     missing_panes = sorted(set(get_tab_ids()) - panes)

@@ -12,6 +12,7 @@ failing silently through the browser-managed anchor path.
 
 import os
 import sys
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -109,7 +110,7 @@ def test_version_updated_for_fix():
     with open(config_file_path, 'r', encoding='utf-8') as handle:
         config_content = handle.read()
 
-    if 'VERSION = "0.239.124"' not in config_content:
+    if not app_version_is_at_least("0.239.124"):
         print("❌ Version not updated to 0.239.124")
         return False
 

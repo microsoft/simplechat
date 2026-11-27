@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_inline_image_proposals.py
 """
 Functional test for V2 inline image generation proposals.
 

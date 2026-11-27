@@ -13,6 +13,7 @@ and expose resume-failed item support.
 import os
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -45,7 +46,7 @@ def test_workflow_file_sync_trigger_contracts():
     workspace_template = _read("application/single_app/templates/workspace.html")
 
     checks = [
-        _assert_contains(config, 'VERSION = "0.241.133"', "version bump"),
+        assert_app_version_at_least("0.241.133"),
         _assert_contains(config, 'cosmos_personal_workflow_run_items_container_name = "personal_workflow_run_items"', "workflow run item container"),
         _assert_contains(personal_workflows, "WORKFLOW_TRIGGER_TYPES = {'manual', 'interval', 'file_sync'}", "file_sync trigger type"),
         _assert_contains(personal_workflows, "def _normalize_file_sync_config", "workflow File Sync normalizer"),

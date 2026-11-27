@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
+# test_azure_di_diagnostics.py
 """
 Enhanced Azure Document Intelligence Debugging Test
 
 This test provides detailed debugging information about the Azure Document Intelligence
 client and API compatibility to help diagnose the 'document' parameter error.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

@@ -16,6 +16,7 @@ import re
 import sys
 import types
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -162,7 +163,7 @@ def test_msg_extension_is_centrally_allowed():
     config_source = read_text(CONFIG_PATH)
     settings_source = read_text(FUNCTIONS_SETTINGS_PATH)
 
-    assert f'VERSION = "{EXPECTED_CONFIG_VERSION}"' in config_source
+    assert app_version_is_at_least(EXPECTED_CONFIG_VERSION)
     assert_contains(
         config_source,
         [

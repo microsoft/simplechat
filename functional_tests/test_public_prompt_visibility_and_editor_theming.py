@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_public_prompt_visibility_and_editor_theming.py
 """
 Functional test for public prompt visibility and prompt editor dark mode.
 Version: 0.239.199
@@ -11,6 +12,7 @@ uses the shared dark-mode overrides and visible toolbar icon mappings.
 
 from pathlib import Path
 import sys
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -92,7 +94,7 @@ def test_simplemde_override_styles_cover_icons_and_dark_mode():
 
 def test_config_version_is_bumped_for_follow_up_fix():
     config_text = (ROOT_DIR / "application/single_app/config.py").read_text(encoding="utf-8")
-    assert_contains(config_text, ['VERSION = "0.239.199"'], "config version")
+    assert_app_version_at_least("0.239.199")
 
 
 if __name__ == "__main__":

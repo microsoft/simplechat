@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_public_workspace_field_name_fix.py
 """
 Functional test for public workspace field name fix.
 Version: 0.230.081

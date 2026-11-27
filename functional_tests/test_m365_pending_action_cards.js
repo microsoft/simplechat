@@ -1,4 +1,9 @@
 // test_m365_pending_action_cards.js
+/*
+ * Version: 0.261.474
+ * Implemented in: 0.261.038
+ */
+
 // Version: 0.261.055
 // Implemented in: 0.261.055
 // Offline behavioral checks of the real shared renderer and M365 CSRF helper.

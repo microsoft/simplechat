@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+# test_group_document_date_fix.py
 """
 Quick test to verify the group document date query fix.
 Version: 0.230.050
 
 This verifies that the group document query now matches the user document query pattern.
+Implemented in: 0.230.053
 """
 
 import sys

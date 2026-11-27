@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
+# test_form_clear_fix.py
 """
 Test Form Clear Fix
 
 This test ensures that the plugin modal form is properly cleared
 when creating a new action after previously having data in the form.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 print("🔍 Testing Form Clear Fix...")

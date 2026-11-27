@@ -13,6 +13,7 @@ and retain diagnostics that explain export candidate selection and summary hando
 
 from pathlib import Path
 import traceback
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +48,7 @@ def test_generated_tabular_output_backend_plumbing() -> None:
     functions_settings_content = read_text(FUNCTIONS_SETTINGS_FILE)
     search_service_content = read_text(SEARCH_SERVICE_FILE)
 
-    assert current_version == EXPECTED_VERSION, (
+    assert app_version_is_at_least(EXPECTED_VERSION), (
         f"Expected config.py version {EXPECTED_VERSION} for the generated analysis artifact foundation feature."
     )
     assert 'def upload_generated_analysis_artifact_for_current_user(' in simplechat_operations_content, (
@@ -96,7 +97,7 @@ def test_generated_tabular_output_diagnostics_hooks() -> None:
     current_version = read_current_version()
     chat_route_content = read_text(CHAT_ROUTE_FILE)
 
-    assert current_version == EXPECTED_VERSION, (
+    assert app_version_is_at_least(EXPECTED_VERSION), (
         f"Expected config.py version {EXPECTED_VERSION} for the generated output diagnostics follow-up."
     )
     assert 'def _build_tabular_generated_output_candidate_diagnostic(' in chat_route_content, (
@@ -133,7 +134,7 @@ def test_generated_tabular_output_attachment_context_normalization() -> None:
     current_version = read_current_version()
     chat_route_content = read_text(CHAT_ROUTE_FILE)
 
-    assert current_version == EXPECTED_VERSION, (
+    assert app_version_is_at_least(EXPECTED_VERSION), (
         f"Expected config.py version {EXPECTED_VERSION} for the generated output attachment-context fix."
     )
     assert 'def _build_tabular_generated_output_input_row(' in chat_route_content, (

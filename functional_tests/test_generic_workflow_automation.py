@@ -10,6 +10,7 @@ agent, while workspace document actions remain explicitly optional.
 """
 
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +35,7 @@ def test_generic_workflow_ui_defaults_to_no_document_action() -> None:
     feature_doc_content = read_text("docs/explanation/features/GENERIC_WORKFLOW_AUTOMATION.md")
     workflow_js_content = read_text("application/single_app/static/js/workspace/workspace_workflows.js")
 
-    assert f'VERSION = "{EXPECTED_VERSION}"' in config_content
+    assert app_version_is_at_least(EXPECTED_VERSION)
     assert "# Generic Workflow Automation" in feature_doc_content
     assert f"Enhanced in version: **{EXPECTED_VERSION}**" in feature_doc_content
     assert "No document action" in feature_doc_content

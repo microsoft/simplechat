@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_group_error_handling_fix.py
 """
 Functional test for group API error handling when no active group is selected.
 Version: 0.227.009
@@ -19,7 +20,7 @@ def test_group_documents_js_error_handling():
     
     try:
         # Read the JavaScript file
-        chat_docs_path = os.path.join(os.path.dirname(__file__), "../static/js/chat/chat-documents.js")
+        chat_docs_path = os.path.join(os.path.dirname(__file__), "../application/single_app/static/js/chat/chat-documents.js")
         if not os.path.exists(chat_docs_path):
             raise FileNotFoundError(f"chat-documents.js not found at {chat_docs_path}")
         
@@ -58,7 +59,7 @@ def test_group_prompts_js_error_handling():
     
     try:
         # Read the JavaScript file
-        chat_prompts_path = os.path.join(os.path.dirname(__file__), "../static/js/chat/chat-prompts.js")
+        chat_prompts_path = os.path.join(os.path.dirname(__file__), "../application/single_app/static/js/chat/chat-prompts.js")
         if not os.path.exists(chat_prompts_path):
             raise FileNotFoundError(f"chat-prompts.js not found at {chat_prompts_path}")
         
@@ -97,7 +98,7 @@ def test_backend_group_api_error_conditions():
     
     try:
         # Check group documents route
-        group_docs_path = os.path.join(os.path.dirname(__file__), "../route_backend_group_documents.py")
+        group_docs_path = os.path.join(os.path.dirname(__file__), "../application/single_app/route_backend_group_documents.py")
         if not os.path.exists(group_docs_path):
             raise FileNotFoundError(f"route_backend_group_documents.py not found at {group_docs_path}")
         
@@ -116,7 +117,7 @@ def test_backend_group_api_error_conditions():
                 raise AssertionError(f"Missing pattern in group documents API: {pattern}")
         
         # Check group prompts route
-        group_prompts_path = os.path.join(os.path.dirname(__file__), "../route_backend_group_prompts.py")
+        group_prompts_path = os.path.join(os.path.dirname(__file__), "../application/single_app/route_backend_group_prompts.py")
         if not os.path.exists(group_prompts_path):
             raise FileNotFoundError(f"route_backend_group_prompts.py not found at {group_prompts_path}")
         
@@ -148,7 +149,7 @@ def test_version_consistency():
     print("🔍 Testing Version Consistency...")
     
     try:
-        config_path = os.path.join(os.path.dirname(__file__), "../config.py")
+        config_path = os.path.join(os.path.dirname(__file__), "../application/single_app/config.py")
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"config.py not found at {config_path}")
         

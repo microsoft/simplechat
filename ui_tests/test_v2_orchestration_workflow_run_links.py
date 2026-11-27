@@ -44,7 +44,7 @@ sys.path.insert(0, str(ROOT / "functional_tests"))
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from ui_tests.fixtures.workflow_editor import WORKFLOW_ID, WorkflowEditorFixture  # noqa: E402
 from ui_tests.fixtures.workspace_authoring import ORIGIN as SPA_ORIGIN  # noqa: E402
-from ui_tests.fixtures.v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
+from ui_tests.fixtures.v2_pending_action_stubs import background_poll_payload, is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -136,6 +136,10 @@ class LinksApi:
             return
         if path == "/favicon.ico":
             route.fulfill(status=204)
+            return
+        poll = background_poll_payload(request.method, path)
+        if poll is not None:
+            route.fulfill(json=poll)
             return
         self.unexpected.append(f"{request.method} {path}")
         route.fulfill(status=404, json={"error": "Unmocked request"})

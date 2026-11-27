@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_comprehensive_table_support.py
 """
 Functional test for comprehensive table support in SimpleChat.
 Version: 0.229.005

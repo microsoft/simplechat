@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_ui_docker_shared_sources.py
 """
 Functional test for V2 UI shared source availability in the Docker build.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_control_center_refresh_groups.py
 """
 Functional test for Control Center refresh functionality including groups.
 Version: 0.261.160

@@ -85,6 +85,7 @@ const supportMenuSettingsDiv = document.getElementById('support_menu_settings');
 const enableSupportSendFeedbackToggle = document.getElementById('enable_support_send_feedback');
 const supportFeedbackRecipientGroup = document.getElementById('support_feedback_recipient_group');
 const enableSupportLatestFeaturesToggle = document.getElementById('enable_support_latest_features');
+const supportLatestFeaturesHintDiv = document.getElementById('support_latest_features_hint');
 const supportLatestFeaturesSettingsDiv = document.getElementById('support_latest_features_settings');
 
 const adminForm = document.getElementById('admin-settings-form');
@@ -6374,10 +6375,10 @@ function toggleSupportFeedbackRecipientVisibility() {
 
 
 function toggleSupportLatestFeaturesVisibility() {
-    if (supportLatestFeaturesSettingsDiv && enableSupportMenuToggle && enableSupportLatestFeaturesToggle) {
-        supportLatestFeaturesSettingsDiv.style.display = (
-            enableSupportMenuToggle.checked && enableSupportLatestFeaturesToggle.checked
-        ) ? 'block' : 'none';
+    if (enableSupportMenuToggle && enableSupportLatestFeaturesToggle) {
+        const isHidden = !(enableSupportMenuToggle.checked && enableSupportLatestFeaturesToggle.checked);
+        supportLatestFeaturesHintDiv?.classList.toggle('d-none', isHidden);
+        supportLatestFeaturesSettingsDiv?.classList.toggle('d-none', isHidden);
     }
 }
 

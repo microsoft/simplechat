@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+# test_azure_di_parameter_fix.py
 """
 Azure Document Intelligence Parameter Fix Test
 
 This test validates that the Azure Document Intelligence API parameters
 are correctly formatted to prevent the "urlSource or base64Source is required" error
 when processing PDF files through the document upload functionality.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys
@@ -81,7 +84,7 @@ def test_api_consistency_with_settings_route():
         content_source = inspect.getsource(extract_content_with_azure_di)
         
         # Read settings route source
-        with open(os.path.join(os.path.dirname(__file__), '..', 'route_backend_settings.py'), 'r') as f:
+        with open(os.path.join(os.path.dirname(__file__), '..', 'application', 'single_app', 'route_backend_settings.py'), 'r', encoding='utf-8') as f:
             settings_source = f.read()
         
         # Check that both use the same parameter patterns

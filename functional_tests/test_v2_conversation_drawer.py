@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_conversation_drawer.py
 """
 Functional test for the V2 chat conversation drawer.
 

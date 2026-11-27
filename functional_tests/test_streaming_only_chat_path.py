@@ -13,6 +13,7 @@ the frontend now that streaming is the only supported chat mode.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +65,7 @@ def test_streaming_only_chat_path() -> None:
     assert_not_contains(chats_template, "streaming-badge")
     assert_contains(route_backend_chats, "return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)")
     assert_contains(route_backend_chats, "return build_background_stream_response(generate, stream_session=stream_session)")
-    assert_contains(config_file, 'VERSION = "0.239.185"')
+    assert_app_version_at_least("0.239.185")
 
     print("Streaming-only chat path checks passed!")
 

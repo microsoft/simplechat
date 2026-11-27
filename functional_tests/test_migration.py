@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
+# test_migration.py
 """
 Test script for personal containers migration.
 
 This script tests the migration of agents and actions from user settings 
 to dedicated personal containers.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

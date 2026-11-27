@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_inline_image_proposal_resume.py
 """
 Functional test for V2 inline image approvals surviving the view that started them.
 

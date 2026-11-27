@@ -13,6 +13,7 @@ import ast
 import os
 import re
 import sys
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -129,7 +130,7 @@ def test_config_version_bumped_for_media_citation_fix():
     config_source = read_file(CONFIG_FILE)
     version_match = re.search(r'VERSION = "([0-9.]+)"', config_source)
     assert version_match, 'Could not find VERSION in config.py'
-    assert version_match.group(1) == '0.241.007', 'Expected config.py version 0.241.007'
+    assert app_version_is_at_least('0.241.007'), 'Expected config.py version 0.241.007'
 
     print('✅ Config version bump passed')
     return True

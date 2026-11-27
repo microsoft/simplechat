@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -104,7 +105,7 @@ def test_fix_artifacts_are_in_sync():
     print("Testing public workspace manage asset versioning artifact alignment...")
 
     version = read_config_version()
-    assert version == "0.242.072", f"Expected config version 0.242.072, saw {version}."
+    assert app_version_is_at_least("0.242.072"), f"Expected config version 0.242.072, saw {version}."
     assert FIX_DOC.exists(), f"Expected fix documentation at {FIX_DOC}"
 
     fix_doc_source = read_file_text(FIX_DOC)

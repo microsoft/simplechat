@@ -11,6 +11,7 @@ chat route.
 """
 
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +41,7 @@ def test_stale_kernel_persistence_branch_removed():
     current_version = read_current_version()
     chat_route_content = read_text(CHAT_ROUTE_FILE)
 
-    assert current_version == EXPECTED_VERSION, (
+    assert app_version_is_at_least(EXPECTED_VERSION), (
         f"Expected config.py version {EXPECTED_VERSION} for the unreachable-code cleanup."
     )
     assert "enable_redis_for_kernel" not in chat_route_content, (

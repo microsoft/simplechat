@@ -12,6 +12,7 @@ the browser preview logic matches backend all-tag filter semantics.
 import sys
 import traceback
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,7 +83,7 @@ def test_assigned_knowledge_preview_matches_backend_tag_semantics():
 def test_version_header_matches_config():
     """Validate this regression test tracks the current application version."""
     config_version = _get_config_version()
-    if config_version != EXPECTED_VERSION:
+    if not app_version_is_at_least(EXPECTED_VERSION):
         raise AssertionError(
             f"Expected config.py version {EXPECTED_VERSION}, found {config_version}"
         )

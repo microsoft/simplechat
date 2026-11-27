@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_video_indexer_debug_logging_enhancement.py
 """
 Functional test for Video Indexer debug logging enhancement.
 Version: 0.229.041

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_chats_user_settings_hardening_fix.py
 """
 Functional test for chats user settings hardening fix.
 Version: 0.238.025

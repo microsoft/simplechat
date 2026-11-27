@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
+# test_plugin_duplication_fix.py
 """
 Test Plugin Duplication Fix
 
 This test ensures that saving plugins doesn't create duplicates
 when the same plugin name is saved multiple times.
+Version: 0.261.474
+Implemented in: 0.229.001
 """
 
 import sys

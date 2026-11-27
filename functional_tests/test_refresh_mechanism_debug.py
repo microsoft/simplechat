@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# test_refresh_mechanism_debug.py
 """
 Test the refresh mechanism to see why storage account size isn't being updated.
 Version: Current version from config.py
 Implemented in: [version when fix/feature was added]
 
 This test investigates the refresh button functionality in the control center.
+Version: 0.261.474
 """
 
 import sys

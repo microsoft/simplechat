@@ -64,9 +64,6 @@ cd functional_tests
 python -m pytest $(grep -rl admin_settings.html test_*.py) -q -p no:randomly
 ```
 
-Exclude `test_enhanced_pii_analysis_standalone.py`, which needs live Azure
-credentials.
-
 ### Reading templates in tests
 
 `admin_settings.html` is only a shell now. Tests must compose it:

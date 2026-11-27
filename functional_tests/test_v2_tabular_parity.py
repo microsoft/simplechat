@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_tabular_parity.py
 """
 Functional test for V2 tabular parity.
 
@@ -37,6 +38,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "application" / "single_app"
@@ -452,7 +454,9 @@ def test_no_remote_assets():
         source = _read(path)
         for match in re.finditer(r"https?://[^\s'\"`)]+", source):
             url = match.group(0)
-            if "schemas" in url or "w3.org" in url:
+            host = urlparse(url).hostname or ""
+            # XML namespace and schema identifiers name a document type; nothing is loaded.
+            if host == "w3.org" or host.endswith(".w3.org") or "schemas" in host.split("."):
                 continue
             offenders.append(f"{path.name}: {url}")
 

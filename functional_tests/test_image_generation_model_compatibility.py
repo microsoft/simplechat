@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_image_generation_model_compatibility.py
 """
 Functional test for image generation model compatibility fix.
 Version: 0.226.103
@@ -11,7 +12,7 @@ and that null image URLs are handled gracefully.
 import sys
 import os
 # Add parent directory to path for imports
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+parent_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'application', 'single_app')
 sys.path.append(parent_dir)
 
 def test_image_generation_api_version():
@@ -21,7 +22,7 @@ def test_image_generation_api_version():
     try:
         # Read the functions_settings.py file directly to check API version
         settings_file = os.path.join(parent_dir, 'functions_settings.py')
-        with open(settings_file, 'r') as f:
+        with open(settings_file, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Look for the API version setting
@@ -169,7 +170,7 @@ def test_version_updated():
     try:
         # Read config.py to check version
         config_path = os.path.join(parent_dir, 'config.py')
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         expected_version = "0.226.103"

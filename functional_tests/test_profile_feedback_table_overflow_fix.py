@@ -11,6 +11,7 @@ set while retaining AI response and admin action details in the detail modal.
 import re
 import sys
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +43,7 @@ def test_profile_feedback_table_contract():
     render_feedback_body = _extract_function(profile_script, "renderFeedbackTableRows")
     load_feedback_body = _extract_function(profile_script, "loadProfileFeedbackTable")
 
-    assert f'VERSION = "{EXPECTED_VERSION}"' in config_py
+    assert app_version_is_at_least(EXPECTED_VERSION)
     assert "profile-feedback-table-wrapper" in profile_html
     assert "#profile-feedback-table" in profile_html
     assert "<th>Timestamp</th>" in profile_html

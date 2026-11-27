@@ -23,7 +23,7 @@ BACKEND_SETTINGS = os.path.join(REPO_ROOT, 'application', 'single_app', 'route_b
 FRONTEND_SETTINGS = os.path.join(REPO_ROOT, 'application', 'single_app', 'route_frontend_admin_settings.py')
 ACTIVITY_LOGGING = os.path.join(REPO_ROOT, 'application', 'single_app', 'functions_activity_logging.py')
 SETTINGS_FUNCTIONS = os.path.join(REPO_ROOT, 'application', 'single_app', 'functions_settings.py')
-FEATURE_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'RELEASE_NOTIFICATIONS_REGISTRATION.md')
+FEATURE_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'v0.241.001', 'RELEASE_NOTIFICATIONS_REGISTRATION.md')
 
 
 def read_text(path):

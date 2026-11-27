@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_v2_stats_parity.py
 """
 Functional test for the V2 settings Stats tab reaching parity with the classic profile page.
 

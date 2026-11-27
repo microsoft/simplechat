@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_agent_js_loading_fix.py
 """
 Functional test for agent-related JavaScript loading fixes.
 Version: 0.227.007
@@ -23,6 +24,7 @@ def test_conditional_js_loading():
         # Read admin_settings.html file
         admin_settings_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'application', 'single_app',
             'templates',
             'admin_settings.html'
         )
@@ -70,6 +72,7 @@ def test_improved_error_handling():
         # Read admin_settings.js file
         admin_js_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'application', 'single_app',
             'static',
             'js',
             'admin',
@@ -117,6 +120,7 @@ def test_no_unconditional_agent_calls():
         # Read admin_settings.html file
         admin_settings_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'application', 'single_app',
             'templates',
             'admin_settings.html'
         )

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_backend_conversations_swagger_integration.py
 """
 Functional test for backend conversations swagger integration.
 Version: 0.229.067
@@ -25,7 +26,7 @@ def test_conversations_swagger_imports():
             'route_backend_conversations.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Verify swagger imports are present
@@ -54,7 +55,7 @@ def test_conversations_swagger_decorators():
             'route_backend_conversations.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Expected endpoints that should have swagger decorators
@@ -111,7 +112,7 @@ def test_conversations_decorator_order():
             'route_backend_conversations.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         lines = content.split('\n')
@@ -155,7 +156,7 @@ def test_conversations_endpoint_coverage():
             'route_backend_conversations.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Expected conversation management functions
@@ -205,7 +206,7 @@ def test_conversations_auth_security_integration():
             'route_backend_conversations.py'
         )
         
-        with open(route_file_path, 'r') as f:
+        with open(route_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Count occurrences of security integration

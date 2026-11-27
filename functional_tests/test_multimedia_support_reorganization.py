@@ -16,6 +16,7 @@ import os
 import sys
 
 from test_support.templates import compose_if_admin_settings
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -253,7 +254,7 @@ def test_version_update():
         with open(config_path, 'r', encoding='utf-8') as file_handle:
             content = file_handle.read()
 
-        if 'VERSION = "0.241.016"' not in content:
+        if not app_version_is_at_least("0.241.016"):
             print("❌ Version not updated to 0.241.016")
             return False
 

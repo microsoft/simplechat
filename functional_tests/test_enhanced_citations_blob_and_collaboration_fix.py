@@ -11,6 +11,7 @@ inside collaborative conversations after the inline visualization changes.
 
 import os
 import re
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -100,7 +101,7 @@ def test_version_and_fix_documentation_alignment():
     version = read_config_version()
     fix_doc_source = read_text(FIX_DOC)
 
-    assert version == '0.241.048', version
+    assert app_version_is_at_least('0.241.048'), version
     assert 'Fixed/Implemented in version: **0.241.048**' in fix_doc_source
     assert 'persisted blob references' in fix_doc_source.lower()
     assert 'collaborative conversations' in fix_doc_source.lower()

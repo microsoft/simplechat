@@ -11,6 +11,7 @@ masking identity from the authenticated server-side user.
 
 import sys
 from pathlib import Path
+from test_support.versioning import app_version_is_at_least  # noqa: E402
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -206,7 +207,7 @@ def test_masking_renderer_and_backend_identity_are_hardened() -> None:
 def test_fix_documentation_and_version_are_in_sync() -> None:
     """Verify the version bump and fix documentation landed together."""
     version = read_version()
-    assert version == "0.241.022", f"Expected config.py version 0.241.022, found {version}"
+    assert app_version_is_at_least("0.241.022"), f"Expected config.py version 0.241.022, found {version}"
     assert FIX_DOC.exists(), f"Expected fix documentation file at {FIX_DOC}"
 
     fix_doc = read_text(FIX_DOC)

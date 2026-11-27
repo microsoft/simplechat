@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+# test_smart_http_plugin_pdf_support.py
 """
 Smart HTTP Plugin PDF Support Integration Test
 Version: 0.228.005
 
 This test validates the PDF URL support functionality in the Smart HTTP Plugin.
+Implemented in: 0.229.001
 """
 
 import asyncio

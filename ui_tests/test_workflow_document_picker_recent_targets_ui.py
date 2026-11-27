@@ -1,4 +1,4 @@
-# test_workflow_document_picker_recent_targets.py
+# test_workflow_document_picker_recent_targets_ui.py
 """
 UI test for workflow document picker and recent workflow document targets.
 Version: 0.241.188
