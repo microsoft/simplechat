@@ -3933,6 +3933,20 @@ ADMIN_SETTINGS_FIELDS = {
             "default": True,
         },
     ],
+    "context-usage-section": [
+        {
+            "key": "enable_context_usage_display",
+            "type": "switch",
+            "label": "Show Context Usage",
+            "help": (
+                "Shows users how full the selected model's context is: a ring "
+                "beside the message box and a Context tab in the conversation "
+                "drawer. Turning this off only hides the display. Usage is still "
+                "recorded with each reply and in the activity logs."
+            ),
+            "default": True,
+        },
+    ],
     "workspace-scope-lock-section": [
         {
             "key": "enforce_workspace_scope_lock",

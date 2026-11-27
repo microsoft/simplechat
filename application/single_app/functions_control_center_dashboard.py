@@ -340,6 +340,57 @@ def normalize_token_filter_value(value):
     return normalized
 
 
+# --------------------------------------------------------------------------------------
+# Token usage source: an ordinary chat, an orchestration plan or a workflow
+# --------------------------------------------------------------------------------------
+# Token usage records share one activity type and mostly one token type (`chat`), so usage
+# reporting could not tell a plan's spend from a chat reply's. Each writer already marks its
+# records in `additional_context`; these turn the marks into one filter that the dashboard
+# and the activity logs both apply.
+
+TOKEN_SOURCE_CHAT = 'chat'
+TOKEN_SOURCE_PLAN = 'plan'
+TOKEN_SOURCE_WORKFLOW = 'workflow'
+TOKEN_SOURCES = (TOKEN_SOURCE_CHAT, TOKEN_SOURCE_PLAN, TOKEN_SOURCE_WORKFLOW)
+TOKEN_SOURCE_OPTIONS = (
+    {'value': TOKEN_SOURCE_CHAT, 'label': 'Chat'},
+    {'value': TOKEN_SOURCE_PLAN, 'label': 'Plan'},
+    {'value': TOKEN_SOURCE_WORKFLOW, 'label': 'Workflow'},
+)
+
+# Orchestration runs mark their rows with the execution path.
+_PLAN = "(IS_DEFINED(c.additional_context.execution_path) AND c.additional_context.execution_path = 'orchestration')"
+# A workflow run names its workflow; delivering a workflow's result to a chat sets a flag.
+_WORKFLOW = (
+    "(IS_DEFINED(c.additional_context.workflow_id) "
+    "OR (IS_DEFINED(c.additional_context.workflow_result_delivery) "
+    "AND c.additional_context.workflow_result_delivery = true))"
+)
+
+
+def normalize_token_source(value):
+    """Return a known source, or None for anything else, including no filter."""
+    source = str(value or '').strip().lower()
+    return source if source in TOKEN_SOURCES else None
+
+
+def token_source_clause(source):
+    """Return the Cosmos predicate for one source, or '' when there is no such filter.
+
+    The predicate has no parameters: its values are fixed strings from this module. `chat` is
+    every chat-type record that is neither a plan's nor a workflow's, so embedding and web
+    search records, which have their own token types, are in none of the three.
+    """
+    source = normalize_token_source(source)
+    if source == TOKEN_SOURCE_PLAN:
+        return _PLAN
+    if source == TOKEN_SOURCE_WORKFLOW:
+        return _WORKFLOW
+    if source == TOKEN_SOURCE_CHAT:
+        return f"(c.token_type = 'chat' AND NOT {_PLAN} AND NOT {_WORKFLOW})"
+    return ''
+
+
 def extract_token_filters(source):
     """Extract supported token filters from a query string or JSON payload."""
     if not source:
@@ -357,6 +408,8 @@ def extract_token_filters(source):
         "public_workspace_id": normalize_token_filter_value(token_source.get("public_workspace_id")),
         "model": normalize_token_filter_value(token_source.get("model")),
         "token_type": normalize_token_filter_value(token_source.get("token_type")),
+        # Chat, plan or workflow: where the usage came from, whatever its token type.
+        "token_source": normalize_token_source(token_source.get("token_source")),
     }
 
     if token_filters["workspace_type"] not in {None, "personal", "group", "public"}:
@@ -408,6 +461,10 @@ def append_token_usage_filters(query_conditions, parameters, token_filters):
     if token_type:
         query_conditions.append("c.token_type = @token_type")
         parameters.append({"name": "@token_type", "value": token_type})
+
+    source_clause = token_source_clause(token_filters.get("token_source"))
+    if source_clause:
+        query_conditions.append(source_clause)
 
 
 def build_token_usage_query_context(start_date, end_date, token_filters=None):

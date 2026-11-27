@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'rea
 import { clsx } from 'clsx';
 import { Plus, Search, X } from 'lucide-react';
 import {
-    DEFAULT_RANGE, RANGE_PRESETS, TOKEN_TYPES, dateRangeLabel, humanize, isDefaultFilters, looksLikeId,
+    DEFAULT_RANGE, RANGE_PRESETS, TOKEN_SOURCES, TOKEN_TYPES, dateRangeLabel, humanize, isDefaultFilters, looksLikeId,
     presetDates, rangeValidationError, shortId,
     type ActivityFilterLabels, type ActivityFilters, type ActivityPersonOption, type ActivityTypeOption,
     type ActivityWorkspaceOption, type WorkspaceType,
@@ -20,10 +20,11 @@ const SEARCH_DEBOUNCE_MS = 400;
 const FIELD = 'h-9 w-full rounded-lg border border-edge bg-surface-1 px-2.5 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none';
 const OPTION = 'flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-accent';
 
-type ExtraFilter = 'model' | 'token_type' | 'status';
+type ExtraFilter = 'model' | 'token_type' | 'token_source' | 'status';
 const EXTRA_FILTERS: { key: ExtraFilter; label: string }[] = [
     { key: 'model', label: 'Model' },
     { key: 'token_type', label: 'Token type' },
+    { key: 'token_source', label: 'Token source' },
     { key: 'status', label: 'Recorded status' },
 ];
 
@@ -314,6 +315,8 @@ export function ActivityFilterBar({ filters, labels, typeOptions, counts, search
     const setWorkspace = (type: WorkspaceType, id = '') => onChange({ ...filters, workspace_type: type, workspace_id: id });
     const extraValue = (key: ExtraFilter) => key === 'token_type'
         ? (TOKEN_TYPES.find((item) => item.value === filters.token_type)?.label ?? filters.token_type)
+        : key === 'token_source'
+            ? (TOKEN_SOURCES.find((item) => item.value === filters.token_source)?.label ?? filters.token_source)
         : key === 'status' && filters.status === 'failed' ? 'Failed or error' : filters[key];
 
     return (
@@ -441,14 +444,16 @@ export function ActivityFilterBar({ filters, labels, typeOptions, counts, search
                         {(close) => (
                             <TextFilterPopover
                                 title={item.label}
-                                label={item.key === 'model' ? 'Model or deployment name' : item.key === 'token_type' ? 'Token type' : 'Recorded status'}
+                                label={item.key === 'model' ? 'Model or deployment name' : item.key === 'token_type' ? 'Token type' : item.key === 'token_source' ? 'Token source' : 'Recorded status'}
                                 help={item.key === 'model' ? 'Matches token usage records for this exact model.'
                                     : item.key === 'token_type' ? 'Matches token usage records of this type.'
+                                    : item.key === 'token_source' ? 'Matches token usage from ordinary chat, from orchestration plans, or from workflows.'
                                         : 'Failed or error matches any status that mentions either word. Other values match exactly.'}
                                 initial={filters[item.key]}
                                 suggestions={item.key === 'token_type' ? [...TOKEN_TYPES]
+                                    : item.key === 'token_source' ? [...TOKEN_SOURCES]
                                     : item.key === 'status' ? [{ value: 'failed', label: 'Failed or error' }] : undefined}
-                                allowText={item.key !== 'token_type'}
+                                allowText={item.key !== 'token_type' && item.key !== 'token_source'}
                                 onApply={(value) => {
                                     applying.current = item.key;
                                     onChange({ ...filters, [item.key]: value });
