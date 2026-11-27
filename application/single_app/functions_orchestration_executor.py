@@ -113,6 +113,9 @@ from functions_orchestration_schema import (
 from functions_orchestration_checkpoints import (
     CheckpointError, restore_context, step_input_fingerprint,
 )
+from functions_orchestration_usage import (
+    begin_step_observations, end_step_observations, step_context_fill,
+)
 from functions_orchestration_timing import (
     OrchestrationExecutionControl, OrchestrationExecutionStopped,
     initial_execution_deadline, step_timeout_seconds,
@@ -535,6 +538,8 @@ class RunContext:
             if reference not in self.analysis_result_contexts:
                 self.analysis_result_contexts.append(deepcopy(reference))
         self.token_usage = {}
+        # Which model each request ran on, kept apart from the usage totals, which are counts.
+        self.model_observations = {}
         self.failures = []
         self.step_token_usage = {}
 
@@ -1526,6 +1531,7 @@ def _execute_dependency_plan(
     for index, step in enumerate(steps):
         step_id = step['step_id']
         context.step_token_usage = {}
+        context.step_model_usage = []
         started_at, completed_at, elapsed = None, None, 0
         reused = None
         result = None
@@ -1644,6 +1650,7 @@ def _execute_dependency_plan(
                 overrun = None
                 usage_before = deepcopy(context.token_usage)
                 prompt_usage_before = deepcopy(getattr(context, 'prompt_token_usage', {}) or {})
+                observations_before = begin_step_observations(getattr(context, 'model_observations', None))
 
                 def step_cancel():
                     nonlocal reason
@@ -1760,6 +1767,9 @@ def _execute_dependency_plan(
                         context.step_token_usage[key] = (
                             context.step_token_usage.get(key, 0) + value - prompt_usage_before.get(key, 0)
                         )
+                context.step_model_usage = end_step_observations(
+                    observations_before, getattr(context, 'model_observations', None),
+                )
                 elapsed = int((time.monotonic() - started) * 1000)
                 completed_at = None if result['status'] == STEP_STATUS_WAITING else _now_iso()
                 task = result.get('task_result')
@@ -1817,6 +1827,9 @@ def _execute_dependency_plan(
             and (result.get('task_result') is not None or bool(result.get('outputs')))
             and status in (STEP_STATUS_COMPLETED, STEP_STATUS_PARTIAL, STEP_STATUS_WAITING),
             'token_usage': {} if reused else deepcopy(context.step_token_usage),
+            'model_usage': [] if reused else deepcopy(getattr(context, 'step_model_usage', None) or []),
+            # The step's fullest single request against its model's limit, for the Plan tab.
+            'context_fill': None if reused else step_context_fill(getattr(context, 'step_model_usage', None)),
             'reused': bool(reused),
             'reused_from_run_id': (reused.get('provenance') or {}).get('run_id') if reused else None,
             'effects_uncertain': step['capability_id'] in _EFFECT_CAPABILITIES

@@ -30,6 +30,7 @@ from functions_control_center_activity import (
 )
 from functions_control_center_usage import UsageQueryLimitError, usage_csv, usage_report
 from functions_control_center_dashboard import (
+    TOKEN_SOURCE_OPTIONS,
     CONTROL_CENTER_ACTION_TYPE,
     DASHBOARD_INVALID_RANGE_ERROR,
     DashboardStores,
@@ -6950,7 +6951,8 @@ def register_route_backend_control_center(bp):
                         {'value': 'embedding', 'label': 'Embedding'},
                         {'value': 'chat', 'label': 'Chat'},
                         {'value': 'web_search', 'label': 'Web Search'}
-                    ]
+                    ],
+                    'token_sources': [dict(option) for option in TOKEN_SOURCE_OPTIONS],
                 }
             })
         except Exception as ex:

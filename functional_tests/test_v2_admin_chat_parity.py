@@ -51,6 +51,7 @@ CHAT_PANES = {
         "processing-thoughts-section",
         "chat-file-uploads-section",
         "conversation-contents-drawer-section",
+        "context-usage-section",
         "workspace-scope-lock-section",
         "conversation-history-section",
         "default-system-prompt-section",

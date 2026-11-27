@@ -20,7 +20,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
-| v0.261.489 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.490 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.488 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.487 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.486 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -369,7 +369,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 ## Latest release notes
 
-### **(v0.261.489)**
+### **(v0.261.490)**
 
 #### Bug Fixes
 

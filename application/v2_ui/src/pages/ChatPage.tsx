@@ -17,6 +17,8 @@ import {
     Users,
 } from 'lucide-react';
 import { useChatStore, type DrawerMode } from '../stores/chatStore';
+import { ContextRing, useContextUsage } from '../components/chat/ContextUsage';
+import { describeContextUsage } from '../lib/contextUsage';
 import { useCollaborationStore } from '../stores/collaborationStore';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import {
@@ -413,6 +415,8 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
         [metadata, generatedFiles, generatedDocuments],
     );
 
+    const contextUsage = useContextUsage();
+
     const toggle = (mode: Exclude<DrawerMode, null>) =>
         setDrawerMode(drawerMode === mode ? null : mode);
 
@@ -576,6 +580,24 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
                                     aria-hidden="true"
                                 />
                             ) : null}
+                        </button>
+                    )}
+
+                    {contextUsage && (
+                        <button
+                            type="button"
+                            onClick={() => toggle('context')}
+                            aria-pressed={drawerMode === 'context'}
+                            title={describeContextUsage(contextUsage)}
+                            aria-label={`Open context usage. ${describeContextUsage(contextUsage)}`}
+                            className={clsx(
+                                'rounded-lg p-2 transition-colors',
+                                drawerMode === 'context'
+                                    ? 'bg-accent-soft text-accent'
+                                    : 'text-text-3 hover:bg-surface-2 hover:text-text-1',
+                            )}
+                        >
+                            <ContextRing percent={contextUsage.percent} level={contextUsage.level} size={17} />
                         </button>
                     )}
                     {tour.action && <HeaderActionControl action={tour.action} inPopover={mobile} />}

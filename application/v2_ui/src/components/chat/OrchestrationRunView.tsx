@@ -76,6 +76,7 @@ import {
     workflowResultsSelection,
 } from '../../lib/orchestrationWorkflowResults';
 import { describeHandoffBlueprint, WORKFLOW_HANDOFF_CAPABILITY } from '../../lib/workflowHandoffs';
+import { describeStepContextFill, type StepContextFill } from '../../lib/contextUsage';
 
 const PREVIEW_EDITS: PlanEdits = { disabled_step_ids: [], removed_document_ids: {} };
 const PREVIEW_RUNTIME: StepRuntimeMap = {};
@@ -114,6 +115,30 @@ const UNFINISHED_STEP_SUMMARY = 'The run ended before this step finished.';
 const UNFINISHED_STEP_TONE = 'bg-surface-3 text-text-3';
 
 /** A step argument key/value the run will use, minus the document fields shown as chips. */
+/**
+ * How full a step's largest request made its model's window.
+ *
+ * A plan has no single context window: each step sends its own requests, possibly to a
+ * different model. This is the one figure that says whether a step ran close to its limit.
+ */
+function StepContextFillLine({ fill }: { fill?: StepContextFill }) {
+    if (!fill) {
+        return null;
+    }
+    return (
+        <p
+            className={clsx(
+                'mt-1 text-xs',
+                fill.level === 'full' ? 'text-danger' : fill.level === 'warn' ? 'text-warn' : 'text-text-3',
+            )}
+            data-testid="orchestration-step-context-fill"
+            data-context-level={fill.level}
+        >
+            {describeStepContextFill(fill)}
+        </p>
+    );
+}
+
 function readableArguments(step: OrchestrationStep): Array<[string, string]> {
     // Spreadsheet merge and inspection settings are put in words, without restating defaults.
     const tabular = tabularArgumentEntries(step.capability_id, step.arguments);
@@ -478,6 +503,8 @@ export function OrchestrationRunView({
                                 {' — '}{stepRuntime[step.step_id]?.model_binding?.reason || step.model_binding.reason}
                             </p>
                         ) : null}
+
+                        <StepContextFillLine fill={stepRuntime[step.step_id]?.context_fill} />
 
                         {summary ? (
                             <p className="mt-1 text-xs text-text-2">{summary}</p>
