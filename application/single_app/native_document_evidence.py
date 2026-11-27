@@ -8,7 +8,11 @@ from collections.abc import Mapping
 
 NATIVE_EVIDENCE_SCHEMA_VERSION = "1.0"
 NATIVE_FIELD_STATES = frozenset({"absent", "present_empty", "present_value", "inaccessible"})
-NATIVE_REPORT_COMMENT_FORMATS = frozenset({"docx", "docm", "dotx", "xlsx", "xlsm", "xls"})
+NATIVE_WORD_COMMENT_FORMATS = frozenset({"docx", "docm", "dotx"})
+NATIVE_REPORT_COMMENT_FORMATS = NATIVE_WORD_COMMENT_FORMATS | frozenset({"xlsx", "xlsm", "xls"})
+# These page or filter a workbook, PDF or presentation inventory. Word comments are returned
+# whole, so a request for them that also sets one of these is refused, not silently narrowed.
+NATIVE_WORD_COMMENT_REFUSED_ARGUMENTS = ("native_section", "native_cursor", "sheet_name", "cell_range")
 NATIVE_INSPECTION_ERROR_MESSAGES = {
     "native_section_invalid": "The requested native inspection section is not supported for this file.",
     "native_page_size_invalid": "The native inspection page size must be between 1 and 200.",
@@ -25,16 +29,24 @@ NATIVE_INSPECTION_ERROR_MESSAGES = {
         "Use accessibility, style or issues for supported native metadata and a content reader "
         "for document or presentation reviewer context. This does not mean the source is missing."
     ),
+    "native_word_comments_arguments_unsupported": (
+        "Word comments are returned whole in word_inspection. They do not accept native_section, "
+        "native_cursor, sheet_name or cell_range, which page or filter Excel, PDF and PowerPoint "
+        "inventories. Request sections=comments without those arguments. "
+        "This does not mean the source is missing."
+    ),
 }
 
 
 class NativeInspectionRequestError(ValueError):
     """A stable request diagnostic, separate from source absence or parsing failure."""
 
-    def __init__(self, code, *, field, rule=None):
+    def __init__(self, code, *, field, rule=None, refused_arguments=()):
         self.code = code
         self.argument_field = field
         self.validation_rule = rule
+        # The supplied arguments this request may not carry, when the refusal is about them.
+        self.refused_arguments = tuple(refused_arguments)
         self.public_message = NATIVE_INSPECTION_ERROR_MESSAGES[code]
         super().__init__(self.public_message)
 
@@ -46,16 +58,37 @@ def native_report_sections(source_format):
     return sections
 
 
-def validate_native_report_sections(source_format, sections):
+def validate_native_report_request(
+    source_format, sections, *, native_section=None, native_cursor=None, sheet_name=None, cell_range=None,
+):
+    """Refuse a report request its source format cannot serve, before any source is read.
+
+    The arguments are the caller's own: ``native_section`` is None when it was not supplied,
+    which is the same request as its default, ``comments``.
+    """
     requested = (
         [value.strip().lower() for value in sections.split(",")]
         if isinstance(sections, str) else [str(value or "").strip().lower() for value in sections or []]
     )
-    if "comments" in requested and source_format not in NATIVE_REPORT_COMMENT_FORMATS:
+    if "comments" not in requested:
+        return
+    if source_format not in NATIVE_REPORT_COMMENT_FORMATS:
         raise NativeInspectionRequestError(
             "native_comments_format_unsupported", field="sections",
             rule="native_comments_format_unsupported",
         )
+    if source_format in NATIVE_WORD_COMMENT_FORMATS:
+        supplied = {
+            "native_section": native_section is not None and native_section != "comments",
+            "native_cursor": bool(native_cursor), "sheet_name": bool(sheet_name),
+            "cell_range": bool(cell_range),
+        }
+        refused = [name for name in NATIVE_WORD_COMMENT_REFUSED_ARGUMENTS if supplied[name]]
+        if refused:
+            raise NativeInspectionRequestError(
+                "native_word_comments_arguments_unsupported", field=refused[0],
+                rule="native_word_comments_arguments_unsupported", refused_arguments=refused,
+            )
 
 
 def inaccessible_field(reason):
