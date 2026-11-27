@@ -61,12 +61,44 @@ def build_workflow_chat_seeds(workflow, configuration):
     required = list(configuration.get("required_capabilities") or [])
     if action.get("type") == "search" and "document_search" not in required:
         required.append("document_search")
-    model = {
+    binding_summary = workflow.get("model_binding_summary")
+    binding_summary = binding_summary if isinstance(binding_summary, dict) else {}
+    model_values = {
         target: workflow[source] for source, target in (
             ("model_endpoint_id", "model_endpoint_id"), ("model_id", "model_id"),
-            ("model_provider", "model_provider"),
+            ("model_provider", "model_provider"), ("model_scope_type", "model_scope_type"),
+            ("model_scope_id", "model_scope_id"),
         ) if workflow.get(source)
     }
+    uses_app_default = (
+        binding_summary.get("mode") == "default_selection"
+        and not workflow.get("model_endpoint_id")
+        and not workflow.get("model_id")
+    )
+    if uses_app_default:
+        model_values = {}
+    elif binding_summary.get("mode") != "default_selection":
+        model_values.setdefault("model_endpoint_id", binding_summary.get("endpoint_id") or "")
+        model_values.setdefault("model_id", binding_summary.get("model_id") or "")
+        model_values.setdefault("model_provider", binding_summary.get("provider") or "")
+    if model_values.get("model_endpoint_id") or model_values.get("model_id"):
+        model_values.setdefault(
+            "model_scope_type",
+            binding_summary.get("scope_type")
+            or binding_summary.get("scope")
+            or ("global" if binding_summary.get("mode") == "default_selection" else ""),
+        )
+        model_values.setdefault(
+            "model_scope_id",
+            binding_summary.get("scope_id")
+            or (
+                "global" if model_values.get("model_scope_type") == "global"
+                else group_id if model_values.get("model_scope_type") == "group"
+                else workflow.get("user_id") if model_values.get("model_scope_type") in {"user", "personal"}
+                else ""
+            ),
+        )
+    model = {key: value for key, value in model_values.items() if value}
     return {
         "document_ids": list(action.get("document_ids") or []),
         "document_labels": {},
@@ -79,6 +111,7 @@ def build_workflow_chat_seeds(workflow, configuration):
         ),
         "agent": deepcopy(selected),
         "model": model or None,
+        "apply_model_persona": workflow.get("runner_type") != "agent",
         "prompt": None,
         "tags": list(action.get("tags") or []),
         "document_filter_mode": action.get("document_filter_mode") or "intersection",
@@ -130,6 +163,30 @@ def _request_digest(workflow, configuration):
         "seeds": build_workflow_chat_seeds(workflow, configuration),
     }
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _legacy_request_digest(workflow, configuration):
+    """Match children admitted before model scope/persona identity entered the digest."""
+    seeds = build_workflow_chat_seeds(workflow, configuration)
+    seeds.pop("apply_model_persona", None)
+    legacy_model = {
+        target: workflow[source]
+        for source, target in (
+            ("model_endpoint_id", "model_endpoint_id"),
+            ("model_id", "model_id"),
+            ("model_provider", "model_provider"),
+        )
+        if workflow.get(source)
+    }
+    seeds["model"] = legacy_model or None
+    value = {
+        "prompt": workflow.get("task_prompt"),
+        "configuration": configuration,
+        "seeds": seeds,
+    }
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _binding(workflow, run_id, task_id, digest, execution_id):
@@ -218,6 +275,13 @@ def execute_workflow_chat_task(
     child_id = child_execution_id(run_id, execution_id)
     digest = _request_digest(workflow, configuration)
     binding = _binding(workflow, run_id, task_id, digest, execution_id)
+    legacy_binding = _binding(
+        workflow,
+        run_id,
+        task_id,
+        _legacy_request_digest(workflow, configuration),
+        execution_id,
+    )
     runtime = runtime or _application_runtime(workflow, settings, conversation_id, run_id, check_cancelled)
     runtime.authorize()
     with workflow_chat_identity(workflow, conversation_id):
@@ -230,7 +294,8 @@ def execute_workflow_chat_task(
             record = runtime.create(plan, turn, binding)
         if (
             record.get("id") != child_id or record.get("user_id") != workflow["user_id"]
-            or record.get("conversation_id") != conversation_id or record.get("workflow_execution") != binding
+            or record.get("conversation_id") != conversation_id
+            or record.get("workflow_execution") not in (binding, legacy_binding)
         ):
             raise WorkflowChatExecutionError("The saved chat execution does not match this task.")
         deadline = clock() + 600

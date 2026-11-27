@@ -4,7 +4,10 @@
 import type { ConnectionModel, ModelConnection } from './modelConnections';
 import { normalizeInferenceConnection, usesMaiChatCompletions, usesResponsesApi } from './modelInference';
 
-export type CustomApiType = 'openai' | 'azure_openai' | 'anthropic' | 'gemini';
+export type CustomApiType = 'openai' | 'azure_openai' | 'azure_openai_v1' | 'anthropic' | 'gemini';
+export type ModelInferenceOperation = 'chat_completions' | 'responses' | 'messages';
+export type ModelRouteMode = 'auto' | 'api_base' | 'full' | 'exact';
+export type ModelPathOrder = 'connection_first' | 'model_first';
 
 export interface CustomApiTypeDescriptor {
     value: CustomApiType;
@@ -19,6 +22,9 @@ export interface CustomApiTypeDescriptor {
     defaultApiKeyHeader: string;
     defaultApiKeyPrefix: string;
     description: string;
+    defaultInferenceApi?: ModelInferenceOperation;
+    supportedInferenceApis?: ModelInferenceOperation[];
+    requestApiOptions?: { value: string; label: string }[];
 }
 
 export interface CustomNetworkPolicy {
@@ -43,22 +49,35 @@ function text(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
-export function connectionUsesModelName(connection: ModelConnection): boolean {
-    return connection.provider === 'custom' && ['openai', 'anthropic', 'gemini'].includes(text(connection.api_type));
+export function usesExplicitModelRouting(connection: ModelConnection): boolean {
+    return connection.routing_schema_version === 2;
+}
+
+export function modelApiType(connection: ModelConnection, model?: ConnectionModel): CustomApiType | undefined {
+    return usesExplicitModelRouting(connection) ? model?.api_type : connection.api_type;
+}
+
+export function connectionUsesModelName(connection: ModelConnection, model?: ConnectionModel): boolean {
+    return (connection.provider === 'custom' || usesExplicitModelRouting(connection))
+        && ['openai', 'azure_openai_v1', 'anthropic', 'gemini'].includes(text(modelApiType(connection, model)));
 }
 
 export function connectionRequestModel(connection: ModelConnection, model: ConnectionModel): string {
-    return connectionUsesModelName(connection)
+    return connectionUsesModelName(connection, model)
         ? text(model.modelName) || text(model.name)
         : text(model.deploymentName) || text(model.deployment);
 }
 
-export function validateCustomConnection(connection: ModelConnection): Record<string, string> {
+export function validateCustomConnection(connection: ModelConnection, requireDiscovery = false): Record<string, string> {
     const errors: Record<string, string> = {};
     const auth = connection.auth ?? {};
+    const explicit = usesExplicitModelRouting(connection);
     if (!text(connection.name)) errors.name = 'Give the connection a name.';
-    if (!['openai', 'azure_openai', 'anthropic', 'gemini'].includes(text(connection.api_type))) {
+    if (!explicit && !['openai', 'azure_openai', 'anthropic', 'gemini'].includes(text(connection.api_type))) {
         errors.api_type = 'Choose a supported Custom API type.';
+    }
+    if (explicit && requireDiscovery) {
+        errors.discovery = 'Add models manually for per-model routing.';
     }
     try {
         const endpoint = new URL(text(connection.connection?.endpoint));
@@ -68,13 +87,13 @@ export function validateCustomConnection(connection: ModelConnection): Record<st
     } catch {
         errors.endpoint = 'Enter the full Custom endpoint URL.';
     }
-    if (usesResponsesApi(connection.connection) && connection.api_type !== 'openai') {
+    if (!explicit && usesResponsesApi(connection.connection) && connection.api_type !== 'openai') {
         errors.use_responses_api = 'Responses requires the OpenAI API contract.';
     }
-    if (usesResponsesApi(connection.connection) && usesMaiChatCompletions(connection.connection?.endpoint)) {
+    if (!explicit && usesResponsesApi(connection.connection) && usesMaiChatCompletions(connection.connection?.endpoint)) {
         errors.use_responses_api = 'Microsoft MAI uses Chat Completions. Turn off Use Responses API.';
     }
-    if (connection.api_type === 'azure_openai' && !text(connection.connection?.api_version)) {
+    if (!explicit && connection.api_type === 'azure_openai' && !text(connection.connection?.api_version)) {
         errors.api_version = 'Custom Azure OpenAI requires an explicit API version.';
     }
     if (!CUSTOM_AUTH_TYPE_OPTIONS.some((option) => option.value === auth.type)) {
@@ -94,9 +113,17 @@ export function validateCustomConnection(connection: ModelConnection): Record<st
     const models = connection.models ?? [];
     const identifiers = models.map((model) => connectionRequestModel(connection, model).toLowerCase());
     if (!models.length || identifiers.some((identifier) => !identifier)) {
-        errors.models = `Add at least one model with a ${connectionUsesModelName(connection) ? 'model name' : 'deployment name'}.`;
+        errors.models = explicit ? 'Give each model a request identifier.' :
+            `Add at least one model with a ${connectionUsesModelName(connection) ? 'model name' : 'deployment name'}.`;
     } else if (new Set(identifiers).size !== identifiers.length) {
         errors.models = 'Request model identifiers must be unique.';
+    }
+    if (explicit) {
+        for (const [index, model] of models.entries()) {
+            if (!model.api_type || !model.inference_api || (model.api_type === 'azure_openai' && !text(model.api_version))) {
+                errors[`model_${index}_routing`] = 'Choose a request API and fill in its required version.';
+            }
+        }
     }
     if (text(connection.connection?.client_key_path) && !text(connection.connection?.client_cert_path)) {
         errors.client_cert_path = 'A client key requires a client certificate.';
@@ -106,15 +133,18 @@ export function validateCustomConnection(connection: ModelConnection): Record<st
 
 export function buildCustomConnectionPayload(connection: ModelConnection): Record<string, unknown> {
     const apiType = text(connection.api_type);
+    const explicit = usesExplicitModelRouting(connection);
     const connectionBlock: Record<string, unknown> = {
-        ...normalizeInferenceConnection(connection.connection ?? {}),
-        url_mode: text(connection.connection?.url_mode) || 'auto',
+        ...(explicit ? connection.connection : normalizeInferenceConnection(connection.connection ?? {})),
     };
-    delete connectionBlock.openai_api_version;
-    delete connectionBlock.project_api_version;
-    delete connectionBlock.project_name;
-    if (apiType !== 'azure_openai') delete connectionBlock.api_version;
-    if (apiType !== 'anthropic') delete connectionBlock.anthropic_version;
+    if (!explicit) {
+        connectionBlock.url_mode = text(connection.connection?.url_mode) || 'auto';
+        delete connectionBlock.openai_api_version;
+        delete connectionBlock.project_api_version;
+        delete connectionBlock.project_name;
+        if (apiType !== 'azure_openai') delete connectionBlock.api_version;
+        if (apiType !== 'anthropic') delete connectionBlock.anthropic_version;
+    }
     const sourceAuth = connection.auth ?? {};
     const auth: Record<string, unknown> = { type: sourceAuth.type || 'api_key' };
     if (auth.type === 'api_key') {
@@ -133,8 +163,13 @@ export function buildCustomConnectionPayload(connection: ModelConnection): Recor
         ...(connection.id ? { id: connection.id } : {}),
         name: text(connection.name),
         provider: 'custom',
-        api_type: apiType,
-        enabled: connection.enabled !== false,
+        ...(explicit ? {
+            routing_schema_version: 2,
+            routing_path_order: connection.routing_path_order || 'model_first',
+            ...(apiType ? { api_type: apiType } : {}),
+        } : { api_type: apiType }),
+        ...(connection.profile ? { profile: connection.profile } : {}),
+        enabled: (!explicit || Boolean(connection.id)) && connection.enabled !== false,
         connection: connectionBlock,
         auth,
         management: {},

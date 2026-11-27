@@ -272,6 +272,9 @@
                         <h5 id="current-conversation-title" class="mb-0 flex-grow-1 text-truncate">
                         </h5>
                         <div class="chat-shell-title-actions ms-2">
+                            <button id="create-chat-link-btn" class="btn btn-sm chat-shell-icon-button" type="button" title="Create a shareable chat link" aria-label="Create a shareable chat link">
+                                <i class="bi bi-link-45deg" aria-hidden="true"></i>
+                            </button>
                             {% if settings.allow_user_workflows %}
                             <a id="workflow-activity-btn" class="btn btn-sm chat-shell-icon-button d-none" href="#" target="_blank" rel="noopener" title="Open workflow activity view" aria-label="Open workflow activity view">
                                 <i class="bi bi-diagram-3"></i>
@@ -322,6 +325,11 @@
             </div>
 
             <div id="chat-messages-container" class="position-relative flex-grow-1" style="overflow-y: auto;">
+                <section id="chat-link-launch-error" class="alert alert-danger m-3 d-none" role="alert" aria-live="assertive">
+                    <h6 class="alert-heading">Chat link unavailable</h6>
+                    <p id="chat-link-launch-error-message" class="mb-3"></p>
+                    <button id="chat-link-start-normal-btn" type="button" class="btn btn-outline-danger btn-sm">Start a normal chat</button>
+                </section>
                 <section id="chat-m365-pending-actions" class="px-3 pt-3 d-none" aria-label="Conversation outgoing Microsoft 365 actions"></section>
                 <div id="chatbox" class="flex-grow-1 p-3">
                     <!-- Chat messages will be dynamically loaded here -->
@@ -1562,6 +1570,97 @@
     </div>
 </div>
 
+<!-- Create, copy, and revoke compact chat launch links -->
+<div class="modal fade" id="chat-link-modal" tabindex="-1" aria-labelledby="chat-link-modal-title" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="chat-link-modal-title">
+                    <i class="bi bi-link-45deg me-2" aria-hidden="true"></i>Create chat link
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted">
+                    Share a compact URL that opens this chat setup for users who already have access.
+                    The link itself does not grant permissions.
+                </p>
+                <div class="card border-0 bg-body-tertiary mb-3">
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <div class="small text-muted">Runner</div>
+                                <div id="chat-link-summary-runner" class="fw-semibold">Not selected</div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="small text-muted">Workspace</div>
+                                <div id="chat-link-summary-workspace" class="fw-semibold">Not selected</div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="small text-muted">Documents</div>
+                                <div id="chat-link-summary-documents" class="fw-semibold">0</div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="small text-muted">Reasoning</div>
+                                <div id="chat-link-summary-reasoning" class="fw-semibold">Not selected</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label for="chat-link-lifetime" class="form-label">Expires after</label>
+                    <select id="chat-link-lifetime" class="form-select">
+                        <option value="7">7 days</option>
+                        <option value="30">30 days</option>
+                        <option value="90" selected>90 days</option>
+                        <option value="365">1 year</option>
+                        <option value="never">Never expires</option>
+                    </select>
+                </div>
+                <button id="chat-link-create-btn" type="button" class="btn btn-primary">
+                    <i class="bi bi-link-45deg me-1" aria-hidden="true"></i>Create link
+                </button>
+                <div id="chat-link-result" class="mt-3 d-none">
+                    <label for="chat-link-created-url" class="form-label">Shareable link</label>
+                    <div class="input-group">
+                        <input id="chat-link-created-url" class="form-control font-monospace" readonly />
+                        <button id="chat-link-copy-btn" type="button" class="btn btn-outline-secondary">Copy</button>
+                    </div>
+                </div>
+                <div id="chat-link-dialog-error" class="alert alert-danger mt-3 d-none" role="alert"></div>
+                <hr />
+                <section aria-labelledby="chat-link-own-heading">
+                    <h6 id="chat-link-own-heading">Your active links</h6>
+                    <p id="chat-link-own-empty" class="small text-muted d-none">You have not created an active link.</p>
+                    <ul id="chat-link-own-list" class="list-group"></ul>
+                    <button id="chat-link-load-more" type="button" class="btn btn-link btn-sm mt-2 d-none">Load more</button>
+                </section>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Done</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="chat-link-revoke-modal" tabindex="-1" aria-labelledby="chat-link-revoke-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 id="chat-link-revoke-title" class="modal-title">Revoke chat link?</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                The link will stop working immediately. Existing conversations are not changed.
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button id="chat-link-revoke-confirm-btn" type="button" class="btn btn-danger">Revoke link</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -1669,6 +1768,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-reasoning.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-retry.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-export.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-links.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>

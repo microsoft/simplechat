@@ -15,11 +15,14 @@ Only the seams that keep a pure-logic module from importing are stubbed. A test
 that needs real behaviour from one of these dependencies should not be using
 this helper.
 
-Version: 0.261.447
+Version: 0.261.485
 Workflow diagnostic import surface updated in: 0.261.140
 Workflow creation activity stub added in: 0.261.207
+Managed CA trust resolver added in: 0.261.485
 """
 
+import ast
+import functools
 import importlib
 import sys
 import types
@@ -31,6 +34,35 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
 
 _MISSING = object()
+
+
+@functools.lru_cache(maxsize=1)
+def _load_real_ca_trust_resolver():
+    # Deferred so the CA module loads only when a test reaches Custom transport trust.
+    from model_endpoint_ca_bundles import ManagedCABundle, normalize_ca_bundle_reference
+
+    source_path = APP_ROOT / "functions_settings.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8-sig"))
+    node = next(
+        item for item in tree.body
+        if isinstance(item, ast.FunctionDef) and item.name == "resolve_model_endpoint_ca_trust"
+    )
+
+    def registry_unavailable(_settings):
+        raise AssertionError("Managed CA bundles require the real functions_settings registry.")
+
+    namespace = {
+        "ManagedCABundle": ManagedCABundle,
+        "normalize_ca_bundle_reference": normalize_ca_bundle_reference,
+        "get_model_endpoint_ca_bundle_registry": registry_unavailable,
+    }
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(source_path), "exec"), namespace)
+    return namespace["resolve_model_endpoint_ca_trust"]
+
+
+def resolve_model_endpoint_ca_trust(endpoint, settings, legacy_path):
+    """Run the real inherited/public trust resolver; managed bundles fail loudly here."""
+    return _load_real_ca_trust_resolver()(endpoint, settings, legacy_path)
 
 
 def _build_stub_modules():
@@ -62,6 +94,8 @@ def _build_stub_modules():
     settings.get_user_settings = lambda user_id: {"id": user_id, "settings": {}}
     settings.update_user_settings = lambda user_id, payload: True
     settings.sanitize_settings_for_user = lambda values: dict(values or {})
+    # Custom transport runtimes import this lazily when they build a guarded client.
+    settings.resolve_model_endpoint_ca_trust = resolve_model_endpoint_ca_trust
 
     return {
         "functions_activity_logging": activity_logging,

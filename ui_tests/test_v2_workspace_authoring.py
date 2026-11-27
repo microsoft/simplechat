@@ -1,9 +1,10 @@
 # test_v2_workspace_authoring.py
 """
 Real-SPA browser workflows for native V2 My Workspace Agents and Actions.
-Version: 0.261.354
+Version: 0.261.438
 Implemented in: 0.261.096
 Contextual action return labels extended in: 0.261.333
+Native model menu contrast regression added in: 0.261.438
 
 Run against a fresh production V2 build with the existing pytest-playwright
 runner. The imported connect_options fixture supports an authenticated Azure
@@ -27,6 +28,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from playwright.sync_api import expect
 
+from ui_tests.fixtures.color_contrast import assert_readable_native_menu
 from ui_tests.fixtures.workspace_authoring import (
     ACTION_ID,
     AGENT_ID,
@@ -704,6 +706,21 @@ def test_unsafe_action_return_path_stays_inside_workspace(workspace_ui):
     ui.open("/workspace/actions/new?returnTo=https%3A%2F%2Fexternal.example.test%2Fsteal")
     page.get_by_role("button", name="Cancel", exact=True).click()
     expect(page).to_have_url(f"{ORIGIN}/v2/workspace/actions")
+    assert not ui.editor_writes
+
+
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+def test_personal_agent_native_model_menu_is_readable(workspace_ui, theme, width, height):
+    ui, page = workspace_ui, workspace_ui.page
+    ui.open("/workspace/agents", theme=theme, width=width, height=height)
+    page.get_by_role("button", name="New agent", exact=True).click()
+    expect(page).to_have_url(f"{ORIGIN}/v2/workspace/agents/new")
+    editor_section(page, "Model & connection")
+    model = page.get_by_label("Model", exact=True)
+    expect(model.get_by_role("option", name="Workspace GPT · Workspace model endpoint", exact=True)).to_have_count(1)
+    assert_readable_native_menu(model)
+    page.get_by_role("button", name="Cancel", exact=True).click()
+    expect(page).to_have_url(f"{ORIGIN}/v2/workspace/agents")
     assert not ui.editor_writes
 
 

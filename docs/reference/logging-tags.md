@@ -340,7 +340,10 @@ See `docs/explanation/features/V2_INTERFACE_SELECTION_PREREQUISITES.md`.
 - `[EXTRACTION_ENGINE]`
 - `[FACT_MEMORY_AUTOSAVE]`
 - `[GENERATED_FILE_APPROVALS]`
+- `[GENAI_MIL]`
+- `[MODEL_CA_BUNDLES]`
 - `[MIXED_SOURCE_ANALYZE]`
+- `[MICROSOFT_DECISION]`
 - `[OFFICE_EMBEDDED_IMAGES]`
 - `[ONENOTE_INGESTION]`
 - `[RATE_LIMIT]`
@@ -384,6 +387,7 @@ See `docs/explanation/features/V2_INTERFACE_SELECTION_PREREQUISITES.md`.
 - `[CHAT_BOOTSTRAP_CACHE]`
 - `[CHAT_CONTENT_CHECKS]`
 - `[CHAT_EXECUTION]`
+- `[CHAT_LINKS]`
 - `[CHAT_DOCUMENT_ACTION]`
 - `[CHAT_DOCUMENT_ANALYSIS]`
 - `[CHAT_TABULAR_SK]`
@@ -868,7 +872,7 @@ findings or unavailable required checking still block delivery.
 | `sc_report_repair_count` | Repairs already spent when the assessment failed: zero initially, one on a failed repaired report. Separate from plan and answer corrections. |
 | `sc_evidence_key_count` | Number of top-level evidence labels supplied to the checker, without the labels or source bodies. |
 | `sc_evidence_ref_count`, `sc_evidence_refs_list` | Size/type of the failing reference list when validation can report it safely, without bad references. |
-| `sc_input_size`, `sc_input_budget` | Since **0.261.483**: the estimated size of a request that did not fit and the input budget it was held to, in the units of `sc_size_estimator`. |
+| `sc_input_size`, `sc_input_budget` | Since **0.261.490**: the estimated size of a request that did not fit and the input budget it was held to, in the units of `sc_size_estimator`. |
 | `sc_context_window`, `sc_effective_context_window`, `sc_max_input`, `sc_max_output` | The model limits the budget was computed from, when known. |
 | `sc_output_reserve`, `sc_safety_margin` | The response length and safety allowance subtracted from the limit. |
 | `sc_size_estimator` | How the size was counted: a tokenizer name, `cl100k_base_estimate`, or `utf8_upper_bound` when the model has no known tokenizer and UTF-8 bytes were counted as an upper bound. |
@@ -881,7 +885,7 @@ with a present flag. The same fields are on
 `[ORCHESTRATION_EXECUTOR] Content preparation could not complete.` when an answer step's own
 input does not fit (`result_input_too_large`).
 
-Since **0.261.483**, `sc_validation_code` on
+Since **0.261.490**, `sc_validation_code` on
 `[ORCHESTRATION_ADAPTERS] Document action read checkpoint.` can also be
 `native_word_comments_arguments_unsupported`: Word comments were requested together with a
 paging or filter argument, the request was returned to the action's model once, and no source

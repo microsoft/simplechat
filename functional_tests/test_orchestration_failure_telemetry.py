@@ -1,7 +1,7 @@
 # test_orchestration_failure_telemetry.py
 """Specific orchestration failure rules reach telemetry without private plan text.
 
-Version: 0.261.483
+Version: 0.261.490
 Implemented in: 0.261.140
 Step, capability, format, and authority-reason codes covered in: 0.261.141
 Partial-input producer capability and step hash fields covered in: 0.261.191
@@ -10,7 +10,7 @@ Bounded, non-regex application-version validation implemented in: 0.261.342
 Two shared planning corrections covered in: 0.261.422
 Recovery guard detail through the Warning logger covered in: 0.261.444
 Diagnostic rule and code fields added in 0.261.478 reaching telemetry covered in: 0.261.480
-Sizes of a request that did not fit reaching telemetry covered in: 0.261.483
+Sizes of a request that did not fit reaching telemetry covered in: 0.261.490
 
 Uses real planner/validation/logging modules with offline provider replies.
 The synthetic invalid proposals test diagnostics, not the unknown historical
@@ -193,7 +193,7 @@ def test_the_rule_and_code_fields_added_for_troubleshooting_reach_telemetry(harn
 
 
 def test_the_sizes_of_a_request_that_did_not_fit_reach_telemetry(harness):
-    """0.261.483: from 0.261.478 these were logged under names containing "token".
+    """0.261.490: from 0.261.478 these were logged under names containing "token".
 
     The filter replaces any such value with a present flag, as it would a credential, so three
     runs reported that a check's input did not fit without saying by how much.

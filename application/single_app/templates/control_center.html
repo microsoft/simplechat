@@ -695,6 +695,14 @@
                 <i class="bi bi-folder2-open me-2"></i>Public Workspaces
             </button>
         </li>
+        {% if has_control_center_admin %}
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="chat-links-tab" data-bs-toggle="tab" data-bs-target="#chat-links"
+                type="button" role="tab" aria-controls="chat-links" aria-selected="false">
+                <i class="bi bi-link-45deg me-2"></i>Chat Links
+            </button>
+        </li>
+        {% endif %}
         <li class="nav-item" role="presentation">
             <button class="nav-link" id="activity-logs-tab" data-bs-toggle="tab" data-bs-target="#activity-logs"
                 type="button" role="tab" aria-controls="activity-logs" aria-selected="false">
@@ -1324,6 +1332,63 @@
                             </div>
                         </div>
                         
+                        {% if has_control_center_admin %}
+                        <!-- Chat Links Tab -->
+                        <div class="tab-pane fade" id="chat-links" role="tabpanel">
+                            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                                <div>
+                                    <h5 class="mb-1"><i class="bi bi-link-45deg me-2"></i>Chat Links</h5>
+                                    <p class="text-muted mb-0">Review active links across users and revoke links that should no longer launch.</p>
+                                </div>
+                                <button id="control-center-chat-links-refresh" type="button" class="btn btn-outline-primary btn-sm">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                                </button>
+                            </div>
+                            <div id="control-center-chat-links-error" class="alert alert-danger d-none" role="alert"></div>
+                            <div class="table-responsive border rounded">
+                                <table class="table table-hover align-middle mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Created by</th>
+                                            <th>Runner</th>
+                                            <th>Workspace</th>
+                                            <th>Sources</th>
+                                            <th>Reasoning</th>
+                                            <th>Lifetime</th>
+                                            <th>Created</th>
+                                            <th class="text-end">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="control-center-chat-links-body"></tbody>
+                                </table>
+                            </div>
+                            <div id="control-center-chat-links-empty" class="text-center text-muted py-4 d-none">
+                                There are no active chat links.
+                            </div>
+                            <button id="control-center-chat-links-more" type="button" class="btn btn-link btn-sm mt-2 d-none">Load more</button>
+                        </div>
+
+                        <div class="modal fade" id="control-center-chat-link-revoke-modal" tabindex="-1"
+                             aria-labelledby="control-center-chat-link-revoke-title" aria-hidden="true">
+                            <div class="modal-dialog modal-dialog-centered">
+                                <div class="modal-content">
+                                    <div class="modal-header">
+                                        <h5 class="modal-title" id="control-center-chat-link-revoke-title">Revoke chat link?</h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        The link will stop working immediately for its creator and all recipients.
+                                        Existing conversations are not changed.
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                        <button id="control-center-chat-link-revoke-confirm" type="button" class="btn btn-danger">Revoke link</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
                         <!-- Activity Logs Tab -->
                         <div class="tab-pane fade" id="activity-logs" role="tabpanel">
                             <div class="d-flex justify-content-between align-items-center mb-4">
@@ -1345,6 +1410,8 @@
                                     <select class="form-select" id="activityTypeFilterSelect">
                                         <option value="all">All Activity Types</option>
                                         <option value="user_login">User Login</option>
+                                        <option value="terms_of_use_accepted">Terms of Use Accepted</option>
+                                        <option value="terms_of_use_declined">Terms of Use Declined</option>
                                         <option value="chat_activity">Chat Activity</option>
                                         <option value="conversation_creation">Conversation Creation</option>
                                         <option value="conversation_deletion">Conversation Deletion</option>
@@ -3005,6 +3072,7 @@ window.hasControlCenterAdmin = JSON.parse('{{ has_control_center_admin|tojson }}
 </script>
 <script src="{{ url_for('static', filename='js/validation-utils.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/control-center.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/control-center-chat-links.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/control-center-usage.js') }}"></script>
 <script src="{{ url_for('static', filename='js/control-center-sidebar-nav.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/workspace-manager.js') }}"></script>
@@ -3558,32 +3626,6 @@ window.GroupManager = {
         }
     },
 
-    // Delete group (from dropdown menu)
-    deleteGroup: async function(groupId) {
-        console.log('Deleting group:', groupId);
-        
-        if (!confirm('Are you sure you want to DELETE this entire group? This will permanently remove the group, all members, and all documents. This action cannot be undone.')) {
-            return;
-        }
-        
-        try {
-            const response = await fetch(`/api/admin/control-center/groups/${groupId}`, {
-                method: 'DELETE'
-            });
-            
-            if (response.ok) {
-                showToast('Group deleted successfully!', 'success');
-                this.loadGroups(); // Refresh the groups list
-            } else {
-                const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-                showToast(`Error deleting group: ${error.error || 'Unknown error'}`, 'danger');
-            }
-        } catch (error) {
-            console.error('Error deleting group:', error);
-            showToast(`Error deleting group: ${error.message}`, 'danger');
-        }
-    },
-
     // View group activity
     viewActivity: async function(groupId) {
         console.log('[Activity] viewActivity called with groupId:', groupId);
@@ -3855,7 +3897,7 @@ window.GroupManager = {
                 
                 const ownershipResult = await ownershipResponse.json();
                 console.log('Ownership request created:', ownershipResult);
-                window.controlCenter.showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval<br>Approval ID: ${ownershipResult.approval_id}<br><br>The request requires approval from the group owner or another admin.`, 'success', true);
+                window.controlCenter.showToast(`Ownership transfer request submitted!\n\nStatus: Pending Approval\nApproval ID: ${ownershipResult.approval_id}\n\nThe request requires approval from the group owner or another admin.`, 'success');
                 
             } else if (ownership === 'transfer') {
                 // Transfer ownership to another user - create approval request
@@ -3877,7 +3919,7 @@ window.GroupManager = {
                 
                 const transferResult = await transferResponse.json();
                 console.log('Transfer request created:', transferResult);
-                window.controlCenter.showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval<br>Approval ID: ${transferResult.approval_id}<br><br>The request requires approval from the group owner or another admin.`, 'success', true);
+                window.controlCenter.showToast(`Ownership transfer request submitted!\n\nStatus: Pending Approval\nApproval ID: ${transferResult.approval_id}\n\nThe request requires approval from the group owner or another admin.`, 'success');
                 
             } else {
                 // No ownership change
@@ -4461,7 +4503,7 @@ window.GroupManager = {
                     document.getElementById('ccSearchResults').innerHTML = `
                         <tr>
                             <td colspan="4" class="text-center text-muted">
-                                <i class="bi bi-search me-1"></i> No users found matching "${searchTerm}"
+                                <i class="bi bi-search me-1"></i> No users found matching "${GroupManager.escapeHtml(searchTerm)}"
                             </td>
                         </tr>
                     `;
@@ -4488,19 +4530,14 @@ window.GroupManager = {
                 </tr>
             `;
         } else {
-            users.forEach(user => {
-                const userId = this.escapeJsString(user.id || '');
-                const displayName = this.escapeJsString(user.displayName || '');
-                const email = this.escapeJsString(user.email || '');
-                
+            users.forEach((user, index) => {
                 html += `
                     <tr>
                         <td>${this.escapeHtml(user.displayName || '(no name)')}</td>
                         <td>${this.escapeHtml(user.email || '')}</td>
                         <td><small class="font-monospace">${this.escapeHtml(user.id || '')}</small></td>
                         <td class="text-end">
-                            <button type="button" class="btn btn-sm btn-primary" 
-                                    onclick="GroupManager.selectUserForAdd('${userId}', '${displayName}', '${email}')">
+                            <button type="button" class="btn btn-sm btn-primary cc-select-user-btn" data-user-index="${index}">
                                 <i class="bi bi-check-circle me-1"></i>Select
                             </button>
                         </td>
@@ -4509,13 +4546,17 @@ window.GroupManager = {
             });
         }
         
-        document.getElementById('ccSearchResults').innerHTML = html;
+        const searchResults = document.getElementById('ccSearchResults');
+        // xss-check: ignore - every row value above is escapeHtml(...) or the numeric row index.
+        searchResults.innerHTML = html;
+        // Read the selected directory user from the results, not from markup built from its text.
+        searchResults.querySelectorAll('.cc-select-user-btn').forEach(button => {
+            const user = users[Number(button.dataset.userIndex)];
+            button.addEventListener('click', () => {
+                GroupManager.selectUserForAdd(user.id || '', user.displayName || '', user.email || '');
+            });
+        });
         document.getElementById('ccSearchResultsContainer').style.display = 'block';
-    },
-    
-    escapeJsString: function(str) {
-        if (!str) return '';
-        return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
     },
     
     selectUserForAdd: function(userId, displayName, email) {

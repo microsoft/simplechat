@@ -15,7 +15,8 @@ from functions_workflow_node_results import (
     WorkflowLineageAuthorization, authorize_workflow_node_result_read, load_node_result, result_selectors,
 )
 from functions_workflow_result_store import read_workflow_node_result_page
-from functions_workflow_runtime_store import workflow_runtime_store
+from functions_workflow_runtime_store import WorkflowRuntimeConflict, workflow_runtime_store
+from functions_workflow_policy_errors import workflow_result_availability
 
 
 def authorize_execution_payload(workflow, run_id, payload, *, reader_user_id, authorization=None):
@@ -131,8 +132,18 @@ def workflow_execution_result_page(workflow, run_id, execution_id, attempt, *, r
         workflow, run_id, payload["node_id"], execution_id, attempt,
         task_id=payload.get("task_id"), iteration_path=payload.get("iteration_path") or [],
     )
-    if identity != expected or not summary.get("result_ref"):
-        raise ValueError("This exact attempt has no saved result.")
+    if not summary.get("result_ref"):
+        authorize_execution_payload(workflow, run_id, payload, reader_user_id=reader_user_id)
+        reason = workflow_result_availability(payload)["reason"]
+        error = WorkflowRuntimeConflict(
+            "workflow_result_unavailable",
+            "A generated candidate is unverified. No result artifact was committed." if reason == "candidate_unverified"
+            else "No result artifact was committed for this exact attempt. Generated work may still exist.",
+        )
+        error.reason = reason
+        raise error
+    if identity != expected:
+        raise ValueError("The exact attempt result identity is invalid.")
     manifest, _ = authorize_workflow_node_result_read(
         workflow, run_id, identity, summary["result_ref"], reader_user_id=reader_user_id,
     )

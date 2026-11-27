@@ -10,6 +10,7 @@ import {
     isWorkflowPublicationStatus,
     isWorkflowRepeatProgress,
     type WorkflowConsumedInput,
+    type WorkflowFailureSummary,
     type WorkflowIterationFrame,
     type WorkflowLoopSelection,
     type WorkflowResultReference,
@@ -47,7 +48,7 @@ export interface WorkflowExecutionDecisionPreview {
     [key: string]: unknown;
 }
 
-export interface WorkflowExecutionRecord {
+export interface WorkflowExecutionRecord extends WorkflowFailureSummary {
     execution_id: string;
     node_id: string;
     node_kind: string;
@@ -75,7 +76,7 @@ export interface WorkflowExecutionRecord {
     [key: string]: unknown;
 }
 
-export interface WorkflowExecutionAttemptRecord {
+export interface WorkflowExecutionAttemptRecord extends WorkflowFailureSummary {
     execution_id: string;
     node_id: string;
     node_kind?: string;

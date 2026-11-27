@@ -1218,7 +1218,7 @@ window.WorkspaceManager = {
                     document.getElementById('wsSearchResults').innerHTML = `
                         <tr>
                             <td colspan="4" class="text-center text-muted">
-                                <i class="bi bi-search me-1"></i> No users found matching "${searchTerm}"
+                                <i class="bi bi-search me-1"></i> No users found matching "${WorkspaceManager.escapeHtml(searchTerm)}"
                             </td>
                         </tr>
                     `;
@@ -1245,19 +1245,14 @@ window.WorkspaceManager = {
                 </tr>
             `;
         } else {
-            users.forEach(user => {
-                const userId = WorkspaceManager.escapeJsString(user.id || '');
-                const displayName = WorkspaceManager.escapeJsString(user.displayName || '');
-                const email = WorkspaceManager.escapeJsString(user.email || '');
-                
+            users.forEach((user, index) => {
                 html += `
                     <tr>
                         <td>${WorkspaceManager.escapeHtml(user.displayName || '(no name)')}</td>
                         <td>${WorkspaceManager.escapeHtml(user.email || '')}</td>
                         <td><small class="font-monospace">${WorkspaceManager.escapeHtml(user.id || '')}</small></td>
                         <td class="text-end">
-                            <button type="button" class="btn btn-sm btn-primary" 
-                                    onclick="WorkspaceManager.selectUserForAdd('${userId}', '${displayName}', '${email}')">
+                            <button type="button" class="btn btn-sm btn-primary ws-select-user-btn" data-user-index="${index}">
                                 <i class="bi bi-check-circle me-1"></i>Select
                             </button>
                         </td>
@@ -1266,13 +1261,17 @@ window.WorkspaceManager = {
             });
         }
         
-        document.getElementById('wsSearchResults').innerHTML = html;
+        const searchResults = document.getElementById('wsSearchResults');
+        // xss-check: ignore - every row value above is escapeHtml(...) or the numeric row index.
+        searchResults.innerHTML = html;
+        // Read the selected directory user from the results, not from markup built from its text.
+        searchResults.querySelectorAll('.ws-select-user-btn').forEach(button => {
+            const user = users[Number(button.dataset.userIndex)];
+            button.addEventListener('click', () => {
+                WorkspaceManager.selectUserForAdd(user.id || '', user.displayName || '', user.email || '');
+            });
+        });
         document.getElementById('wsSearchResultsContainer').style.display = 'block';
-    },
-
-    escapeJsString: function(str) {
-        if (!str) return '';
-        return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
     },
 
     escapeHtml: function(str) {

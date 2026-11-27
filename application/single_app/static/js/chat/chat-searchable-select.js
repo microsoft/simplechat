@@ -349,6 +349,7 @@ export function createSearchableSingleSelect({
     getOptionLabel,
     getOptionSearchText,
     renderOptionContent,
+    renderSelectedContent,
     dropdownConfig,
 }) {
     if (!selectEl || !dropdownEl || !buttonEl || !buttonTextEl || !menuEl || !searchInputEl || !itemsContainerEl) {
@@ -358,6 +359,9 @@ export function createSearchableSingleSelect({
     const readOptionLabel = getOptionLabel || (option => option.textContent.trim());
     const readOptionSearchText = getOptionSearchText || (option => option.textContent.trim());
     const renderOption = typeof renderOptionContent === 'function' ? renderOptionContent : null;
+    const renderSelection = typeof renderSelectedContent === 'function'
+        ? renderSelectedContent
+        : null;
     const resolvedDropdownConfig = dropdownConfig || {
         autoClose: 'outside',
     };
@@ -378,6 +382,14 @@ export function createSearchableSingleSelect({
     const syncButtonText = () => {
         const selectedOption = getSelectedOption();
         const label = selectedOption ? readOptionLabel(selectedOption) : '';
+        buttonTextEl.replaceChildren();
+        if (selectedOption && renderSelection) {
+            const renderedContent = renderSelection(selectedOption, label);
+            if (renderedContent instanceof Node) {
+                buttonTextEl.appendChild(renderedContent);
+                return;
+            }
+        }
         buttonTextEl.textContent = label || placeholderText;
     };
 
@@ -388,6 +400,9 @@ export function createSearchableSingleSelect({
         const selectedIndex = selectEl.selectedIndex;
         const hasEnabledOption = options.some(option => !option.disabled);
 
+        Array.from(itemsContainerEl.querySelectorAll('.chat-model-persona-inspector')).forEach(inspector => {
+            inspector._closePersona?.();
+        });
         itemsContainerEl.innerHTML = '';
 
         if (!options.length) {

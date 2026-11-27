@@ -6,6 +6,9 @@ order: 120
 category: Version History
 ---
 
+- [Streamed Chat Action Recovery Continue Fix](STREAM_ACTION_RECOVERY_CONTINUE_FIX.md)
+- [CodeQL Alert and Contract Check Fix](CODEQL_ALERT_AND_CONTRACT_CHECK_FIX.md)
+- [V2 Follow-Up File Paging Fix](V2_FOLLOW_UP_FILE_PAGING_FIX.md)
 - [Admin Settings Chromium Driver Preload Fix](ADMIN_SETTINGS_CHROMIUM_DRIVER_PRELOAD_FIX.md)
 - [Retrieval, Narrative/XML Fidelity, System Prompt, and Inline Citation Restoration Fix](RETRIEVAL_CITATION_SYSTEM_PROMPT_RESTORATION_FIX.md)
 - [Safety Remediation Approval State Fix](SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md)

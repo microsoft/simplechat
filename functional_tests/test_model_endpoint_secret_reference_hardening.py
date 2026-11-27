@@ -1,8 +1,9 @@
 # test_model_endpoint_secret_reference_hardening.py
 """
 Functional test for endpoint-keyed model endpoint secret references.
-Version: 0.261.140
+Version: 0.261.485
 Implemented in: 0.261.140
+Whole-list saves send the loaded catalog revision as of: 0.261.485
 
 Group and user model endpoint secrets are named ``{endpoint_id}--model-endpoint--
 {scope}--...``, with no group or user id. Before this change the save helper
@@ -69,7 +70,9 @@ def env(module_env):
 
 
 def legacy_group_save(env, endpoints):
-    return env.call("POST", "/api/group/model-endpoints", {"endpoints": endpoints})
+    # Whole-list saves carry the catalog revision the classic editor loaded.
+    revision = env.client.get("/api/group/model-endpoints").get_json()["revision"]
+    return env.call("POST", "/api/group/model-endpoints", {"endpoints": endpoints, "revision": revision})
 
 
 def classic_copy(env, group_id, endpoint_id):
@@ -252,8 +255,11 @@ def test_injection_is_refused_on_the_personal_create_and_collection_post(persona
     foreign = deterministic("pe-1", "user")
     single = personal.call("POST", "/api/user/model-endpoints", aoai_endpoint("pe-1", api_key=foreign))
     assert single.status_code == 400 and single.get_json() == REFUSED
+    personal.user_settings["owner"]["_etag"] = "owner-settings-revision"
+    revision = personal.client.get("/api/user/model-endpoints").get_json()["revision"]
     collection = personal.call("POST", "/api/user/model-endpoints", {
         "endpoints": [aoai_endpoint("pe-own", api_key=""), aoai_endpoint("pe-1", api_key=foreign)],
+        "revision": revision,
     })
     assert collection.status_code == 400 and collection.get_json() == REFUSED
     assert personal.personal_endpoint("owner", "pe-1") is None

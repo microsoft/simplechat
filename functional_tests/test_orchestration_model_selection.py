@@ -1,10 +1,11 @@
 # test_orchestration_model_selection.py
 """
 Functional regressions for authorized orchestration model selection and SDK parameters.
-Version: 0.261.139
+Version: 0.261.463
 Implemented in: 0.261.103
 Single orchestration contract updated in: 0.261.139
 Canonical reasoning resolution and recovery: 0.261.104
+Scoped workflow model binding coverage: 0.261.463
 
 Exercises the real selection/binding code with endpoint authorization and client creation
 replaced at their existing boundaries. No Azure resources or credentials are used.
@@ -30,6 +31,7 @@ from test_model_reasoning_capability_resolution import sdk_error
 TERRA_SELECTION = {
     'model_deployment': 'gpt-5.6-terra', 'model_provider': 'aoai',
     'model_endpoint_id': 'selected-endpoint', 'model_id': 'terra-model',
+    'model_scope_type': 'global', 'model_scope_id': 'global',
 }
 
 
@@ -114,6 +116,7 @@ class ModelSelectionTests(unittest.TestCase):
             self.settings, {
                 'endpoint_id': 'selected-endpoint', 'model_id': 'terra-model',
                 'model_deployment': 'gpt-5.6-terra', 'provider': 'aoai',
+                'scope_type': 'global', 'scope_id': 'global',
                 'user_id': 'user1', 'active_group_ids': ['group1'],
             }, authorize=True,
         )
@@ -121,6 +124,7 @@ class ModelSelectionTests(unittest.TestCase):
             self.endpoint['auth'], 'aoai', 'https://selected.example.test',
             '2025-04-01-preview', 'gpt-5.6-terra', settings=self.settings,
             endpoint_config=self.endpoint, identity_context=self.identity,
+            model_id='terra-model', apply_model_persona=True,
         )
         self.legacy_resolver.assert_not_called()
         self.assertNotIn('test-only-key', str(binding.metadata()))
@@ -133,6 +137,86 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertEqual(binding.answer_model_selection(), TERRA_SELECTION)
         self.legacy_resolver.assert_not_called()
 
+    def test_agent_opt_out_survives_explicit_and_default_resolution(self):
+        binding = self.models.resolve_orchestration_model(
+            self.settings,
+            user_id='user1',
+            seeds={
+                'model': TERRA_SELECTION,
+                'reasoning_effort': '',
+                'active_group_ids': [],
+                'apply_model_persona': False,
+            },
+            identity_context=self.identity,
+        )
+        self.addCleanup(binding.close)
+        self.assertFalse(
+            self.runtime.build_model_endpoint_sync_chat_client.call_args.kwargs[
+                'apply_model_persona'
+            ]
+        )
+        self.settings['chat_orchestration_planner_deployment'] = 'small-planner'
+        planner = self.models.resolve_orchestration_model(
+            self.settings,
+            user_id='user1',
+            seeds={
+                'model': {
+                    'model_endpoint_id': 'selected-endpoint',
+                    'model_id': 'terra-model',
+                    'model_provider': 'aoai',
+                },
+                'reasoning_effort': '',
+                'active_group_ids': [],
+            },
+            identity_context=self.identity,
+            planner=True,
+        )
+        self.addCleanup(planner.close)
+        self.assertFalse(planner.answer_model_persona_enabled())
+        self.assertFalse(binding.apply_model_persona)
+
+        legacy_agent = self.models.resolve_orchestration_model(
+            self.settings,
+            user_id='user1',
+            seeds={
+                'model': TERRA_SELECTION,
+                'agent': {'id': 'legacy-agent'},
+                'reasoning_effort': '',
+                'active_group_ids': [],
+            },
+            identity_context=self.identity,
+        )
+        self.addCleanup(legacy_agent.close)
+        self.assertFalse(
+            self.runtime.build_model_endpoint_sync_chat_client.call_args.kwargs[
+                'apply_model_persona'
+            ]
+        )
+        self.assertFalse(legacy_agent.apply_model_persona)
+
+    def test_resolved_identity_does_not_grant_persona_to_unscoped_selection(self):
+        binding = self.models.resolve_orchestration_model(
+            self.settings,
+            user_id='user1',
+            seeds={
+                'model': {
+                    'model_endpoint_id': 'selected-endpoint',
+                    'model_id': 'terra-model',
+                    'model_provider': 'aoai',
+                },
+                'reasoning_effort': '',
+                'active_group_ids': [],
+            },
+            identity_context=self.identity,
+        )
+        self.addCleanup(binding.close)
+        self.assertFalse(binding.apply_model_persona)
+        self.assertFalse(
+            self.runtime.build_model_endpoint_sync_chat_client.call_args.kwargs[
+                'apply_model_persona'
+            ]
+        )
+
     def test_planner_override_is_separate_from_persisted_answer_selection(self):
         self.settings['chat_orchestration_planner_deployment'] = 'small-planner'
         planner = self.resolve(TERRA_SELECTION, planner=True)
@@ -140,6 +224,7 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertEqual(planner.deployment, 'small-planner')
         self.assertEqual(planner.source, 'planner_override')
         self.assertEqual(planner.answer_model_selection(), TERRA_SELECTION)
+        self.assertTrue(planner.answer_model_persona_enabled())
         self.assertIs(planner.client, self.legacy_client)
         self.assertEqual(answer.deployment, 'gpt-5.6-terra')
         self.assertIs(answer.client, self.client)

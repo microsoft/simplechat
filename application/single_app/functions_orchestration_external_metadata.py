@@ -43,7 +43,10 @@ _CAPABILITIES = {
     "web": "web_search", "url": "url_fetch", "deep_research": "deep_research",
     "agent": "agent_invoke", "action": "action_invoke",
 }
-_MODEL_FIELDS = ("model_deployment", "model_endpoint_id", "model_id", "model_provider")
+_MODEL_FIELDS = (
+    "model_deployment", "model_endpoint_id", "model_id", "model_provider",
+    "model_scope_type", "model_scope_id",
+)
 _PLANNER_FIELDS = {
     "model_deployment": "chat_orchestration_planner_deployment",
     "model_endpoint_id": "chat_orchestration_planner_model_endpoint_id",
@@ -317,6 +320,8 @@ def _current_model(read, producer, settings, *, planner):
     overridden = any(overrides.values())
     if overridden:
         selection = overrides
+        if selection.get("model_endpoint_id") or selection.get("model_id"):
+            selection.update(model_scope_type="global", model_scope_id="global")
         reasoning_effort = ""
     multi_endpoint = _flag(settings, "enable_multi_model_endpoints")
     if not any(selection.values()) and multi_endpoint:
@@ -325,6 +330,8 @@ def _current_model(read, producer, settings, *, planner):
             model_endpoint_id=_text(default.get("endpoint_id"), optional=True),
             model_id=_text(default.get("model_id"), optional=True),
             model_provider=_text(default.get("provider"), optional=True),
+            model_scope_type="global",
+            model_scope_id="global",
         )
     if (
         selection["model_id"] and not selection["model_endpoint_id"]
@@ -349,6 +356,8 @@ def _current_model(read, producer, settings, *, planner):
             _model_metadata_operation, resolve_model_endpoint_from_context, settings, {
                 "user_id": read.user_id, "active_group_ids": groups,
                 "endpoint_id": selection["model_endpoint_id"], "model_id": selection["model_id"],
+                "scope_type": selection["model_scope_type"],
+                "scope_id": selection["model_scope_id"],
                 "model_deployment": deployment, "provider": selection["model_provider"],
             }, authorize=True,
         )

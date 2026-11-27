@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 3A indexing policy maintenance.
-Version: 0.261.396
+Version: 0.261.472
 Implemented in: 0.250.008
 Maintenance cleanup integration updated in: 0.250.038
 Manual admin apply override updated in: 0.250.039
@@ -14,6 +14,7 @@ Partition-key preservation and durable apply diagnostics updated in: 0.261.396
 This test ensures expected Cosmos indexing policies can be compared, safely
 merged, and invoked through the app maintenance framework without live Azure
 resources.
+Replay-only exclusion coverage implemented in: 0.261.472.
 """
 
 import copy
@@ -23,8 +24,9 @@ import os
 import sys
 import types
 from contextlib import contextmanager
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+import pytest
 from azure.core import MatchConditions
 from azure.cosmos import PartitionKey
 from azure.cosmos._cosmos_responses import CosmosDict
@@ -229,6 +231,8 @@ def _load_wave3_modules():
     fake_config.cosmos_activity_logs_container = containers["activity_logs"]
     fake_config.cosmos_activity_logs_container_name = "activity_logs"
     fake_config.cosmos_settings_container = settings_container
+    fake_config.cosmos_settings_container_name = "settings"
+    fake_config.cosmos_database_name = "SimpleChat"
     fake_config.cosmos_governance_policies_container = governance_container
     fake_config.cosmos_conversations_container = containers["conversations"]
     fake_config.cosmos_conversations_container_name = "conversations"
@@ -276,6 +280,77 @@ def _load_wave3_modules():
 
 def _canonical_composite(index):
     return tuple((path["path"], path["order"]) for path in index)
+
+
+@pytest.mark.parametrize("outcome", ["applied", "denied", "wrong_target", "pending"])
+def test_replay_indexing_merges_and_verifies_only_the_settings_policy(outcome):
+    with _load_wave3_modules() as (indexing, _maintenance, _database, _containers):
+        from functions_cosmos_throughput import CosmosThroughputError
+
+        target = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DocumentDB/databaseAccounts/probe/sqlDatabases/SimpleChat/containers/settings"
+        container = indexing.app_config.cosmos_settings_container
+        props = container.container_properties
+        props.update(_rid="settings-rid", defaultTtl=120, uniqueKeyPolicy={"uniqueKeys": []})
+        original = copy.deepcopy(props)
+        props["indexingPolicy"]["includedPaths"][0]["indexes"] = None
+        props["indexingPolicy"]["excludedPaths"].append({"path": "/custom/?"})
+        props["indexingPolicy"]["compositeIndexes"] = [[
+            {"path": "/customer", "order": "ascending"}, {"path": "/sequence", "order": "descending"},
+        ]]
+
+        def arm_request(method, path, payload=None, *, if_match=None):
+            assert path == target
+            if method == "GET":
+                return {"properties": {"resource": {
+                    **copy.deepcopy(props), "_rid": "wrong" if outcome == "wrong_target" else "settings-rid",
+                }}}
+            assert method == "PUT" and if_match == original["_etag"]
+            assert payload["properties"]["options"] == {}
+            resource = payload["properties"]["resource"]
+            assert resource["defaultTtl"] == 120 and resource["partitionKey"] == original["partitionKey"]
+            assert resource["uniqueKeyPolicy"] == original["uniqueKeyPolicy"]
+            assert "_etag" not in resource
+            policy = resource["indexingPolicy"]
+            assert policy["includedPaths"] == [{"path": "/*"}]
+            assert policy["compositeIndexes"] == props["indexingPolicy"]["compositeIndexes"]
+            assert policy["excludedPaths"] == [
+                {"path": '/"_etag"/?'}, {"path": "/custom/?"}, {"path": indexing.COSMOS_REPLAY_INDEX_PATH},
+            ]
+            if outcome == "denied":
+                raise CosmosThroughputError("Forbidden", status_code=403)
+            if outcome == "applied":
+                props["indexingPolicy"] = copy.deepcopy(policy)
+            return {}
+
+        stub = Mock(side_effect=arm_request)
+        settings = {
+            "cosmos_throughput_subscription_id": "sub",
+            "cosmos_throughput_resource_group": "rg",
+            "cosmos_throughput_account_name": "probe",
+            "cosmos_throughput_database_name": "SimpleChat",
+        }
+        with patch("functions_cosmos_throughput._arm_request", stub):
+            preview = indexing.get_cosmos_replay_index_status(settings)
+            stub.assert_not_called()
+            result = indexing.get_cosmos_replay_index_status(settings, apply=True)
+        assert preview["policy_state"] == "missing"
+        assert result["policy_state"] == {
+            "applied": "ready", "denied": "manual", "wrong_target": "manual", "pending": "pending",
+        }[outcome]
+        assert stub.call_count == (1 if outcome == "wrong_target" else 2)
+        if outcome != "applied":
+            assert result["proposed_policy"] == preview["proposed_policy"]
+
+
+def test_replay_indexing_returns_an_entry_only_when_policy_is_unreadable():
+    from azure.core.exceptions import AzureError
+
+    with _load_wave3_modules() as (indexing, _maintenance, _database, _containers):
+        with patch.object(indexing.app_config.cosmos_settings_container, "read", side_effect=AzureError("Unavailable")):
+            result = indexing.get_cosmos_replay_index_status({}, apply=True)
+    assert result["policy_state"] == "unavailable"
+    assert result["proposed_policy"] is None
+    assert result["excluded_path"] == "/stream_replay_events/[]/?"
 
 
 def test_indexing_policy_report_is_read_only():

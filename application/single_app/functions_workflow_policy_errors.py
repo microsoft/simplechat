@@ -2,6 +2,7 @@
 """Bootstrap-free, non-retryable workflow policy failures shared by the runner and journal."""
 
 import re
+from collections.abc import Mapping
 
 from functions_model_capabilities import ModelTokenBudgetError
 
@@ -29,6 +30,48 @@ _MODEL_BUDGET_MESSAGES = {
     "model_generation_unbounded": "The selected model needs a verified total-generation token allowance, including reasoning.",
 }
 
+_DEFINITIVE_PROVIDER_STATUS_CODES = {400, 401, 403, 404, 405, 415, 422}
+WORKFLOW_FAILURE_FIELDS = (
+    "error", "error_code", "failure_phase", "effect_certainty", "terminal_failure",
+    "correlation_reference", "provider_status", "provider_error_type",
+    "model_protocol", "request_stage", "missing_capability", "request_outcome",
+)
+
+
+def safe_workflow_failure_summary(value):
+    """Public history accepts a typed allowlist, not exception objects or arbitrary details."""
+    if not isinstance(value, Mapping):
+        return {}
+    summary = {}
+    for key in WORKFLOW_FAILURE_FIELDS:
+        item = value.get(key)
+        if key == "error" and isinstance(item, str):
+            summary[key] = item[:2000]
+        elif key == "provider_status" and type(item) is int and 100 <= item <= 599:
+            summary[key] = item
+        elif key == "terminal_failure" and type(item) is bool:
+            summary[key] = item
+        elif key == "effect_certainty" and item in ("none", "possible", "committed"):
+            summary[key] = item
+        elif key not in ("error", "provider_status", "terminal_failure", "effect_certainty") and (
+            isinstance(item, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,120}", item)
+        ):
+            summary[key] = item
+    return summary
+
+
+def workflow_result_availability(record, *, legacy=False):
+    """Absence of a committed artifact never proves absence of generated content."""
+    summary = record.get("workflow_result") or {}
+    if isinstance(summary.get("result_ref"), Mapping):
+        return {"available": True, "reason": "committed"}
+    completeness = summary.get("task_completeness") or {}
+    if completeness.get("status") in ("incomplete", "invalid", "checking", "correcting"):
+        return {"available": False, "reason": "candidate_unverified"}
+    if legacy and "workflow_result" not in record and "workflow_validation" not in record:
+        return {"available": False, "reason": "legacy_preview_only"}
+    return {"available": False, "reason": "not_committed"}
+
 
 class WorkflowPolicyError(ValueError):
     """An application refusal that must finish the attempt, not replay its operations."""
@@ -42,9 +85,10 @@ class WorkflowPolicyError(ValueError):
 class WorkflowTaskPolicyError(RuntimeError):
     """Keep the task runner's RuntimeError contract while preserving a reviewed policy reason."""
 
-    def __init__(self, code, public_message):
+    def __init__(self, code, public_message, **details):
         self.code = code
         self.public_message = public_message
+        self.details = dict(details)
         super().__init__(public_message)
 
 
@@ -83,11 +127,113 @@ def context_budget_log_fields(audit):
     return fields
 
 
-def workflow_policy_failure(error):
+def _workflow_policy_failure(error):
     """Project only application-owned policy failures, never arbitrary provider exception text."""
     if isinstance(error, (WorkflowPolicyError, WorkflowTaskPolicyError)):
-        return {"error_code": error.code, "error": error.public_message}
+        failure = {
+            "error_code": error.code,
+            "error": error.public_message,
+            "effect_certainty": "none",
+            "terminal_failure": True,
+        }
+        if isinstance(error, WorkflowTaskPolicyError):
+            failure.update(safe_workflow_failure_summary(error.details))
+        return failure
     if isinstance(error, ModelTokenBudgetError):
         code = error.code if error.code in _MODEL_BUDGET_MESSAGES else "model_context_invalid"
-        return {"error_code": code, "error": _MODEL_BUDGET_MESSAGES[code]}
+        return {
+            "error_code": code,
+            "error": _MODEL_BUDGET_MESSAGES[code],
+            "effect_certainty": "none",
+            "terminal_failure": True,
+        }
+
+    from functions_ai_connections import AIConnectionError
+    from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
+    from functions_model_endpoint_validation import ModelEndpointValidationError
+    from model_endpoint_profiles import GenAIMilRequestError
+
+    if isinstance(error, AIConnectionError):
+        return {
+            "error_code": error.code or "invalid_model_selection",
+            "error": error.public_message,
+            "failure_phase": "request",
+            "effect_certainty": "none",
+            "terminal_failure": True,
+        }
+    if isinstance(error, ModelEndpointValidationError):
+        return {
+            "error_code": "model_endpoint_configuration_invalid",
+            "error": error.public_message,
+            "failure_phase": "request",
+            "effect_certainty": "none",
+            "terminal_failure": True,
+        }
+    if isinstance(error, GenAIMilRequestError):
+        definitive = error.status_code in _DEFINITIVE_PROVIDER_STATUS_CODES
+        failure = {
+            "error_code": error.code,
+            "error": error.public_message,
+            "failure_phase": "provider",
+            "effect_certainty": "none",
+            "terminal_failure": definitive,
+        }
+        if error.reference:
+            failure["correlation_reference"] = error.reference
+        return failure
+    if isinstance(error, SanitizedModelEndpointError) and isinstance(error.status_code, int):
+        definitive = error.status_code in _DEFINITIVE_PROVIDER_STATUS_CODES
+        failure = {
+            "error_code": "model_provider_request_failed",
+            "error": error.public_message,
+            "failure_phase": "provider",
+            "effect_certainty": "none",
+            "terminal_failure": definitive,
+        }
+        if error.correlation_reference:
+            failure["correlation_reference"] = error.correlation_reference
+        return failure
     return None
+
+
+def workflow_policy_failure(error):
+    failure = _workflow_policy_failure(error)
+    if failure is None:
+        return None
+    failure.update(workflow_failure_diagnostics(error))
+    if getattr(error, "operation_effect_certainty", None) in ("possible", "committed"):
+        failure.update(effect_certainty=error.operation_effect_certainty, terminal_failure=False)
+    return safe_workflow_failure_summary(failure)
+
+
+def workflow_failure_diagnostics(error):
+    """Return safe failure facts without turning an ambiguous effect into policy success."""
+    from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
+    from functions_model_endpoint_validation import ModelEndpointValidationError
+    from model_endpoint_profiles import GenAIMilRequestError
+
+    if isinstance(error, ModelEndpointValidationError):
+        return safe_workflow_failure_summary({
+            "missing_capability": error.missing_capability, "request_stage": error.request_stage,
+        })
+    if isinstance(error, GenAIMilRequestError):
+        return safe_workflow_failure_summary({
+            "provider_status": error.status_code, "provider_error_type": type(error).__name__,
+            "effect_certainty": "none" if type(error.status_code) is int else "possible",
+            "error": error.public_message, "error_code": error.code, "failure_phase": "provider",
+            "correlation_reference": error.reference,
+        })
+
+    if not isinstance(error, SanitizedModelEndpointError):
+        return {}
+    diagnostics = {
+        "failure_phase": "provider",
+        "effect_certainty": error.operation_effect_certainty,
+        "error": error.public_message, "error_code": "model_provider_request_failed",
+        "provider_status": error.status_code, "provider_error_type": error.error_type,
+        "model_protocol": error.protocol, "request_stage": error.request_stage,
+        "request_outcome": "rejected" if error.status_code is not None else "unconfirmed",
+    }
+    if error.correlation_reference:
+        diagnostics["correlation_reference"] = error.correlation_reference
+    return safe_workflow_failure_summary(diagnostics)

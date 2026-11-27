@@ -28,10 +28,12 @@ export function CapabilityModelPicker({
     capability,
     featureEnabled,
     help,
+    onEditEmbeddingModel,
 }: {
     capability: ImplementedCapability;
     featureEnabled: boolean;
     help?: string;
+    onEditEmbeddingModel?: (connectionId: string, modelId: string) => void;
 }) {
     const image = capability === 'image_generation';
     const embedding = capability === 'embeddings';
@@ -194,7 +196,18 @@ export function CapabilityModelPicker({
                 <>
                     <p className="mt-1.5 text-xs text-text-3">{capabilityDescription(selectedChoice.capability, capability)}</p>
                     {embedding ? (
-                        <p className="mt-1.5 text-xs text-text-3">{embeddingPolicyDescription(selectedChoice.embedding_policy)}</p>
+                        <>
+                            <p className="mt-1.5 text-xs text-text-3">{embeddingPolicyDescription(selectedChoice.embedding_policy)}</p>
+                            {selectedChoice.embedding_request_url ? (
+                                <p className="mt-1.5 break-all text-xs text-text-3">Effective embedding route: POST {selectedChoice.embedding_request_url}</p>
+                            ) : null}
+                            {onEditEmbeddingModel ? (
+                                <GlassButton type="button" className="mt-2"
+                                    onClick={() => onEditEmbeddingModel(selectedChoice.endpointId, selectedChoice.modelId)}>
+                                    Edit embedding model in AI Connections
+                                </GlassButton>
+                            ) : null}
+                        </>
                     ) : null}
                 </>
             ) : null}

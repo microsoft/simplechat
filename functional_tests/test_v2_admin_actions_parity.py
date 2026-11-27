@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test pinning V1/V2 parity for the Admin Settings Actions tab.
-Version: 0.261.271
+Version: 0.261.487
 Implemented in: 0.261.074
 Global actions list in actions-config: 0.261.271
 
@@ -79,9 +79,7 @@ def read_pane(pane_id):
 def literal_assignment(source, name):
     """Return a module-level literal assignment, without importing the module.
 
-    ``functions_document_actions`` reaches ``config.py``, which builds a Cosmos
-    client at import time, so it cannot be imported in a plain test process. The
-    values are read out of the source the same way the other schema tests read
+    The values are read out of the source the same way the other schema tests read
     the settings defaults.
     """
     tree = ast.parse(source)
@@ -372,10 +370,9 @@ def test_nested_values_are_folded_into_their_container_on_save():
     """Saving one limit must not discard the other five.
 
     The container normalizer is replaced with an identity function for this
-    check. It lives in ``functions_document_actions``, which reaches
-    ``config.py`` and a live Cosmos client and so cannot be imported in a test
-    process; the delegation itself is asserted separately below, and the bounds
-    it enforces are pinned against its source above.
+    check. It lives in ``functions_document_actions``; the delegation itself is
+    asserted separately below, and the bounds it enforces are pinned against its
+    source above.
     """
     print("\nTesting the nested container fold...")
 

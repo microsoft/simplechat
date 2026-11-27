@@ -1,8 +1,9 @@
 # test_workflow_chat_execution.py
 """Functional regression tests for workflow-owned chat execution.
 
-Version: 0.261.343
+Version: 0.261.463
 Implemented in: 0.261.343
+Exact scoped model seed coverage: 0.261.463
 
 Exercise admitted-plan reuse, required capabilities, identity isolation and the
 real initialized chat runtime with only external storage/provider I/O doubled.
@@ -27,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "si
 from agent_execution_context import capture_execution_identity, current_workflow_identity
 from functions_workflow_chat_execution import (
     WorkflowChatExecutionError, WorkflowChatRuntime, build_workflow_chat_seeds,
-    child_execution_id, execute_workflow_chat_task, validate_required_outputs,
+    _legacy_request_digest, _binding, child_execution_id, execute_workflow_chat_task, validate_required_outputs,
     workflow_capability_roles, workflow_chat_identity, workflow_chat_result,
 )
 from test_orchestration_harness_execution import current_metadata, harness, initialized_application
@@ -155,6 +156,23 @@ def test_changed_task_cannot_adopt_another_request():
     assert runtime.search_calls == 1
 
 
+def test_pre_upgrade_child_digest_remains_resumable():
+    runtime = ChildRuntime()
+    execute(runtime)
+    record = next(iter(runtime.records.values()))
+    saved_binding = record["workflow_execution"]
+    record["workflow_execution"] = _binding(
+        WORKFLOW,
+        "workflow-run",
+        "events",
+        _legacy_request_digest(WORKFLOW, CONFIGURATION),
+        saved_binding["execution_id"],
+    )
+    result = execute(runtime)
+    assert result["reply"] == "Sourced upcoming events."
+    assert runtime.plan_calls == 1
+
+
 def test_failed_search_is_not_a_success_shaped_result():
     runtime = ChildRuntime()
     execute(runtime)
@@ -184,6 +202,45 @@ def test_task_overrides_are_positive_requirements_and_group_scope_stays_bound():
     seeds = build_workflow_chat_seeds({**WORKFLOW, "group_id": "group-one"}, CONFIGURATION)
     assert seeds["required_capabilities"] == ["web_search"]
     assert seeds["active_group_ids"] == ["group-one"] and seeds["doc_scope"] == "group"
+    assert seeds["model"] is None
+
+
+def test_model_chat_seeds_preserve_exact_scope_and_persona_policy():
+    workflow = {
+        **WORKFLOW,
+        "group_id": "group-one",
+        "runner_type": "model",
+        "model_endpoint_id": "shared-endpoint",
+        "model_id": "shared-model",
+        "model_binding_summary": {"scope": "global", "scope_id": "global"},
+    }
+    seeds = build_workflow_chat_seeds(workflow, CONFIGURATION)
+    assert seeds["model"]["model_endpoint_id"] == "shared-endpoint"
+    assert seeds["model"]["model_scope_type"] == "global"
+    assert seeds["model"]["model_scope_id"] == "global"
+    assert seeds["apply_model_persona"] is True
+
+    agent_workflow = {**workflow, "runner_type": "agent"}
+    agent_seeds = build_workflow_chat_seeds(agent_workflow, CONFIGURATION)
+    assert agent_seeds["apply_model_persona"] is False
+
+
+def test_app_default_workflow_resolves_the_current_default_each_run():
+    seeds = build_workflow_chat_seeds({
+        **WORKFLOW,
+        "model_endpoint_id": "",
+        "model_id": "",
+        "model_provider": "aoai",
+        "model_scope_type": "global",
+        "model_scope_id": "global",
+        "model_binding_summary": {
+            "mode": "default_selection",
+            "endpoint_id": "old-default-endpoint",
+            "model_id": "old-default-model",
+            "scope": "global",
+            "scope_id": "global",
+        },
+    }, CONFIGURATION)
     assert seeds["model"] is None
 
 

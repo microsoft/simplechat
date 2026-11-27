@@ -18,7 +18,10 @@ from functions_chat_model_catalog import (
     normalize_chat_model_value as _normalize_chat_model_value,
 )
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
-from functions_agent_catalog import build_accessible_agent_catalog
+from functions_agent_catalog import (
+    build_accessible_agent_catalog,
+    is_chat_agent_allowed_by_governance,
+)
 from functions_model_capabilities import resolve_model_reasoning_policy
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
@@ -46,7 +49,6 @@ from functions_group import (
     get_user_role_in_group,
     require_active_group,
 )
-from functions_governance import ensure_governance_access
 from functions_image_formats import to_browser_image
 from functions_image_messages import build_image_message_documents
 from functions_prompts import list_all_prompts_for_scope
@@ -478,21 +480,7 @@ def _serialize_chat_prompt_option(prompt, *, scope_type, scope_id=None, scope_na
 
 
 def _is_chat_agent_allowed_by_governance(user_id, agent, scope_type):
-    try:
-        if scope_type == 'global':
-            ensure_governance_access(
-                'governance_global_agents_usage',
-                user_id,
-                item_entity_type='global_agent',
-                item_id=str(agent.get('id') or agent.get('name') or ''),
-            )
-        elif scope_type == 'group':
-            ensure_governance_access('governance_group_agents', user_id)
-        else:
-            ensure_governance_access('governance_user_agents', user_id)
-        return True
-    except PermissionError:
-        return False
+    return is_chat_agent_allowed_by_governance(user_id, agent, scope_type)
 
 
 def _build_initial_chat_model_selection(
@@ -613,8 +601,13 @@ def _build_initial_chat_model_selection(
             ):
                 return serialize_option(option)
 
-    # Legacy/APIM clients historically use the configured first deployment, not alphabetical order.
-    default_option = valid_options[0] if not any(option.get('scope_type') for option in valid_options) else sorted_options[0]
+    # Legacy/APIM clients historically use the configured first deployment, not
+    # alphabetical order.
+    default_option = (
+        valid_options[0]
+        if not any(option.get('scope_type') for option in valid_options)
+        else sorted_options[0]
+    )
     return serialize_option(default_option)
 
 

@@ -1,8 +1,9 @@
 # test_content_screening_model.py
 """
 Behavioral regression tests for the isolated content-screening model evaluator.
-Version: 0.261.127
+Version: 0.261.485
 Implemented in: 0.261.106
+Adapter harness bindings for MAI, GenAI.mil, and Responses helpers updated in: 0.261.485
 
 Exercise the real evaluator and existing endpoint/capability/parameter helpers.
 The established AST boundary fixture replaces SDK, settings, identity, and secret
@@ -13,6 +14,7 @@ import contextlib
 import copy
 import io
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -37,8 +39,10 @@ from content_screening.contracts import (
     ContentUnit, ScreeningConfigurationError, ScreeningValidationError, content_fingerprint,
 )
 from content_screening.policies import DEFAULT_LIMITS, compose_policy, default_policy, normalize_limits
-from functions_model_capabilities import resolve_model_reasoning_effort
+from functions_model_capabilities import model_uses_mai_chat_api, resolve_model_reasoning_effort
 from functions_model_endpoint_urls import normalize_endpoint_text
+from functions_model_endpoint_validation import endpoint_uses_mai_chat_completions, endpoint_uses_openai_style_protocol
+import model_endpoint_clients as real_endpoint_clients
 from test_ai_connection_text_consumers import load_boundaries
 from test_model_endpoints_key_vault_secret_storage import (
     load_functions_keyvault_module,
@@ -212,7 +216,7 @@ def adapter_boundaries():
         {
             "ModelEndpointBehavior", "normalize_anthropic_finish_reason",
             "get_endpoint_path", "get_endpoint_origin",
-            "is_anthropic_model", "endpoint_uses_openai_style_protocol", "infer_model_endpoint_protocol",
+            "is_anthropic_model", "infer_model_endpoint_protocol",
             "normalize_openai_style_base_url", "normalize_anthropic_messages_url",
             "resolve_openai_style_request_api_version", "build_openai_style_chat_client",
             "OpenAIStyleChatCompletionClient", "build_anthropic_chat_client",
@@ -223,7 +227,22 @@ def adapter_boundaries():
             "SimpleNamespace": SimpleNamespace, "urlparse": urlparse, "json": json,
             "OpenAI": Mock(), "requests": SimpleNamespace(Response=object, post=Mock()),
             "resolve_model_reasoning_effort": resolve_model_reasoning_effort,
+            "model_uses_mai_chat_api": model_uses_mai_chat_api,
+            "re": re,
             "normalize_endpoint_text": normalize_endpoint_text,
+            # The client module imports this validator rather than defining it.
+            "endpoint_uses_openai_style_protocol": endpoint_uses_openai_style_protocol,
+            # Real request shaping, stream, and error helpers; only SDK transports are faked.
+            **{
+                name: getattr(real_endpoint_clients, name)
+                for name in (
+                    "prepare_mai_chat_request", "resolve_model_stream_read_timeout_seconds",
+                    "build_openai_client_timeout_options", "GENAI_MIL_PROFILE", "prepare_genai_request",
+                    "build_genai_mil_error", "build_sanitized_model_endpoint_error", "responses_request",
+                    "responses_completion", "iter_completed_chat_chunks", "_ResponsesSyncEventStream",
+                    "_SanitizedSyncIterator", "_ManagedSyncStream", "httpx",
+                )
+            },
         },
         constants=(
             "MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI", "MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE",
@@ -269,6 +288,10 @@ class ModelScreeningTests(unittest.TestCase):
                 "resolve_foundry_scope_for_endpoint_auth": Mock(return_value="https://ai.azure.us/.default"),
                 "get_bearer_token_provider": Mock(return_value="test-token-provider"),
                 "build_model_endpoint_identity_headers": self.identity_headers,
+                "resolve_model_stream_read_timeout_seconds": (
+                    real_endpoint_clients.resolve_model_stream_read_timeout_seconds
+                ),
+                "endpoint_uses_mai_chat_completions": endpoint_uses_mai_chat_completions,
             },
         )
         modules = {

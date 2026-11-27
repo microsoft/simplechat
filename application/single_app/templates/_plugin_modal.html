@@ -584,9 +584,99 @@
             </div>
           </div>
 
+          <div id="microsoft-decision-config-section" class="d-none">
+              <div class="alert alert-info mb-3">
+                <strong>Microsoft Decision-1 action:</strong> Makes bounded binary, choice, and score judgments for an agent. It returns typed decisions and probabilities, not written explanations.
+          </div>
+
           <div id="yamcs-config-section" class="d-none">
-            <div class="alert alert-info mb-3">
-              <strong>Yamcs action:</strong> Connect to a Yamcs mission control server for read-only telemetry, mission database, and archive retrieval.
+              <div class="alert alert-info mb-3">
+                <strong>Yamcs action:</strong> Connect to a Yamcs mission control server for read-only telemetry, mission database, and archive retrieval.
+              </div>
+              <div class="alert alert-warning mb-3">
+                <i class="bi bi-person-check me-2"></i>Low-confidence results are marked for review. Do not use this action as the sole decision-maker for consequential decisions about people.
+              </div>
+
+              <div class="simplechat-config-card mb-3">
+                <div class="config-section-label">
+                  <i class="bi bi-diagram-3 me-2"></i>Decision Service
+                </div>
+                <div class="mb-3">
+                  <label for="microsoft-decision-url-mode" class="form-label">Endpoint Format</label>
+                  <select class="form-select" id="microsoft-decision-url-mode">
+                    <option value="foundry">Foundry resource URL</option>
+                    <option value="exact">Exact Decision API URL</option>
+                  </select>
+                  <div class="form-text">A Foundry resource URL appends the Microsoft Decision path. Use Exact for a gateway route, including an APIM revision path.</div>
+                </div>
+                <div class="mb-3">
+                  <label for="microsoft-decision-endpoint" class="form-label">Endpoint <span class="text-danger">*</span></label>
+                  <input type="url" class="form-control" id="microsoft-decision-endpoint" placeholder="https://resource.services.ai.azure.com" />
+                  <div class="form-text" id="microsoft-decision-endpoint-help">The Decision API path is appended automatically.</div>
+                </div>
+                <div class="mb-0">
+                  <label for="microsoft-decision-deployment-name" class="form-label">Deployment Name <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="microsoft-decision-deployment-name" placeholder="microsoft-decision-1" />
+                  <div class="form-text">Use the deployed model name, not the underlying model name.</div>
+                </div>
+              </div>
+
+              <div class="simplechat-config-card mb-3">
+                <div class="config-section-label">
+                  <i class="bi bi-shield-lock me-2"></i>Authentication
+                </div>
+                <div class="mb-3 d-none" id="microsoft-decision-action-identity-group">
+                  <label for="microsoft-decision-identity-select" class="form-label">Reusable Identity</label>
+                  <select class="form-select" id="microsoft-decision-identity-select"></select>
+                  <div class="form-text" id="microsoft-decision-identity-status"></div>
+                </div>
+                <div class="mb-3">
+                  <label for="microsoft-decision-auth-method" class="form-label">Authentication Method</label>
+                  <select class="form-select" id="microsoft-decision-auth-method">
+                    <option value="key">API Key</option>
+                    <option value="identity">System-assigned Managed Identity</option>
+                  </select>
+                </div>
+                <div id="microsoft-decision-api-key-fields">
+                  <div class="mb-3">
+                    <label for="microsoft-decision-api-key-header" class="form-label">API Key Header</label>
+                    <input type="text" class="form-control" id="microsoft-decision-api-key-header" value="api-key" />
+                    <div class="form-text">Direct Foundry uses <code>api-key</code> by default. APIM commonly uses <code>Ocp-Apim-Subscription-Key</code>; change this only when required by the gateway policy.</div>
+                  </div>
+                  <div class="mb-0">
+                    <label for="microsoft-decision-api-key" class="form-label">API Key <span class="text-danger">*</span></label>
+                    <input type="password" class="form-control" id="microsoft-decision-api-key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="simplechat-config-card mb-3">
+                <div class="config-section-label">
+                  <i class="bi bi-sliders me-2"></i>Decision Policy
+                </div>
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label for="microsoft-decision-timeout" class="form-label">Timeout (seconds)</label>
+                    <input type="number" class="form-control" id="microsoft-decision-timeout" value="60" min="1" max="120" />
+                  </div>
+                  <div class="col-md-6">
+                    <label for="microsoft-decision-minimum-confidence" class="form-label">Minimum Confidence</label>
+                    <input type="number" class="form-control" id="microsoft-decision-minimum-confidence" value="0.75" min="0" max="1" step="0.01" />
+                    <div class="form-text">Results below this value are marked for human review.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-4 pt-3 border-top" id="microsoft-decision-test-connection-section">
+                <div class="d-flex align-items-center gap-3">
+                  <button type="button" class="btn btn-outline-primary" id="microsoft-decision-test-connection-btn">
+                    <i class="bi bi-plug me-2"></i>Test Connection <span class="spinner-border spinner-border-sm d-none ms-2" role="status" aria-hidden="true"></span>
+                  </button>
+                </div>
+                <div id="microsoft-decision-test-connection-result" class="mt-2 d-none">
+                  <div class="alert mb-0 py-2 px-3 small" id="microsoft-decision-test-connection-alert" role="alert"></div>
+                </div>
+              </div>
             </div>
             <div class="alert alert-warning mb-3">
               <i class="bi bi-shield-check me-2"></i><strong>Read-only by design.</strong>

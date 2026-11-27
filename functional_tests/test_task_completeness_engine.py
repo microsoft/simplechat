@@ -1,10 +1,10 @@
 # test_task_completeness_engine.py
 """Grounded, bounded task checking and recovery.
 
-Version: 0.261.483
+Version: 0.261.490
 Implemented in: 0.261.382; 0.261.384; 0.261.416; 0.261.418; 0.261.422
 Input-budget numbers on an unavailable check added in: 0.261.478
-Those numbers logged under names telemetry keeps in: 0.261.483
+Those numbers logged under names telemetry keeps in: 0.261.490
 """
 
 import json
@@ -80,7 +80,7 @@ def test_assessment_transport_only_accepts_actual_evidence_keys(evidence):
 def test_a_check_whose_input_does_not_fit_logs_the_budget_numbers():
     """0.261.478: an unavailable check says how far its input was over the model's budget.
 
-    0.261.483: under names telemetry keeps. The audit's own names contain "token", which the
+    0.261.490: under names telemetry keeps. The audit's own names contain "token", which the
     telemetry filter takes for a credential and replaces with a present flag.
     """
     class BudgetError(Exception):

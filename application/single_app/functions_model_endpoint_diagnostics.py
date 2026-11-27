@@ -7,12 +7,45 @@ import traceback
 import uuid
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
+import httpx
+import requests
+from openai import APIError
+from azure.core.exceptions import HttpResponseError, ServiceRequestError, ServiceResponseError
 
 from functions_appinsights import log_event
+from model_endpoint_profiles import GenAIMilRequestError
 
 
 CORRELATION_ID_LENGTH = 8
 MAX_LOGGED_DETAIL_LENGTH = 2000
+MODEL_INVOCATION_ERRORS = (
+    APIError, httpx.HTTPError, requests.RequestException,
+    HttpResponseError, ServiceRequestError, ServiceResponseError,
+)
+
+
+def build_genai_mil_error(exception=None, *, status_code=None, headers=None):
+    """GenAI diagnostics contain status/type only, never echoed key/error bodies."""
+    status_code = status_code or getattr(exception, "status_code", None)
+    headers = headers or getattr(getattr(exception, "response", None), "headers", {}) or {}
+    retry_after = None
+    raw_delay = headers.get("Retry-After")
+    if status_code == 429 and isinstance(raw_delay, str) and re.fullmatch(r"[0-9]{1,6}", raw_delay):
+        retry_after = int(raw_delay)
+    correlation_id = new_model_endpoint_correlation_id()
+    log_event(
+        "[GENAI_MIL] Provider request failed.",
+        extra={
+            "status_code": status_code, "error_type": type(exception).__name__ if exception else "HTTPResponse",
+            "correlation_id": correlation_id,
+        },
+        level=logging.ERROR,
+    )
+    return GenAIMilRequestError(status_code, retry_after=retry_after, reference=correlation_id)
+
+
+# Credentials can appear in an upstream error body, in a repeated request URL, or
+# in a header dump. Redact them before anything is written to the log.
 _REDACTION_PATTERNS = (
     re.compile(r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?)([^\"'\r\n,}]+)"),
     re.compile(r"(?i)([?&](?:key|api[-_]?key|access[-_]?token)=)([^&\s\"']+)"),
@@ -25,9 +58,29 @@ _REDACTION_PATTERNS = (
 class SanitizedModelEndpointError(RuntimeError):
     """Only stable messages and a correlation reference may cross an API boundary."""
 
-    def __init__(self, public_message):
+    def __init__(
+        self,
+        public_message,
+        *,
+        correlation_reference="",
+        status_code=None,
+        api_type="",
+        protocol="",
+        error_type="",
+        request_stage="request",
+        operation_effect_certainty=None,
+    ):
         super().__init__(public_message)
         self.public_message = public_message
+        self.correlation_reference = str(correlation_reference or "")
+        self.status_code = status_code if type(status_code) is int and 100 <= status_code <= 599 else None
+        self.api_type = str(api_type or "")
+        self.protocol = str(protocol or "")
+        self.error_type = error_type if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,100}", str(error_type or "")) else ""
+        self.request_stage = request_stage if request_stage in ("request", "stream", "response") else "request"
+        self.operation_effect_certainty = operation_effect_certainty or (
+            "none" if self.status_code is not None and self.request_stage == "request" else "possible"
+        )
 
 
 def redact_model_endpoint_secrets(value: Any) -> str:
@@ -108,9 +161,25 @@ def build_sanitized_model_endpoint_error(
     request_url: Any = "",
     status_code: Any = None,
     detail: Any = "",
+    request_stage: str = "request",
+    operation_effect_certainty: str | None = None,
 ) -> SanitizedModelEndpointError:
+    if status_code is None:
+        status_code = getattr(exception, "status_code", None)
+    if status_code is None:
+        response = getattr(exception, "response", None)
+        status_code = getattr(response, "status_code", None)
     reference = log_custom_model_endpoint_failure(
         message, exception, api_type=api_type, protocol=protocol,
         request_url=request_url, status_code=status_code, detail=detail,
     )
-    return SanitizedModelEndpointError(f"{message} (reference {reference})")
+    return SanitizedModelEndpointError(
+        f"{message} (reference {reference})",
+        correlation_reference=reference,
+        status_code=status_code,
+        api_type=api_type,
+        protocol=protocol,
+        error_type=type(exception).__name__ if exception is not None else "HTTPResponse",
+        request_stage=request_stage,
+        operation_effect_certainty=operation_effect_certainty,
+    )

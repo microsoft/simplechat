@@ -1,13 +1,16 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.395
+Version: 0.261.484
 Implemented in: 0.261.094
 Single orchestration contract updated in: 0.261.181 (the React V2 branch's 0.261.139)
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
 The public chat list is answered as its route answers it (chat_list), with no generated artifact
 awaiting publication: 0.261.183
 The workspace Chat action starts a brand-new conversation instead of reusing the open one: 0.261.226
+Workspace chat deep-link launch and creation: 0.261.473
+Whole-workspace launch and reasoning roundtrip: 0.261.474
+Shared-editor upload lifecycle stabilization: 0.261.484
 
 The real Composer, DocumentExplorer, stores, router, and request builders run in the
 existing Playwright harness. The shared connection fixture supports a configured Azure
@@ -111,12 +114,96 @@ class ContextApi:
         self.deferred_document_ids = set()
         self.pending_documents = []
         self.expected_resource_errors = set()
+        self.chat_link_creations = []
+        self.chat_stream_bodies = []
 
     def handle(self, route: Route):
         request = route.request
         url = urlsplit(request.url)
         path = url.path
         self.requests.append((request.method, path))
+
+        if request.method == "GET" and path == "/api/chat-links":
+            route.fulfill(json={
+                "links": [],
+                "continuation_token": None,
+                "has_more": False,
+            })
+            return
+        if request.method == "POST" and path == "/api/chat-links":
+            self.chat_link_creations.append(request.post_data_json)
+            sources = request.post_data_json["document_source_selection"]["sources"]
+            all_documents = any(source["kind"] == "workspace" for source in sources)
+            route.fulfill(json={
+                "reference": "LINK1234567890abcdefgh",
+                "path": "/l/LINK1234567890abcdefgh",
+                "created_at": "2026-11-24T12:00:00Z",
+                "expires_at": None,
+                "lifetime_days": None,
+                "routing": request.post_data_json["routing"],
+                "workspace": {"kind": "personal", "display_name": "My workspace"},
+                "document_source_selection": request.post_data_json["document_source_selection"],
+                "document_count": None if all_documents else len(sources),
+                "all_documents": all_documents,
+                "reasoning_effort": request.post_data_json.get("reasoning_effort"),
+                "reasoning_effort_bound": True,
+            })
+            return
+        if request.method == "GET" and path == "/api/chat-links/LINK1234567890abcdefgh":
+            route.fulfill(json={
+                "reference": "LINK1234567890abcdefgh",
+                "path": "/l/LINK1234567890abcdefgh",
+                "created_at": "2026-11-24T12:00:00Z",
+                "expires_at": "2027-02-22T12:00:00Z",
+                "lifetime_days": 90,
+                "routing": {
+                    "kind": "model",
+                    "selection_key": "global:global:endpoint-1:model-1",
+                    "display_name": "Configured model",
+                },
+                "workspace": {"kind": "personal", "display_name": "My workspace"},
+                "document_source_selection": {
+                    "version": 1,
+                    "mode": "selected",
+                    "sources": [{
+                        "kind": "document",
+                        "id": "personal-brief",
+                        "scope": {"kind": "personal"},
+                    }],
+                },
+                "document_count": 1,
+                "all_documents": False,
+                "reasoning_effort": "high",
+                "reasoning_effort_bound": True,
+            })
+            return
+        if request.method == "GET" and path == "/api/chat-links/WS1234567890abcdefghij":
+            route.fulfill(json={
+                "reference": "WS1234567890abcdefghij",
+                "path": "/l/WS1234567890abcdefghij",
+                "created_at": "2026-11-24T12:00:00Z",
+                "expires_at": "2027-02-22T12:00:00Z",
+                "lifetime_days": 90,
+                "routing": {
+                    "kind": "model",
+                    "selection_key": "global:global:endpoint-1:model-1",
+                    "display_name": "Configured model",
+                },
+                "workspace": {"kind": "personal", "display_name": "My workspace"},
+                "document_source_selection": {
+                    "version": 1,
+                    "mode": "selected",
+                    "sources": [{
+                        "kind": "workspace",
+                        "scope": {"kind": "personal"},
+                    }],
+                },
+                "document_count": None,
+                "all_documents": True,
+                "reasoning_effort": "high",
+                "reasoning_effort_bound": True,
+            })
+            return
 
         if request.method == "POST" and path == "/api/create_conversation":
             route.fulfill(json={"conversation_id": HANDOFF_CONVERSATION_ID, "title": "New chat"})
@@ -127,6 +214,12 @@ class ContextApi:
             return
         if request.method == "GET" and path == "/api/v2/orchestration/runs":
             route.fulfill(json={"runs": []})
+            return
+        if request.method == "GET" and path == "/api/v2/orchestration/questions":
+            route.fulfill(json={"questions": [], "csrf_token": "synthetic-csrf"})
+            return
+        if request.method == "GET" and path == "/api/v2/user-input/pending":
+            route.fulfill(json={"requests": [], "csrf_token": "synthetic-csrf"})
             return
         if request.method == "GET" and path.startswith("/api/chat/stream/status/"):
             route.fulfill(json={"active": False, "pending": False, "reattachable": False})
@@ -146,6 +239,8 @@ class ContextApi:
             return
 
         if request.method == "POST" and path in STREAM_PATHS.values():
+            if path == STREAM_PATHS["chat"]:
+                self.chat_stream_bodies.append(request.post_data_json)
             if path == STREAM_PATHS["chat"]:
                 frames = [{"response": "Mock answer."}, {"done": True}]
             else:
@@ -382,6 +477,221 @@ def expect_pills(page: Page, *labels):
     expect(page.locator("button[aria-label^='Remove ']")).to_have_count(len(labels))
     for label in labels:
         expect(page.get_by_role("button", name=f"Remove {label}", exact=True)).to_have_count(1)
+
+
+def test_chat_link_hydrates_exact_setup_and_creates_never_expiring_link(context_page):
+    page, api = context_page
+    page.evaluate(
+        """() => {
+        const H = window.OrchHarness;
+        H.reset();
+        const model = {
+            selection_key: 'global:global:endpoint-1:model-1',
+            model_id: 'model-1',
+            deployment_name: 'deployment-1',
+            endpoint_id: 'endpoint-1',
+            provider: 'aoai',
+            scope_type: 'global',
+            scope_id: 'global',
+            display_name: 'Configured model',
+            model_name: 'Configured model',
+            reasoning_capabilities: {
+                status: 'supported',
+                efforts: ['low', 'medium', 'high'],
+                default_effort: 'medium',
+            },
+        };
+        const bootstrap = H.stores.bootstrap.useBootstrapStore;
+        const data = {
+            features: {
+                enable_user_workspace: true,
+                enable_group_workspaces: true,
+                enable_public_workspaces: true,
+                enable_multi_model_endpoints: true,
+                enable_chat_orchestration: false,
+            },
+            orchestration: {
+                enabled: false,
+                show_manual_controls: true,
+                default_approval_mode: 'manual',
+            },
+            catalogs: {
+                prompts: [],
+                models: [model],
+                agents: [],
+                initial_model_selection: model,
+            },
+            settings: {},
+            user: { id: 'context-tester', display_name: 'Context Tester' },
+            scope: {
+                groups: [{ id: 'group-1', name: 'Marketing' }],
+                public_workspaces: [{ id: 'public-1', name: 'Handbook' }],
+                active_group_id: null,
+                active_public_workspace_id: null,
+            },
+        };
+        bootstrap.setState({
+            data,
+            refreshRequired: async () => bootstrap.getState().data,
+        });
+        H.stores.chat.useChatStore.setState({
+            activeConversationId: null,
+            activeConversationKind: null,
+            messages: [],
+            conversations: [],
+            streaming: false,
+            streamError: null,
+        });
+        H.mount('mount-a', 'ContextWorkflow', { nativeChat: true }, {
+            initialEntries: ['/chat?chat_link=LINK1234567890abcdefgh'],
+        });
+        }""",
+    )
+    expect(page.get_by_role("button", name="Remove Quarterly brief", exact=True)).to_be_visible()
+    expect(page.get_by_label("Current route", exact=True)).to_have_text("/chat")
+    assert not api.chat_link_creations
+    assert not any(path == "/api/create_conversation" for _method, path in api.requests)
+
+    create_link = page.get_by_title("Create chat link", exact=True)
+    if not create_link.is_visible():
+        page.get_by_title("Manual controls", exact=True).click()
+    create_link = page.get_by_title("Create chat link", exact=True)
+    expect(create_link).to_be_visible()
+    create_link.click()
+    expect(page.get_by_role("dialog", name="Create chat link", exact=True)).to_be_visible()
+    page.get_by_label("Expires after", exact=True).select_option("never")
+    page.get_by_role("button", name="Create link", exact=True).click()
+    expect(page.get_by_label("Shareable link", exact=True)).to_have_value(
+        "http://localhost/l/LINK1234567890abcdefgh"
+    )
+    assert api.chat_link_creations[-1]["lifetime_days"] is None
+    assert api.chat_link_creations[-1]["routing"] == {
+        "kind": "model",
+        "selection_key": "global:global:endpoint-1:model-1",
+    }
+    assert api.chat_link_creations[-1]["workspace"] == {"kind": "personal"}
+    assert api.chat_link_creations[-1]["document_source_selection"]["sources"] == [{
+        "kind": "document",
+        "id": "personal-brief",
+        "scope": {"kind": "personal"},
+    }]
+    assert api.chat_link_creations[-1]["reasoning_effort"] == "high"
+    page.get_by_role("button", name="Done", exact=True).click()
+    page.get_by_role("textbox", name="Message", exact=True).fill("Use the linked setup.")
+    with page.expect_request("**/api/chat/stream") as stream_request:
+        page.get_by_role("button", name="Send message", exact=True).click()
+    assert stream_request.value.post_data_json["chat_link_reference"] == "LINK1234567890abcdefgh"
+    assert stream_request.value.post_data_json["document_source_selection"]["sources"] == [{
+        "kind": "document",
+        "id": "personal-brief",
+        "scope": {"kind": "personal"},
+    }]
+    assert stream_request.value.post_data_json["reasoning_effort"] == "high"
+
+
+def test_chat_link_supports_whole_personal_workspace_and_reasoning(context_page):
+    page, api = context_page
+    page.evaluate(
+        """() => {
+        const H = window.OrchHarness;
+        H.reset();
+        const model = {
+            selection_key: 'global:global:endpoint-1:model-1',
+            model_id: 'model-1',
+            deployment_name: 'deployment-1',
+            endpoint_id: 'endpoint-1',
+            provider: 'aoai',
+            scope_type: 'global',
+            scope_id: 'global',
+            display_name: 'Configured model',
+            model_name: 'Configured model',
+            reasoning_capabilities: {
+                status: 'supported',
+                efforts: ['low', 'medium', 'high'],
+                default_effort: 'medium',
+            },
+        };
+        const bootstrap = H.stores.bootstrap.useBootstrapStore;
+        bootstrap.setState({
+            data: {
+                features: {
+                    enable_user_workspace: true,
+                    enable_group_workspaces: true,
+                    enable_public_workspaces: true,
+                    enable_multi_model_endpoints: true,
+                    enable_chat_orchestration: false,
+                },
+                orchestration: {
+                    enabled: false,
+                    show_manual_controls: true,
+                    default_approval_mode: 'manual',
+                },
+                catalogs: {
+                    prompts: [],
+                    models: [model],
+                    agents: [],
+                    initial_model_selection: model,
+                },
+                settings: {},
+                user: { id: 'context-tester', display_name: 'Context Tester' },
+                scope: {
+                    groups: [{ id: 'group-1', name: 'Marketing' }],
+                    public_workspaces: [{ id: 'public-1', name: 'Handbook' }],
+                    active_group_id: null,
+                    active_public_workspace_id: null,
+                },
+            },
+            refreshRequired: async () => bootstrap.getState().data,
+        });
+        H.stores.chat.useChatStore.setState({
+            activeConversationId: null,
+            activeConversationKind: null,
+            messages: [],
+            conversations: [],
+            streaming: false,
+            streamError: null,
+        });
+        H.mount('mount-a', 'ContextWorkflow', { nativeChat: true }, {
+            initialEntries: ['/chat?chat_link=WS1234567890abcdefghij'],
+        });
+        }""",
+    )
+    expect(page.get_by_role("button", name="Remove My workspace", exact=True)).to_be_visible()
+    expect(page.get_by_label("Current route", exact=True)).to_have_text("/chat")
+    assert not any(path == "/api/create_conversation" for _method, path in api.requests)
+
+    create_link = page.get_by_title("Create chat link", exact=True)
+    if not create_link.is_visible():
+        page.get_by_title("Manual controls", exact=True).click()
+    page.get_by_title("Create chat link", exact=True).click()
+    expect(page.get_by_role("dialog", name="Create chat link", exact=True)).to_contain_text(
+        "All documents"
+    )
+    page.get_by_label("Expires after", exact=True).select_option("90")
+    page.get_by_role("button", name="Create link", exact=True).click()
+    expect(page.get_by_label("Shareable link", exact=True)).to_have_value(
+        "http://localhost/l/LINK1234567890abcdefgh"
+    )
+    created = api.chat_link_creations[-1]
+    assert created["workspace"] == {"kind": "personal"}
+    assert created["document_source_selection"]["sources"] == [{
+        "kind": "workspace",
+        "scope": {"kind": "personal"},
+    }]
+    assert created["reasoning_effort"] == "high"
+    page.get_by_role("button", name="Done", exact=True).click()
+    page.get_by_role("textbox", name="Message", exact=True).fill(
+        "Use the whole linked workspace."
+    )
+    with page.expect_request("**/api/chat/stream") as stream_request:
+        page.get_by_role("button", name="Send message", exact=True).click()
+    sent = stream_request.value.post_data_json
+    assert sent["chat_link_reference"] == "WS1234567890abcdefghij"
+    assert sent["document_source_selection"]["sources"] == [{
+        "kind": "workspace",
+        "scope": {"kind": "personal"},
+    }]
+    assert sent["reasoning_effort"] == "high"
 
 
 def open_picker(page: Page):
@@ -1242,7 +1552,7 @@ def test_shared_editor_paging_marks_interrupted_transfer_actionable_and_retries(
     assert "Retry" in interrupted["error"]
     assert page.evaluate("() => window.deferredEditorRequest.signal.aborted") is True
     page.evaluate("() => window.deferredEditorRequest.release()")
-    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_disabled()
+    expect(card.get_by_role("button", name="Review answers", exact=True)).to_be_disabled()
     assert read_inline_lifecycle_draft(page)["editors"]["files"]["uploads"][0]["state"] == "failed"
     card.get_by_role("button", name="Back", exact=True).click()
     expect(card.get_by_role("alert").filter(has_text="transfer was interrupted")).to_be_visible()
@@ -1256,7 +1566,7 @@ def test_shared_editor_paging_marks_interrupted_transfer_actionable_and_retries(
     assert retried["reference"]["scope"]["id"] == CONVERSATION_ID
     card.get_by_role("button", name="Next", exact=True).click()
     expect(card.get_by_role("textbox", name="Details", exact=True)).to_have_value("Keep the second answer.")
-    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_enabled()
+    expect(card.get_by_role("button", name="Review answers", exact=True)).to_be_enabled()
 
 
 def test_shared_editor_retained_processing_and_prompt_values_survive_remount(context_page):
@@ -1325,7 +1635,7 @@ def test_shared_editor_retained_processing_and_prompt_values_survive_remount(con
         CONVERSATION_ID,
     )
     expect(card.get_by_role("textbox", name="Details", exact=True)).to_have_value("The independent second answer.")
-    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_enabled()
+    expect(card.get_by_role("button", name="Review answers", exact=True)).to_be_enabled()
     card.get_by_role("button", name="Back", exact=True).click()
     expect(card.get_by_text("Ready", exact=True)).to_be_visible()
     card.get_by_role("button", name="Edit Lifecycle prompt for this message", exact=True).click()
@@ -1339,7 +1649,7 @@ def test_shared_editor_retained_processing_and_prompt_values_survive_remount(con
     assert resumed["editors"]["details"]["attachedPrompt"] is None
     assert len(uploads) == 1, "Remounting must check the existing file, not upload it a second time."
     card.get_by_role("button", name="Next", exact=True).click()
-    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_enabled()
+    expect(card.get_by_role("button", name="Review answers", exact=True)).to_be_enabled()
 
 
 @pytest.mark.parametrize("retirement", ["discard", "supersede", "remove"])

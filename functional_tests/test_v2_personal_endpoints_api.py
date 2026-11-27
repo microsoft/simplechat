@@ -1,7 +1,7 @@
 # test_v2_personal_endpoints_api.py
 """
 Functional tests for native V2 personal endpoint editing.
-Version: 0.261.315
+Version: 0.261.428
 Implemented in: 0.261.315
 
 Exercise real registered personal routes, normalization, and Key Vault helpers
@@ -63,7 +63,7 @@ def test_personal_list_exposes_registry_not_settings_or_credentials(personal):
     response = personal.call("GET", BASE)
     assert response.status_code == 200
     payload = response.get_json()
-    assert set(payload) == {"endpoints", "custom_api_types"}
+    assert set(payload) == {"endpoints", "custom_api_types", "revision"}
     assert {entry["value"] for entry in payload["custom_api_types"]} == {
         "openai", "azure_openai", "anthropic", "gemini",
     }

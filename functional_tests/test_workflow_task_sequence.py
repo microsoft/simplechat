@@ -1,11 +1,12 @@
 # test_workflow_task_sequence.py
 """
 Functional test for ordered workflow task sequences.
-Version: 0.261.122
+Version: 0.261.463
 Implemented in: 0.250.064
 Enhanced in: 0.250.065
 Enhanced in: 0.250.129
 Enhanced in: 0.250.225
+Model binding scope coverage enhanced in: 0.261.463
 
 This test ensures workflow tasks are normalized in order, execute with durable
 prior-task results, retry safely, and honor halt or continue error strategies.
@@ -411,7 +412,14 @@ def test_group_task_agent_authorization() -> None:
         "per_user_semantic_kernel": True,
         "merge_global_semantic_kernel_with_workspace": False,
         "allow_group_custom_endpoints": True,
-        "model_endpoints": [],
+        "model_endpoints": [
+            {
+                "id": "global-endpoint",
+                "name": "Global endpoint",
+                "provider": "openai",
+                "models": [{"id": "global-model", "displayName": "Global Model"}],
+            }
+        ],
     }
     helpers, role_checks = load_group_task_runner_helpers(
         group_agents=[{"id": "group-agent", "name": "group_server_name", "group_id": "group-1"}],
@@ -452,6 +460,52 @@ def test_group_task_agent_authorization() -> None:
         settings=settings,
     )
     assert model_runner["model_binding_summary"]["scope"] == "group"
+    assert model_runner["model_binding_summary"]["scope_type"] == "group"
+    assert model_runner["model_binding_summary"]["scope_id"] == "group-1"
+
+    global_model_runner = helpers["normalize_group_workflow_task_runner"](
+        "member-1",
+        "group-1",
+        {"type": "model", "model_endpoint_id": "global-endpoint", "model_id": "global-model"},
+        settings=settings,
+    )
+    assert global_model_runner["model_binding_summary"]["scope_type"] == "global"
+    assert global_model_runner["model_binding_summary"]["scope_id"] == "global"
+
+    duplicate_endpoint = {
+        "id": "global-endpoint",
+        "name": "Ambiguous endpoint",
+        "provider": "openai",
+        "models": [{"id": "global-model", "displayName": "Group duplicate"}],
+    }
+    duplicate_helpers, _ = load_group_task_runner_helpers(
+        group_agents=[],
+        global_agents=[],
+        settings=settings,
+        group_endpoints=[duplicate_endpoint],
+    )
+    ambiguous_runner = {
+        "type": "model",
+        "model_endpoint_id": "global-endpoint",
+        "model_id": "global-model",
+    }
+    try:
+        duplicate_helpers["normalize_group_workflow_task_runner"](
+            "member-1", "group-1", ambiguous_runner, settings=settings,
+        )
+    except ValueError as exc:
+        assert "scope is required" in str(exc)
+    else:
+        raise AssertionError("Ambiguous legacy task model bindings must be rejected.")
+
+    scoped_runner = duplicate_helpers["normalize_group_workflow_task_runner"](
+        "member-1",
+        "group-1",
+        {**ambiguous_runner, "model_scope_type": "global", "model_scope_id": "global"},
+        settings=settings,
+    )
+    assert scoped_runner["model_scope_type"] == "global"
+    assert scoped_runner["model_scope_id"] == "global"
 
     for invalid_agent in (
         {"id": "cross-group-agent", "is_global": False, "is_group": True, "group_id": "other-group"},
@@ -604,6 +658,8 @@ def test_alternating_task_runners_and_audit_metadata() -> None:
             "type": "model",
             "model_endpoint_id": requested_runner["model_endpoint_id"],
             "model_id": requested_runner["model_id"],
+            "model_scope_type": requested_runner.get("model_scope_type") or "global",
+            "model_scope_id": requested_runner.get("model_scope_id") or "global",
             "model_provider": "aoai",
             "model_binding_summary": {
                 "endpoint_id": requested_runner["model_endpoint_id"],
@@ -638,13 +694,19 @@ def test_alternating_task_runners_and_audit_metadata() -> None:
             "runner_type": "model",
             "model_endpoint_id": "default-endpoint",
             "model_id": "default-model",
+            "model_scope_type": "group",
+            "model_scope_id": "group-parent",
             "document_action": {"type": "none"},
             "tasks": [
                 {
                     "id": "extract",
                     "name": "Extract",
                     "instructions": "Extract.",
-                    "runner": {"type": "model", "model_endpoint_id": "fast-endpoint", "model_id": "fast-model"},
+                    "runner": {
+                        "type": "model", "model_endpoint_id": "fast-endpoint",
+                        "model_id": "fast-model", "model_scope_type": "global",
+                        "model_scope_id": "global",
+                    },
                 },
                 {
                     "id": "research",
@@ -656,7 +718,11 @@ def test_alternating_task_runners_and_audit_metadata() -> None:
                     "id": "evaluate",
                     "name": "Evaluate",
                     "instructions": "Evaluate.",
-                    "runner": {"type": "model", "model_endpoint_id": "reason-endpoint", "model_id": "reason-model"},
+                    "runner": {
+                        "type": "model", "model_endpoint_id": "reason-endpoint",
+                        "model_id": "reason-model", "model_scope_type": "global",
+                        "model_scope_id": "global",
+                    },
                 },
             ],
             "error_handling": {"strategy": "halt", "retry_count": 0},
@@ -670,7 +736,11 @@ def test_alternating_task_runners_and_audit_metadata() -> None:
 
     assert [workflow["runner_type"] for workflow in dispatched_workflows] == ["model", "agent", "model"]
     assert dispatched_workflows[0]["model_id"] == "fast-model"
+    assert dispatched_workflows[0]["model_scope_type"] == "global"
+    assert dispatched_workflows[0]["model_scope_id"] == "global"
     assert dispatched_workflows[1]["selected_agent"]["name"] == "server_research"
+    assert dispatched_workflows[1]["model_scope_type"] == ""
+    assert dispatched_workflows[1]["model_scope_id"] == ""
     assert dispatched_workflows[2]["model_id"] == "reason-model"
     succeeded_items = [item for item in saved_items if item["status"] == "succeeded"]
     assert [item["runner"]["requested_mode"] for item in succeeded_items] == ["model", "agent", "model"]

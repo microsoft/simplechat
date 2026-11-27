@@ -471,6 +471,8 @@ function normalizeWorkflowTaskRunner(runner) {
             type: "model",
             model_endpoint_id: normalizeText(source.model_endpoint_id),
             model_id: normalizeText(source.model_id),
+            model_scope_type: normalizeText(source.model_scope_type || source.model_binding_summary?.scope_type || source.model_binding_summary?.scope),
+            model_scope_id: normalizeText(source.model_scope_id || source.model_binding_summary?.scope_id),
         };
     }
     if (runnerType === "agent") {
@@ -698,6 +700,8 @@ function getWorkflowTaskRunnerSummary(task) {
 
     const endpoint = getCustomEndpointOptions().find(
         (candidate) => normalizeText(candidate.id) === runner.model_endpoint_id
+            && (!runner.model_scope_type || normalizeText(candidate.scope) === runner.model_scope_type)
+            && (!runner.model_scope_id || normalizeText(candidate.scope_id) === runner.model_scope_id)
     );
     const model = endpoint?.models?.find((candidate) => normalizeText(candidate.id) === runner.model_id);
     if (endpoint && model) {
@@ -761,13 +765,15 @@ function getWorkflowTaskModelEndpoints(source = "") {
     ));
 }
 
-function populateWorkflowTaskModelSourceSelect(selectedEndpointId = "") {
+function populateWorkflowTaskModelSourceSelect(selectedEndpointId = "", selectedScopeType = "", selectedScopeId = "") {
     if (!workflowTaskModelSourceSelect) {
         return "global";
     }
     const allEndpoints = getCustomEndpointOptions();
     const selectedEndpoint = allEndpoints.find(
         (endpoint) => normalizeText(endpoint.id) === normalizeText(selectedEndpointId)
+            && (!selectedScopeType || normalizeText(endpoint.scope) === selectedScopeType)
+            && (!selectedScopeId || !normalizeText(endpoint.scope_id) || normalizeText(endpoint.scope_id) === selectedScopeId)
     );
     const globalOption = Array.from(workflowTaskModelSourceSelect.options).find((option) => option.value === "global");
     const workspaceOption = Array.from(workflowTaskModelSourceSelect.options).find((option) => option.value === "workspace");
@@ -791,7 +797,7 @@ function populateWorkflowTaskModelSourceSelect(selectedEndpointId = "") {
     return source;
 }
 
-function populateWorkflowTaskModelEndpointSelect(selectedEndpointId = "") {
+function populateWorkflowTaskModelEndpointSelect(selectedEndpointId = "", selectedScopeType = "", selectedScopeId = "") {
     if (!workflowTaskModelEndpointSelect) {
         return "";
     }
@@ -800,11 +806,22 @@ function populateWorkflowTaskModelEndpointSelect(selectedEndpointId = "") {
     endpoints.forEach((endpoint, index) => {
         const option = document.createElement("option");
         option.value = normalizeText(endpoint.id);
+        option.dataset.scopeType = normalizeText(endpoint.scope);
+        option.dataset.scopeId = normalizeText(endpoint.scope_id);
         option.textContent = getEndpointDisplayName(endpoint);
-        option.selected = (selectedEndpointId && option.value === selectedEndpointId) || (!selectedEndpointId && index === 0);
+        option.selected = (
+            selectedEndpointId
+            && option.value === selectedEndpointId
+            && (!selectedScopeType || option.dataset.scopeType === selectedScopeType)
+            && (!selectedScopeId || !option.dataset.scopeId || option.dataset.scopeId === selectedScopeId)
+        ) || (!selectedEndpointId && index === 0);
         workflowTaskModelEndpointSelect.appendChild(option);
     });
-    if (selectedEndpointId && !endpoints.some((endpoint) => normalizeText(endpoint.id) === selectedEndpointId)) {
+    if (selectedEndpointId && !endpoints.some((endpoint) => (
+        normalizeText(endpoint.id) === selectedEndpointId
+        && (!selectedScopeType || normalizeText(endpoint.scope) === selectedScopeType)
+        && (!selectedScopeId || !normalizeText(endpoint.scope_id) || normalizeText(endpoint.scope_id) === selectedScopeId)
+    ))) {
         const option = document.createElement("option");
         option.value = selectedEndpointId;
         option.textContent = `${selectedEndpointId} (Unavailable)`;
@@ -827,7 +844,12 @@ function populateWorkflowTaskModelSelect(selectedModelId = "") {
         return;
     }
     const endpointId = normalizeText(workflowTaskModelEndpointSelect?.value);
-    const endpoint = getCustomEndpointOptions().find((candidate) => normalizeText(candidate.id) === endpointId);
+    const selectedOption = workflowTaskModelEndpointSelect?.selectedOptions?.[0];
+    const endpoint = getWorkflowTaskModelEndpoints(workflowTaskModelSourceSelect?.value).find(
+        (candidate) => normalizeText(candidate.id) === endpointId
+            && normalizeText(candidate.scope) === normalizeText(selectedOption?.dataset?.scopeType)
+            && normalizeText(candidate.scope_id) === normalizeText(selectedOption?.dataset?.scopeId)
+    );
     const models = Array.isArray(endpoint?.models) ? endpoint.models : [];
     clearElementChildren(workflowTaskModelSelect);
     models.forEach((model, index) => {
@@ -860,8 +882,16 @@ function updateWorkflowTaskRunnerFields(runner = null) {
     setElementVisibility(workflowTaskModelFields, runnerType === "model");
     setElementVisibility(workflowTaskAgentFields, runnerType === "agent");
     if (runnerType === "model") {
-        populateWorkflowTaskModelSourceSelect(normalizedRunner.model_endpoint_id);
-        populateWorkflowTaskModelEndpointSelect(normalizedRunner.model_endpoint_id);
+        populateWorkflowTaskModelSourceSelect(
+            normalizedRunner.model_endpoint_id,
+            normalizedRunner.model_scope_type,
+            normalizedRunner.model_scope_id
+        );
+        populateWorkflowTaskModelEndpointSelect(
+            normalizedRunner.model_endpoint_id,
+            normalizedRunner.model_scope_type,
+            normalizedRunner.model_scope_id
+        );
         populateWorkflowTaskModelSelect(normalizedRunner.model_id);
     } else if (runnerType === "agent") {
         populateWorkflowTaskAgentSelect(normalizedRunner.selected_agent);
@@ -975,10 +1005,13 @@ function syncActiveWorkflowTaskFromEditor() {
     activeTask.instructions = normalizeText(workflowTaskPromptInput?.value);
     const runnerType = normalizeText(workflowTaskRunnerTypeSelect?.value) || "inherit";
     if (runnerType === "model") {
+        const selectedOption = workflowTaskModelEndpointSelect?.selectedOptions?.[0];
         activeTask.runner = {
             type: "model",
             model_endpoint_id: normalizeText(workflowTaskModelEndpointSelect?.value),
             model_id: normalizeText(workflowTaskModelSelect?.value),
+            model_scope_type: normalizeText(selectedOption?.dataset?.scopeType),
+            model_scope_id: normalizeText(selectedOption?.dataset?.scopeId),
         };
     } else if (runnerType === "agent") {
         const existingRunner = normalizeWorkflowTaskRunner(activeTask.runner);
@@ -1295,6 +1328,8 @@ function validateWorkflowTasks() {
         if (runner.type === "model") {
             const endpoint = getCustomEndpointOptions().find(
                 (candidate) => normalizeText(candidate.id) === runner.model_endpoint_id
+                    && (!runner.model_scope_type || normalizeText(candidate.scope) === runner.model_scope_type)
+                    && (!runner.model_scope_id || normalizeText(candidate.scope_id) === runner.model_scope_id)
             );
             const model = endpoint?.models?.find((candidate) => normalizeText(candidate.id) === runner.model_id);
             if (!endpoint || !model) {
@@ -3618,6 +3653,22 @@ function getCustomEndpointOptions() {
                 ...endpoint,
                 models: enabledModels,
                 scope: group.scope,
+                scope_id: normalizeText(
+                    endpoint.scope_id
+                    || endpoint._endpoint_scope_id
+                    || (
+                        group.scope === "global"
+                            ? "global"
+                            : group.scope === "group"
+                                ? getWorkflowActiveGroupId()
+                                : normalizeText(
+                                    workflowWorkspaceConfig.userId
+                                    || window.current_user_id
+                                    || window.currentUser?.id
+                                    || ""
+                                )
+                    )
+                ),
                 scopeLabel: group.scopeLabel,
             });
         });
@@ -3648,7 +3699,12 @@ function getSelectedAgentOption() {
 
 function getSelectedEndpointOption() {
     const endpointId = normalizeText(workflowModelEndpointSelect?.value);
-    return getCustomEndpointOptions().find((endpoint) => normalizeText(endpoint.id) === endpointId) || null;
+    const selectedOption = workflowModelEndpointSelect?.selectedOptions?.[0];
+    return getCustomEndpointOptions().find((endpoint) => (
+        normalizeText(endpoint.id) === endpointId
+        && normalizeText(endpoint.scope) === normalizeText(selectedOption?.dataset?.scopeType)
+        && normalizeText(endpoint.scope_id) === normalizeText(selectedOption?.dataset?.scopeId)
+    )) || null;
 }
 
 function refreshWorkflowSummary(items) {
@@ -3939,7 +3995,7 @@ function refreshModelSourceOptions() {
     }
 }
 
-function populateEndpointSelect(selectedEndpointId = "") {
+function populateEndpointSelect(selectedEndpointId = "", selectedScopeType = "", selectedScopeId = "") {
     if (!workflowModelEndpointSelect) {
         return;
     }
@@ -3956,8 +4012,16 @@ function populateEndpointSelect(selectedEndpointId = "") {
     endpoints.forEach((endpoint, index) => {
         const option = document.createElement("option");
         option.value = normalizeText(endpoint.id);
+        option.dataset.scopeType = normalizeText(endpoint.scope);
+        option.dataset.scopeId = normalizeText(endpoint.scope_id);
         option.textContent = getEndpointDisplayName(endpoint);
-        if ((selectedEndpointId && option.value === selectedEndpointId) || (!selectedEndpointId && index === 0)) {
+        if (
+            (selectedEndpointId
+                && option.value === selectedEndpointId
+                && (!selectedScopeType || option.dataset.scopeType === selectedScopeType)
+                && (!selectedScopeId || !option.dataset.scopeId || option.dataset.scopeId === selectedScopeId))
+            || (!selectedEndpointId && index === 0)
+        ) {
             option.selected = true;
         }
         workflowModelEndpointSelect.appendChild(option);
@@ -3966,12 +4030,19 @@ function populateEndpointSelect(selectedEndpointId = "") {
     workflowModelEndpointSelect.disabled = false;
 }
 
-function populateModelSelect(selectedEndpointId = "", selectedModelId = "") {
+function populateModelSelect(selectedEndpointId = "", selectedModelId = "", selectedScopeType = "", selectedScopeId = "") {
     if (!workflowModelSelect) {
         return;
     }
 
-    const endpoint = getCustomEndpointOptions().find((item) => normalizeText(item.id) === selectedEndpointId) || getSelectedEndpointOption();
+    const selectedOption = workflowModelEndpointSelect?.selectedOptions?.[0];
+    selectedScopeType = normalizeText(selectedScopeType || selectedOption?.dataset?.scopeType);
+    selectedScopeId = normalizeText(selectedScopeId || selectedOption?.dataset?.scopeId);
+    const endpoint = getCustomEndpointOptions().find((item) => (
+        normalizeText(item.id) === selectedEndpointId
+        && (!selectedScopeType || normalizeText(item.scope) === selectedScopeType)
+        && (!selectedScopeId || !normalizeText(item.scope_id) || normalizeText(item.scope_id) === selectedScopeId)
+    )) || getSelectedEndpointOption();
     workflowModelSelect.innerHTML = "";
 
     if (!endpoint) {
@@ -4032,8 +4103,26 @@ function updateRunnerFields() {
         populateAgentSelect(currentEditingWorkflow?.selected_agent || null);
     } else {
         refreshModelSourceOptions();
-        populateEndpointSelect(normalizeText(currentEditingWorkflow?.model_endpoint_id));
-        populateModelSelect(normalizeText(workflowModelEndpointSelect?.value), normalizeText(currentEditingWorkflow?.model_id));
+        populateEndpointSelect(
+            normalizeText(currentEditingWorkflow?.model_endpoint_id),
+            normalizeText(currentEditingWorkflow?.model_scope_type || currentEditingWorkflow?.model_binding_summary?.scope_type || currentEditingWorkflow?.model_binding_summary?.scope),
+            normalizeText(currentEditingWorkflow?.model_scope_id || currentEditingWorkflow?.model_binding_summary?.scope_id)
+        );
+        const currentScopeType = normalizeText(
+            currentEditingWorkflow?.model_scope_type
+            || currentEditingWorkflow?.model_binding_summary?.scope_type
+            || currentEditingWorkflow?.model_binding_summary?.scope
+        );
+        const currentScopeId = normalizeText(
+            currentEditingWorkflow?.model_scope_id
+            || currentEditingWorkflow?.model_binding_summary?.scope_id
+        );
+        populateModelSelect(
+            normalizeText(workflowModelEndpointSelect?.value),
+            normalizeText(currentEditingWorkflow?.model_id),
+            currentScopeType,
+            currentScopeId
+        );
         updateModelHelpText();
     }
 }
@@ -4387,8 +4476,17 @@ async function openWorkflowModal(workflow = null) {
                 workflowModelSourceSelect.value = useCustomModel ? "custom" : "default";
             }
             refreshModelSourceOptions();
-            populateEndpointSelect(normalizeText(workflow.model_endpoint_id));
-            populateModelSelect(normalizeText(workflow.model_endpoint_id || workflowModelEndpointSelect?.value), normalizeText(workflow.model_id));
+            populateEndpointSelect(
+                normalizeText(workflow.model_endpoint_id),
+                normalizeText(workflow.model_scope_type || workflow.model_binding_summary?.scope_type || workflow.model_binding_summary?.scope),
+                normalizeText(workflow.model_scope_id || workflow.model_binding_summary?.scope_id)
+            );
+            populateModelSelect(
+                normalizeText(workflow.model_endpoint_id || workflowModelEndpointSelect?.value),
+                normalizeText(workflow.model_id),
+                normalizeText(workflow.model_scope_type || workflow.model_binding_summary?.scope_type || workflow.model_binding_summary?.scope),
+                normalizeText(workflow.model_scope_id || workflow.model_binding_summary?.scope_id)
+            );
         }
     }
 
@@ -4667,6 +4765,9 @@ function buildWorkflowPayload() {
         }
         payload.model_endpoint_id = endpointId;
         payload.model_id = modelId;
+        const selectedEndpoint = getSelectedEndpointOption();
+        payload.model_scope_type = normalizeText(selectedEndpoint?.scope);
+        payload.model_scope_id = normalizeText(selectedEndpoint?.scope_id);
     }
 
     if (["interval", "file_sync"].includes(triggerType)) {

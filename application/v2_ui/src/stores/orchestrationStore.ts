@@ -28,6 +28,7 @@ import { isOrchestrationRunPending, isOrchestrationRunWaiting, normalizeOrchestr
 import { createElicitationDraft, type ElicitationDraft } from '../lib/elicitationAnswers';
 import { canAdoptCompletenessReport } from '../lib/taskCompleteness';
 import type { OrchestrationOutputRetry } from '../lib/orchestrationOutputs';
+import { normalizeStepContextFill, type StepContextFill } from '../lib/contextUsage';
 import {
     applyPlanEdits,
     disableStep as narrowDisableStep,
@@ -88,6 +89,8 @@ function coerceStepStatus(value: unknown): StepStatus | null {
 export interface StepRuntime {
     task_completeness?: unknown;
     model_binding?: OrchestrationStep['model_binding'];
+    /** The step's fullest single request against its model's limit, once it has run. */
+    context_fill?: StepContextFill;
     status: StepStatus;
     summary: string;
     reused?: boolean;
@@ -950,6 +953,8 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         const patch: Partial<StepRuntime> = {};
         if (event.task_completeness) patch.task_completeness = event.task_completeness;
         if (event.model_binding) patch.model_binding = normalizeModelBinding(event.model_binding);
+        const eventFill = normalizeStepContextFill((event as Record<string, unknown>).context_fill);
+        if (eventFill) patch.context_fill = eventFill;
         if (typeof event.reused === 'boolean') patch.reused = event.reused;
         if (event.failure) patch.failure = normalizeOrchestrationFailure(event.failure);
         const status = coerceStepStatus(event.status);
@@ -1172,6 +1177,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 const status = coerceStepStatus(record.status) ?? runtime[stepId]?.status ?? 'pending';
                 runtime[stepId] = {
                     model_binding: normalizeModelBinding(record.model_binding),
+                    context_fill: normalizeStepContextFill((record as Record<string, unknown>).context_fill),
                     status,
                     summary: typeof record.summary === 'string' ? record.summary : '',
                     reused: record.reused === true,

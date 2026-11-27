@@ -1,6 +1,6 @@
 # Word Comment Request and Budget Size Telemetry Fix
 
-Fixed in version: **0.261.483**
+Fixed in version: **0.261.490**
 
 Three faults with a known cause, from the 0.261.482 run.
 

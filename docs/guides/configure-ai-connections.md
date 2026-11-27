@@ -4,7 +4,7 @@ title: "Configure AI connections"
 description: "Configure shared AI resources once and choose independent chat, image, and embedding defaults."
 section: "Guides"
 audience: admin
-version: "0.261.410"
+version: "0.261.461"
 ---
 
 ## What this does
@@ -80,6 +80,40 @@ an image operation cannot grant service access the resource does not have.
 If you manually declare support for an internally named model, verify the provider's
 operation contract first. Do not mark it image-capable just to make an empty picker
 show a choice.
+
+## Add a model persona
+
+Implemented in version: **0.261.461** for tracked work in
+[microsoft/simplechat#1929](https://github.com/microsoft/simplechat/issues/1929).
+
+An eligible chat model can carry supplemental Markdown behavior without being
+converted into an agent. In the model row, enable **Model persona**, enter up to
+8,000 Unicode characters, preview the result, and choose whether ordinary users
+can read the persona text. Users can always see when a persona is active. The
+model row remains compact when disabled; enabling the persona reveals the
+Markdown and visibility controls without clearing the draft.
+
+In the chat model picker, a person icon marks models with active personas. Hover
+or focus shows a short preview when the text is visible. Click or tap the icon
+to read the full basic-Markdown persona without changing the selected model.
+When the persona text is hidden, the picker still shows that a persona is
+enabled but does not reveal its content.
+
+The persona is added to direct text-generation requests and is never saved into
+conversation history. It applies to chat, direct workflows, summaries, and other
+tasks bound to that exact AI Connection model. Agents do not use model personas;
+they continue to use agent instructions. Embedding-only and image-only models do
+not offer persona controls, and direct embedding or image operations do not
+receive persona text.
+
+Keep persona guidance supplemental. Application safety, authorization, required
+task formats, and grounding remain in force. Long personas increase token usage,
+and SimpleChat summarizes earlier context before reporting that a request no
+longer fits.
+
+Disabling a persona is an immediate rollback and keeps its draft text. Clear the
+text and save the disabled state to remove it. Model persona content is not a
+secret store: a model can repeat instructions in a generated response.
 
 ### Direct OpenAI through Custom
 
@@ -197,8 +231,16 @@ a dated API version. A v1 inference endpoint uses `/openai/v1/` without a dated
 query; setting the version field to `v1` alone does not change a legacy route.
 Foundry project discovery keeps its own version field.
 
-To opt into reasoning with function tools on a supported OpenAI/Azure model,
-select **Use Responses API** on its connection. Enter the resource or gateway
+For explicit Custom model routes in **0.261.436**, choose **Request API** on
+each model in either editor. Select **Responses (/v1/responses)** or
+**Responses (/openai/v1/responses)** to match the gateway; **Anthropic
+Messages** is a separate choice. **Preview Route** resolves the URL without
+saving, using credentials, or running inference. **Test Connection** uses the
+saved model and credentials. Existing connection-wide settings are not
+silently converted. Dated Azure Responses is not a supported choice.
+
+On legacy connections that expose the switch, select **Use Responses API**
+to opt in on a supported OpenAI/Azure model. Enter the resource or gateway
 API base; pasting a full operation such as
 `https://<resource>.openai.azure.com/openai/v1/responses` checks the switch and
 saves the base without `/responses`. The API choice is stored separately and
@@ -257,8 +299,16 @@ Use the independent embedding default for document indexing, semantic retrieval,
 fact memory, and the default Embedding Model action. It is global across personal,
 group, and public workspaces; it does not require enabling chat connections.
 
+As of **0.261.436**, publish the model with **Use for embeddings** in AI
+Connections and edit its **Embedding routing** details there. A model without
+an override uses its saved connection's embedding settings or provider defaults.
+Use a model-specific override when only that model needs a different base, API
+version, or gateway header. Credentials stay on the connection. In **Embeddings**,
+see the effective request URL, test the saved default, or jump back to its model
+to edit it. An upgrade does not automatically migrate existing routes or vectors.
+
 For Foundry, keep the project endpoint for deployment discovery and configure an
-explicit **embedding inference endpoint**. A project URL containing
+explicit **embedding inference base URL** on its embedding model. A project URL containing
 `/api/projects/` does not route embeddings. Current Azure-compatible inference uses
 the resource API base ending in `/openai/v1/`.
 

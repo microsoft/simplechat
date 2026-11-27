@@ -1,4 +1,4 @@
-# Feature documentation and full-slide explanations; capability snapshot 0.261.428.
+# Feature documentation and full-slide explanations; capability snapshot 0.261.474.
 # Collection page bodies are generated; keep durable explanations here.
 admin-support-exports:
   name: "Diagnostic support exports"
@@ -63,6 +63,21 @@ chat-file-uploads:
   guides:
     - title: "Upload documents in chat"
       url: /guides/upload-documents-in-chat/
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+workspace-chat-deep-links:
+  name: "Workspace chat deep links"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Creates short opaque URLs for an exact runner, one whole workspace or selected documents, and the selected reasoning effort."
+  why: "Use these links to communicate a repeatable chat setup through plain-text email. They never grant access: recipients are checked again against current workspace, sharing, model, agent, and document permissions when they open and first send."
+  default_state: "Enabled"
+  admin_tab: chat
+  setting_keys: []
+  guides:
+    - title: "Create workspace chat links"
+      url: /guides/create-workspace-chat-links/
   reference:
     - title: "Chat interface reference"
       url: /reference/chat-controls/
@@ -432,6 +447,19 @@ document-access-index:
   reference:
     - title: "Admin configuration reference"
       url: /reference/admin_configuration/
+cosmos-replay-index-exclusion:
+  name: "Cosmos replay-only index exclusion"
+  area: "Platform and operations"
+  audience: "Admins"
+  summary: "Keeps streamed replay text out of the Cosmos index for new attempts when Redis is off, without buffering replies."
+  why: "Use this on smaller installations where long replies spend substantial throughput maintaining an index that reconnect does not query."
+  default_state: "Off"
+  admin_tab: scale
+  setting_keys:
+    - enable_cosmos_replay_index_exclusion
+  reference:
+    - title: "Cosmos Maintenance settings"
+      url: /admin/scale/#optimize-cosmos-replay-when-redis-is-off
 retention-policies:
   name: "Retention policies"
   area: "Documents and workspaces"

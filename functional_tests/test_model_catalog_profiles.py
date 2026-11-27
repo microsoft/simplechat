@@ -42,7 +42,10 @@ def custom_profile(**updates):
 def candidate(key, tasks, *, favorite=False, priority="standard", capabilities=None):
     return {
         "key": key, "label": key,
-        "selection": {"model_deployment": key, "model_endpoint_id": f"ep-{key}", "model_id": key, "model_provider": "custom"},
+        "selection": {
+            "model_deployment": key, "model_endpoint_id": f"ep-{key}", "model_id": key,
+            "model_provider": "custom", "model_scope_type": "global", "model_scope_id": "global",
+        },
         "profile": {
             "id": key, "revision": "one", "tasks": tasks, "archived": False,
             "preferences": {"favorite": favorite, "priority": priority},

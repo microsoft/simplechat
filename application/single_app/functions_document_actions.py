@@ -9,7 +9,8 @@ from functions_document_analysis import (
     normalize_document_analysis_targets,
 )
 from functions_document_analysis_results import normalize_analysis_options
-from functions_search import normalize_search_id_list
+# Not functions_search: functions_settings imports this module, and functions_search imports config.
+from search_scope_utils import normalize_search_id_list
 from functions_workflow_document_selection import (
     MAX_RECENT_WINDOW_MINUTES, normalize_document_selection, validate_recent_window,
 )

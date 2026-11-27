@@ -1,9 +1,10 @@
 # test_v2_evidence_status.py
 """Rendered V2 evidence status, source scoping, and raw citation regressions.
 
-Version: 0.261.424
+Version: 0.261.470
 Implemented in: 0.261.388
 Complete empty native inventory presentation covered in: 0.261.424
+No-hover message action accessibility covered in: 0.261.470
 
 Uses the shared local/Azure Playwright connection and real bundled components.
 HTTP responses are synthetic; no production conversations or models are used.
@@ -57,6 +58,71 @@ def reply(state, identifier="evidence-answer"):
     }
 
 
+def mount_reply(page, origin, message):
+    page.route("**/api/**", lambda route: route.fulfill(
+        content_type="application/json", body=json.dumps({
+            "success": True, "messages": [], "documents": [], "requests": [], "pending_actions": [], "actions": [],
+        }),
+    ))
+    page.goto(f"{origin}/{harness_build.HARNESS_HTML_REL}")
+    css = sorted((ROOT / "application" / "single_app" / "static" / "v2" / "assets").glob("*.css"))
+    assert css, "Build V2 production assets before the browser regression."
+    page.add_style_tag(url=f"{origin}/application/single_app/static/v2/assets/{css[0].name}")
+    page.wait_for_function("() => Boolean(window.OrchHarness)")
+    page.evaluate("""({message, conversation}) => {
+        const H = window.OrchHarness;
+        H.reset();
+        H.stores.bootstrap.useBootstrapStore.setState({data: {
+            user: {id: 'owner'}, settings: {}, features: {}, scope: {},
+            catalogs: {models: [], agents: [], prompts: []},
+        }});
+        H.stores.chat.useChatStore.setState({
+            activeConversationId: conversation, activeConversationKind: 'personal',
+            messages: [message], streaming: false, loadingMessages: false,
+            metadata: {}, metadataLoading: false, metadataError: null,
+        });
+        H.mount('mount-a', 'MessageList');
+    }""", {"message": message, "conversation": CONVERSATION})
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("touch", (False, True), ids=("mouse", "no-hover"))
+def test_message_actions_are_visible_without_hover_or_focus_on_touch_browsers(browser, touch):
+    harness_build.ensure_bundle()
+    viewport = {"width": 390 if touch else 1440, "height": 900}
+    context = browser.new_context(has_touch=touch, viewport=viewport)
+    try:
+        page = context.new_page()
+        message = reply("missing")
+        message["metadata"]["masked"] = True
+        with harness_build.start_static_server() as origin:
+            mount_reply(page, origin, message)
+            assert page.evaluate("matchMedia('(hover: none)').matches") is touch
+            bubble = page.locator("#message-evidence-answer")
+            actions = bubble.get_by_role("group", name="Message actions").locator("..")
+            unmask = actions.get_by_role("button", name="Remove the mask from this message")
+            overflow = actions.get_by_role("button", name="More actions")
+            menu = actions.get_by_role("button", name="Copy with sources")
+            expect(unmask).to_have_count(1)
+            expect(menu).to_have_count(0)
+            if touch:
+                expect(actions).to_have_css("opacity", "1")
+                assert not actions.evaluate("element => element.contains(document.activeElement)")
+                overflow.tap()
+                expect(menu).to_be_visible()
+            else:
+                page.mouse.move(viewport["width"] - 2, viewport["height"] - 2)
+                expect(actions).to_have_css("opacity", "0")
+                bubble.hover()
+                expect(actions).to_have_css("opacity", "1")
+                page.mouse.move(viewport["width"] - 2, viewport["height"] - 2)
+                expect(actions).to_have_css("opacity", "0")
+                unmask.focus()
+                expect(actions).to_have_css("opacity", "1")
+    finally:
+        context.close()
+
+
 @pytest.mark.ui
 @pytest.mark.parametrize("width", [390, 1440])
 @pytest.mark.parametrize("theme", ["light", "dark"])
@@ -65,32 +131,9 @@ def test_evidence_notice_opens_scoped_source_details_and_document_pane(page, wid
     harness_build.ensure_bundle()
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.route("**/api/**", lambda route: route.fulfill(
-        content_type="application/json", body=json.dumps({
-            "success": True, "messages": [], "documents": [], "requests": [], "pending_actions": [], "actions": [],
-        }),
-    ))
     page.set_viewport_size({"width": width, "height": 1000})
     with harness_build.start_static_server() as origin:
-        page.goto(f"{origin}/{harness_build.HARNESS_HTML_REL}")
-        css = sorted((ROOT / "application" / "single_app" / "static" / "v2" / "assets").glob("*.css"))
-        assert css, "Build V2 production assets before the browser regression."
-        page.add_style_tag(url=f"{origin}/application/single_app/static/v2/assets/{css[0].name}")
-        page.wait_for_function("() => Boolean(window.OrchHarness)")
-        page.evaluate("""({message, conversation}) => {
-            const H = window.OrchHarness;
-            H.reset();
-            H.stores.bootstrap.useBootstrapStore.setState({data: {
-                user: {id: 'owner'}, settings: {}, features: {}, scope: {},
-                catalogs: {models: [], agents: [], prompts: []},
-            }});
-            H.stores.chat.useChatStore.setState({
-                activeConversationId: conversation, activeConversationKind: 'personal',
-                messages: [message], streaming: false, loadingMessages: false,
-                metadata: {}, metadataLoading: false, metadataError: null,
-            });
-            H.mount('mount-a', 'MessageList');
-        }""", {"message": reply(state), "conversation": CONVERSATION})
+        mount_reply(page, origin, reply(state))
         if state == "complete":
             expect(page.get_by_text("No supporting document evidence returned", exact=False)).to_have_count(0)
             button = page.get_by_role("button", name="Show sources (1)", exact=True)

@@ -690,6 +690,8 @@ def test_tableau_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
         result = build_failure_result(sanitize_connection_error(exc, manifest))
         _log_connection_test("tableau", result, {"stage": "configuration"})
         return result
+
+
     except Exception as exc:
         result = build_failure_result(
             f"The Tableau action configuration is invalid: {sanitize_connection_error(exc, manifest)}"
@@ -727,3 +729,45 @@ def test_tableau_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
     )
     _log_connection_test("tableau", result)
     return result
+
+
+def test_microsoft_decision_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate a Decision-1 action with a typed binary request."""
+    from semantic_kernel_plugins.microsoft_decision_plugin_factory import MicrosoftDecisionPluginFactory
+
+    try:
+        plugin = MicrosoftDecisionPluginFactory.create_from_config(manifest)
+    except ValueError as exc:
+        result = build_failure_result(sanitize_connection_error(exc, manifest))
+        _log_connection_test("microsoft_decision", result, {"stage": "configuration"})
+        return result
+    except Exception as exc:
+        result = build_failure_result(
+            f"The Microsoft Decision action configuration is invalid: {sanitize_connection_error(exc, manifest)}"
+        )
+        _log_connection_test("microsoft_decision", result, {"stage": "configuration"})
+        return result
+
+    result = plugin.check_condition(
+        "Connection test state.",
+        "Is the submitted state available for evaluation?",
+        "The state is provided.",
+        "The state is missing.",
+    )
+    if not result.get("success"):
+        safe_result = build_failure_result(
+            str(result.get("error") or "Microsoft Decision rejected the connection test."),
+            status=int(result.get("http_status") or 400),
+            error_type=result.get("error_type"),
+        )
+        _log_connection_test("microsoft_decision", safe_result, {"stage": "decision_request"})
+        return safe_result
+
+    success_result = build_success_result(
+        "Microsoft Decision accepted a typed decision request.",
+        model=result.get("model"),
+        confidence=result.get("confidence"),
+        requires_review=result.get("requires_review"),
+    )
+    _log_connection_test("microsoft_decision", success_result, {"stage": "decision_request"})
+    return success_result

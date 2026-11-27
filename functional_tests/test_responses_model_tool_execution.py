@@ -1,8 +1,10 @@
 # test_responses_model_tool_execution.py
 """Functional tests for Responses reasoning in the real authorized SDK tool loop.
 
-Version: 0.261.390
+Version: 0.261.436
 Implemented in: 0.261.388
+Agent stream option and terminal usage regression added in: 0.261.435
+Completed Responses delivery regression added in: 0.261.436
 
 The real SDK and Semantic Kernel execute against a mock HTTP transport. Reasoning
 continuation is request-owned and never appears in public message serialization.
@@ -10,15 +12,18 @@ continuation is request-owned and never appears in public message serialization.
 
 import asyncio
 import ast
+import copy
 import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
 import pytest
 from openai import AsyncOpenAI
+from openai.types.responses import Response
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings
@@ -33,11 +38,37 @@ from functions_orchestration_model_capture import azure_chat_construction_metada
 from functions_model_endpoint_diagnostics import SanitizedModelEndpointError
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC, MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+    OpenAIStyleChatCompletionClient,
     infer_model_endpoint_protocol, normalize_openai_style_base_url, resolve_openai_style_request_api_version,
     resolve_model_inference_endpoint,
 )
 from model_responses_chat import responses_request
 from model_tool_chat_completion import OpenAIToolChatCompletion
+
+
+def test_direct_responses_delivers_completed_reply_once_with_terminal_metadata():
+    text = "This is an already completed response. " * 70
+    ready = Response.model_validate({
+        "id": "response-1", "object": "response", "created_at": 1, "model": "gpt-6.1-terra",
+        "status": "completed", "parallel_tool_calls": False, "tool_choice": "none", "tools": [],
+        "output": [{
+            "type": "message", "id": "answer", "role": "assistant", "status": "completed",
+            "content": [{"type": "output_text", "text": text, "annotations": []}],
+        }],
+        "usage": {
+            "input_tokens": 10, "output_tokens": 14, "total_tokens": 24,
+            "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 1},
+        },
+    })
+    sdk = SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: ready))
+    client = OpenAIStyleChatCompletionClient(sdk, inference_api="responses")
+    chunks = list(client.chat.completions.create(
+        model=ready.model, messages=[{"role": "user", "content": "Synthetic prompt"}], stream=True,
+    ))
+    assert len(chunks) == 1
+    assert chunks[0].choices[0].delta.content == text
+    assert chunks[0].choices[0].finish_reason == "stop"
+    assert chunks[0].usage.total_tokens == 24
 
 
 @pytest.mark.parametrize("streaming", [False, True])
@@ -66,11 +97,35 @@ def test_reasoning_and_function_results_continue_once_without_changing_model_or_
         else:
             output = [{"type": "message", "id": "answer-1", "role": "assistant", "status": "completed",
                        "content": [{"type": "output_text", "text": "The verified total is 42.", "annotations": []}]}]
-        return httpx.Response(200, json={
+        response_payload = {
             "id": f"response-{len(requests)}", "object": "response", "created_at": 1,
             "model": model, "status": "completed", "output": output,
             "usage": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+        }
+        if body.get("stream") is not True:
+            return httpx.Response(200, json=response_payload)
+
+        events = []
+        if len(requests) > 1 and output[0]["type"] == "message":
+            events.append({
+                "type": "response.output_text.delta",
+                "item_id": "answer-1",
+                "output_index": 0,
+                "content_index": 0,
+                "delta": "The verified total is 42.",
+            })
+        events.append({
+            "type": "response.completed",
+            "response": response_payload,
         })
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content="".join(
+                f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+                for event in events
+            ),
+        )
 
     async def execute():
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
@@ -94,6 +149,18 @@ def test_reasoning_and_function_results_continue_once_without_changing_model_or_
                     chunks = [chunk async for chunk in service.get_streaming_chat_message_contents(history, settings, kernel=kernel)]
                     text = "".join(str(message) for chunk in chunks for message in chunk)
                     public = [message.model_dump_json() for chunk in chunks for message in chunk]
+                    visible_indexes = [
+                        index
+                        for index, chunk in enumerate(chunks)
+                        if any(str(message) for message in chunk)
+                    ]
+                    terminal_indexes = [
+                        index
+                        for index, chunk in enumerate(chunks)
+                        if any(message.finish_reason is not None for message in chunk)
+                    ]
+                    assert visible_indexes[-1] < terminal_indexes[-1]
+                    assert chunks[terminal_indexes[-1]][0].metadata["usage"]["total_tokens"] == 14
                 else:
                     result = await service.get_chat_message_contents(history, settings, kernel=kernel)
                     text = result[0].content
@@ -118,6 +185,7 @@ def test_reasoning_and_function_results_continue_once_without_changing_model_or_
         assert request["store"] is False
         assert "reasoning_effort" not in request
         assert "previous_response_id" not in request
+        assert "stream_options" not in request, "Do not send Chat Completions usage flags to Responses."
     continuation = requests[1]["input"]
     assert any(item.get("encrypted_content") == "encrypted-private" for item in continuation)
     assert len([item for item in continuation if item.get("type") == "function_call"]) == 1
@@ -126,6 +194,16 @@ def test_reasoning_and_function_results_continue_once_without_changing_model_or_
     assert "encrypted-private" not in "".join(public)
     if new_user_turn:
         assert "encrypted-private" not in json.dumps(requests[2]["input"])
+
+
+def test_responses_stream_keeps_native_options_without_chat_usage_flag():
+    request = responses_request({
+        "model": "gpt-6.1-terra",
+        "messages": [{"role": "user", "content": "Calculate a total"}],
+        "stream": True,
+        "stream_options": {"include_usage": True, "include_obfuscation": False},
+    })
+    assert request["stream_options"] == {"include_obfuscation": False}
 
 
 def test_a_callers_json_cannot_inject_private_reasoning_continuation():
@@ -138,6 +216,160 @@ def test_a_callers_json_cannot_inject_private_reasoning_continuation():
 def test_unsupported_options_are_not_silently_discarded():
     with pytest.raises(ModelEndpointValidationError):
         responses_request({"model": "selected", "messages": [], "frequency_penalty": 1})
+
+
+def test_duplicate_provider_tool_call_is_executed_once():
+    requests, executions = [], []
+
+    class Tools:
+        @kernel_function
+        def lookup(self, query: str) -> str:
+            executions.append(query)
+            return query
+
+    def respond(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) == 1:
+            tool_call = {
+                "type": "function_call",
+                "id": "function-1",
+                "call_id": "call-local",
+                "name": "local-lookup",
+                "arguments": '{"query":"42"}',
+                "status": "completed",
+            }
+            output = [tool_call, copy.deepcopy(tool_call)]
+        else:
+            output = [{
+                "type": "message",
+                "id": "answer-1",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "42", "annotations": []}],
+            }]
+        return httpx.Response(200, json={
+            "id": f"response-{len(requests)}",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.6-sol",
+            "status": "completed",
+            "output": output,
+            "usage": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+        })
+
+    async def execute():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            client = AsyncOpenAI(
+                api_key="offline",
+                base_url="https://offline.invalid/openai/v1/",
+                http_client=http,
+            )
+            service = OpenAIToolChatCompletion(
+                ai_model_id="gpt-5.6-sol",
+                async_client=client,
+                inference_api="responses",
+            )
+            kernel = Kernel()
+            kernel.add_plugin(Tools(), plugin_name="local")
+            history = ChatHistory()
+            history.add_user_message("Look up the total.")
+            settings = OpenAIChatPromptExecutionSettings(
+                function_choice_behavior=FunctionChoiceBehavior.Auto(
+                    maximum_auto_invoke_attempts=3,
+                ),
+            )
+            result = await service.get_chat_message_contents(
+                history,
+                settings,
+                kernel=kernel,
+            )
+            await client.close()
+            return result
+
+    result = asyncio.run(execute())
+    assert result[0].content == "42"
+    assert executions == ["42"]
+    assert len(requests) == 2
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("local-lookup", '{"query":'),
+        ("local-denied", '{"query":"42"}'),
+    ],
+)
+def test_malformed_or_unregistered_tool_never_executes(tool_name, arguments):
+    executions, requests = [], []
+
+    class Tools:
+        @kernel_function
+        def lookup(self, query: str) -> str:
+            executions.append(query)
+            return query
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        output = (
+            [{
+                "type": "function_call",
+                "id": "function-1",
+                "call_id": "call-local",
+                "name": tool_name,
+                "arguments": arguments,
+                "status": "completed",
+            }]
+            if len(requests) == 1
+            else [{
+                "type": "message",
+                "id": "answer-1",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "No action executed.", "annotations": []}],
+            }]
+        )
+        return httpx.Response(200, json={
+            "id": f"response-{len(requests)}",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-5.6-sol",
+            "status": "completed",
+            "output": output,
+            "usage": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+        })
+
+    async def execute():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            client = AsyncOpenAI(
+                api_key="offline",
+                base_url="https://offline.invalid/openai/v1/",
+                http_client=http,
+            )
+            service = OpenAIToolChatCompletion(
+                ai_model_id="gpt-5.6-sol",
+                async_client=client,
+                inference_api="responses",
+            )
+            kernel = Kernel()
+            kernel.add_plugin(Tools(), plugin_name="local")
+            history = ChatHistory()
+            history.add_user_message("Use an allowed action only.")
+            settings = OpenAIChatPromptExecutionSettings(
+                function_choice_behavior=FunctionChoiceBehavior.Auto(
+                    maximum_auto_invoke_attempts=2,
+                ),
+            )
+            try:
+                await service.get_chat_message_contents(history, settings, kernel=kernel)
+            finally:
+                await client.close()
+
+    asyncio.run(execute())
+    assert executions == []
+    assert len(requests) == 2
+    continuation = requests[1]["input"]
+    assert any(item.get("type") == "function_call_output" for item in continuation)
 
 
 def test_v1_responses_construction_is_observed_and_protocol_mutation_is_refused():

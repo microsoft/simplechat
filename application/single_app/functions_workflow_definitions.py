@@ -28,7 +28,8 @@ WORKFLOW_DEFINITION_FIELDS = (
     "name", "description", "task_prompt", "tasks", "runner_type", "chat_capabilities_enabled",
     "chat_execution", "results_delivery",
     "trigger_type", "is_enabled", "schedule", "error_handling", "document_action", "analyze",
-    "file_sync", "selected_agent", "model_endpoint_id", "model_id", "model_provider",
+    "file_sync", "selected_agent", "model_endpoint_id", "model_id",
+    "model_scope_type", "model_scope_id", "model_provider",
     "url_access_enabled", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation",
     "definition_version", "reference_inputs", "conversation_reference_inputs", "durable_execution", "flow", "limits",
     "m365_run_as_user_id", "public_source_policy",
@@ -130,7 +131,8 @@ WORKFLOW_ORIGIN_TIMESTAMP_MAX_LENGTH = 64
 WORKFLOW_ORIGIN_MATERIAL_FIELDS = (
     "name", "description", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation", "error_handling",
     "task_prompt", "tasks", "runner_type", "selected_agent", "schedule", "trigger_type", "document_action",
-    "file_sync", "chat_capabilities_enabled", "chat_execution", "results_delivery", "url_access_enabled", "model_endpoint_id", "model_id",
+    "file_sync", "chat_capabilities_enabled", "chat_execution", "results_delivery", "url_access_enabled",
+    "model_endpoint_id", "model_id", "model_scope_type", "model_scope_id",
     "definition_version", "reference_inputs", "conversation_reference_inputs", "durable_execution", "flow", "limits", "m365_run_as_user_id",
 )
 

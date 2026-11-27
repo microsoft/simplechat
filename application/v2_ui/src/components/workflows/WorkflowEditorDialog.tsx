@@ -865,12 +865,16 @@ export function WorkflowEditorDialog({
                                 variant="field"
                                 endpointId={draft.model_endpoint_id}
                                 modelId={draft.model_id}
+                                scopeType={draft.model_scope_type}
+                                scopeId={draft.model_scope_id}
                                 options={options}
                                 localOnly={localRunner}
-                                onChange={(endpointId, modelId) => setWorkflow((current) => ({
+                                onChange={(endpointId, modelId, scopeType, scopeId) => setWorkflow((current) => ({
                                     ...current,
                                     model_endpoint_id: endpointId,
                                     model_id: modelId,
+                                    model_scope_type: scopeType,
+                                    model_scope_id: scopeId,
                                 }))}
                             />
                         </WorkflowChangedField>

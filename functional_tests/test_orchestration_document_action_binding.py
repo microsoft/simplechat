@@ -1,11 +1,11 @@
 # test_orchestration_document_action_binding.py
 """
 Functional regressions for enforced native document action source bindings.
-Version: 0.261.483
+Version: 0.261.490
 Implemented in: 0.261.419
 Pre-read incompatible-section correction added in: 0.261.439
 Named rule on a stopped action added in: 0.261.478
-Word comment requests with paging or filter arguments corrected before any read in: 0.261.483
+Word comment requests with paging or filter arguments corrected before any read in: 0.261.490
 
 The real action runner, Semantic Kernel filters, Document Search plugin and
 citation projection run with model and source-service I/O doubled. Existing
@@ -259,7 +259,7 @@ def test_repeated_incompatible_native_request_stops_without_reading_or_relaxing_
 def test_word_comments_asked_with_a_paging_argument_are_corrected_once_before_any_read(
     native_action, argument, value,
 ):
-    """0.261.483: this request ended the step (document_action_read_failed) on a plain error."""
+    """0.261.490: this request ended the step (document_action_read_failed) on a plain error."""
     state = native_action
     state.metadata["format"] = "docx"
     state.replies = [

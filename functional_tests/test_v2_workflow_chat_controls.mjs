@@ -1,5 +1,5 @@
 // test_v2_workflow_chat_controls.mjs
-// Version: 0.261.343
+// Version: 0.261.463
 // Implemented in: 0.261.343
 // Validates inherited execution, result audiences, scoped assist routing, additive badges,
 // and the real keyed diff/revert used by the editor and its authoring history.
@@ -73,6 +73,31 @@ test('task override replaces requirements; removing it restores inheritance', ()
     const inherited = effectiveTaskChatExecution(value, task);
     assert.equal(inherited, selected);
     assert.match(workflowChatExecutionSummary(inherited, false, options), /Web search, Charts/);
+});
+
+test('model runner scope round trips without adding fields to inherit or agent runners', () => {
+    const value = normalizeWorkflowDefinition({
+        ...draft(),
+        definition_version: 3,
+        tasks: [{
+            id: 'legacy-task',
+            name: 'Legacy model',
+            instructions: 'Use the saved model.',
+            order: 1,
+            runner: {
+                type: 'model',
+                model_endpoint_id: 'shared-endpoint',
+                model_id: 'shared-model',
+                model_binding_summary: { scope: 'global', scope_id: 'global' },
+            },
+        }],
+    }, { type: 'group', groupId: 'group-one' });
+    assert.equal(value.tasks[0].runner.model_scope_type, 'global');
+    assert.equal(value.tasks[0].runner.model_scope_id, 'global');
+    assert.equal('model_scope_type' in normalizeWorkflowDefinition({
+        ...value,
+        tasks: [{ ...value.tasks[0], runner: { type: 'inherit', model_scope_type: 'stale', model_scope_id: 'stale' } }],
+    }).tasks[0].runner, false);
 });
 
 test('new settings each get a stable change key and targeted revert leaves other edits intact', () => {

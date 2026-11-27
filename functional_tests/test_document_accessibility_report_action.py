@@ -2,10 +2,10 @@
 # test_document_accessibility_report_action.py
 """
 Functional test for the get_document_accessibility_report Semantic Kernel function.
-Version: 0.261.483
+Version: 0.261.490
 Implemented in: 0.261.392
 Explicit native slide request contract covered in: 0.261.444
-Typed refusal of Word comment requests with paging or filter arguments covered in: 0.261.483
+Typed refusal of Word comment requests with paging or filter arguments covered in: 0.261.490
 
 This test ensures that:
 1. get_document_accessibility_payload returns the full stored accessibility, style, and issue
@@ -157,7 +157,7 @@ def test_payload_errors():
 
 
 def test_word_comment_request_conflict_is_a_typed_refusal():
-    """0.261.483: this was a plain ValueError, which ended an action step instead of correcting it."""
+    """0.261.490: this was a plain ValueError, which ended an action step instead of correcting it."""
     print("Testing the Word comment request refusal...")
     document = {"id": "doc-w", "file_name": "review.docx", "accessibility_metadata": {"format": "docx"}}
     namespace = _load_payload_namespace(document)

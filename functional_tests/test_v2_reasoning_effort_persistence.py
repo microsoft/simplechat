@@ -1,8 +1,9 @@
 # test_v2_reasoning_effort_persistence.py
 """
 Functional regressions for canonical reasoning projection and preference contracts.
-Version: 0.261.122
+Version: 0.261.429
 Implemented in: 0.261.104
+Embedding-only chat exclusion coverage added in: 0.261.429
 
 Executes actual catalog/initial-selection functions without Flask/Azure startup, then the
 Node behavioral tests. Real late-load, migration and remount behavior is in the UI suite.
@@ -14,22 +15,50 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "application" / "single_app"
 sys.path.insert(0, str(APP))
 
+import functions_chat_model_catalog as chat_catalog
 from functions_model_capabilities import REASONING_IDENTIFIER_FIELDS, resolve_model_reasoning_policy  # noqa: E402
 from functions_ai_connections import filter_model_endpoints_by_capability  # noqa: E402
+from functions_chat_model_catalog import (  # noqa: E402
+    build_chat_model_catalog,
+    normalize_chat_model_value,
+)
+
+
+def _build_catalog(**kwargs):
+    with (
+        patch.object(
+            chat_catalog,
+            "filter_chat_model_endpoints_by_governance",
+            side_effect=lambda user_id, endpoints, feature_key: endpoints,
+        ),
+        patch.object(
+            chat_catalog,
+            "_normalize_model_endpoints",
+            side_effect=lambda endpoints: (endpoints, False),
+        ),
+        patch.object(
+            chat_catalog,
+            "_sanitize_model_endpoints_for_frontend",
+            side_effect=lambda endpoints, **_kwargs: endpoints,
+        ),
+    ):
+        return build_chat_model_catalog(**kwargs)
 
 
 def _catalog_functions():
     source = ast.parse((APP / "route_frontend_chats.py").read_text(encoding="utf-8"))
     names = {
-        "_normalize_chat_model_value", "_build_chat_model_catalog",
-        "_build_initial_chat_model_selection", "_chat_model_reasoning_metadata",
+        "_build_initial_chat_model_selection",
     }
     namespace = {
+        "_build_chat_model_catalog": _build_catalog,
+        "_normalize_chat_model_value": normalize_chat_model_value,
         "resolve_model_reasoning_policy": resolve_model_reasoning_policy,
         "REASONING_IDENTIFIER_FIELDS": REASONING_IDENTIFIER_FIELDS,
         "filter_model_endpoints_by_capability": filter_model_endpoints_by_capability,
@@ -97,6 +126,57 @@ def test_legacy_and_apim_models_have_safe_policies_without_new_identity_keys():
     )
     assert apim[0]["model_name"] == apim[0]["selection_key"] == "custom"
     assert apim[0]["reasoning_capabilities"]["status"] == "unknown"
+
+
+def test_chat_catalog_excludes_explicit_embedding_only_models():
+    embedding = {
+        "id": "embedding-model",
+        "deploymentName": "embedding-prod",
+        "modelName": "text-embedding-3-small",
+        "enabled": True,
+        "supportsEmbeddings": True,
+    }
+    chat = {
+        "id": "chat-model",
+        "deploymentName": "chat-prod",
+        "modelName": "gpt-5.6-terra",
+        "enabled": True,
+    }
+    settings = {
+        "enable_multi_model_endpoints": True,
+        "model_endpoints": [{
+            "id": "mixed-endpoint",
+            "provider": "aoai",
+            "enabled": True,
+            "models": [embedding, chat],
+        }],
+    }
+
+    multi = _build_catalog(
+        user_id="caller",
+        settings=settings,
+        user_settings_dict={},
+        user_groups_raw=[],
+    )
+    legacy = build_chat_model_catalog(
+        user_id="caller",
+        settings={"gpt_model": {"selected": [embedding, chat]}},
+        user_settings_dict={},
+        user_groups_raw=[],
+    )
+    apim = build_chat_model_catalog(
+        user_id="caller",
+        settings={
+            "enable_gpt_apim": True,
+            "azure_apim_gpt_deployment": "text-embedding-3-small,chat-prod",
+        },
+        user_settings_dict={},
+        user_groups_raw=[],
+    )
+
+    assert [item["model_id"] for item in multi] == ["chat-model"]
+    assert [item["deployment_name"] for item in legacy] == ["chat-prod"]
+    assert [item["deployment_name"] for item in apim] == ["chat-prod"]
 
 
 def test_shared_preference_keys_remain_writable_and_request_path_is_centralized():

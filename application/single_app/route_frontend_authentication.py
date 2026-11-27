@@ -15,7 +15,17 @@ from functions_terms_of_use import (
     has_terms_of_use_acceptance,
 )
 from functions_appinsights import log_event
-from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, create_ci_bearer_session, get_graph_authority, get_graph_endpoint, get_requested_oauth_scopes
+from functions_authentication import (
+    _build_msal_app,
+    _load_cache,
+    _save_cache,
+    clear_requested_oauth_scopes,
+    consume_pending_chat_link_reference,
+    create_ci_bearer_session,
+    get_graph_authority,
+    get_graph_endpoint,
+    get_requested_oauth_scopes,
+)
 from functions_debug import debug_print
 from functions_settings import get_settings, sanitize_settings_for_user
 from functions_m365_connections import CHAT_AUTH_STATE_PREFIX, WORKFLOW_AUTH_STATE_PREFIX
@@ -364,6 +374,13 @@ def register_route_frontend_authentication(bp):
         debug_print(f"HOME_REDIRECT_URL (env): {HOME_REDIRECT_URL}")
         debug_print(f"front_door_url (db): {settings.get('front_door_url')}")
         debug_print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
+
+        pending_chat_link = consume_pending_chat_link_reference()
+        if pending_chat_link:
+            return redirect(url_for(
+                'chat_links.chat_link_navigation',
+                reference=pending_chat_link,
+            ))
 
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):

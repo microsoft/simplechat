@@ -170,7 +170,10 @@ def resolve_seeds(request_data):
 
     model = {
         key: _text(request_data.get(key))
-        for key in ('model_deployment', 'model_id', 'model_endpoint_id', 'model_provider')
+        for key in (
+            'model_deployment', 'model_id', 'model_endpoint_id', 'model_provider',
+            'model_scope_type', 'model_scope_id',
+        )
         if _text(request_data.get(key))
     }
     routing = request_data.get('model_routing', 'manual')
@@ -220,6 +223,7 @@ def resolve_seeds(request_data):
         'document_filter_mode': filter_mode,
         'agent': agent,
         'model': model or None,
+        'apply_model_persona': agent is None,
         'reasoning_effort': _text(request_data.get('reasoning_effort')),
         'prompt': prompt,
         'web_search': request_data.get('web_search_enabled') is True,

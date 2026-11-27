@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the inbound MCP server shell.
-Version: 0.250.098
+Version: 0.261.485
 Implemented in: 0.250.063
 OAuth protected-resource discovery header implemented in: 0.250.076
 Inbound MCP user/app role split implemented in: 0.250.078
@@ -152,7 +152,8 @@ def test_inbound_mcp_routes_expose_json_rpc_shell():
     assert '"2025-06-18"' in route_source
     assert '"2025-03-26"' in route_source
     assert "INBOUND_MCP_DEFAULT_PROTOCOL_VERSION = INBOUND_MCP_SUPPORTED_PROTOCOL_VERSIONS[0]" in route_source
-    assert 'return "", 202' in route_source
+    assert 'response = Response("", status=202)' in route_source
+    assert "return _attach_inbound_mcp_headers(response, mcp_request_id)" in route_source
     assert '"mcp_sse_stream_not_supported"' in route_source
     assert '"MCP-Session-Id"' not in route_source
     assert "execute_inbound_mcp_tool" in route_source

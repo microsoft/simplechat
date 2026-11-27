@@ -176,6 +176,9 @@ from functions_orchestration_result_runtime import (
     read_result_evidence_status,
 )
 from functions_orchestration_results import ResultUnavailableError
+from functions_orchestration_usage import (
+    log_plan_token_usage, observe_model_request, public_usage_by_model, summarize_plan_usage_by_model,
+)
 from functions_orchestration_schema import (
     LEGACY_PLAN_CODE,
     build_failure,
@@ -208,7 +211,10 @@ ANSWER_MAX_TOKENS = 4000
 ANSWER_TEMPERATURE = 0.3
 _USAGE_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
 _WAITING_OUTPUT_STATES = frozenset({"waiting", "rendering", "retry_scheduled"})
-_MODEL_METADATA_FIELDS = ("model_deployment_name", "model_provider", "model_endpoint_id", "model_id")
+_MODEL_METADATA_FIELDS = (
+    "model_deployment_name", "model_provider", "model_endpoint_id", "model_id",
+    "model_scope_type", "model_scope_id",
+)
 _REASONING_METADATA_FIELDS = ("reasoning_effort", "requested_reasoning_effort", "reasoning_mode")
 _DELIVERY_FAILURE_CODES = frozenset({"run_timeout", "user_cancelled", "context_unavailable"})
 
@@ -370,7 +376,22 @@ def _create_answer_completion(
     )
 
 
-def build_harness_invoke_prompt(model, *, token_usage, revalidate):
+def _request_limit(invoke_prompt):
+    """How large a request the bound model accepts, resolved once per binding, or None."""
+    if not hasattr(invoke_prompt, "request_limit"):
+        try:
+            from functions_context_usage import resolve_context_limits
+
+            invoke_prompt.request_limit = resolve_context_limits(
+                invoke_prompt.model_metadata, provider=invoke_prompt.provider,
+                response_length=invoke_prompt.output_tokens,
+            ).get("input_ceiling")
+        except Exception:
+            invoke_prompt.request_limit = None
+    return invoke_prompt.request_limit
+
+
+def build_harness_invoke_prompt(model, *, token_usage, revalidate, observations=None):
     """Bind the authorized model once, preserving exact composition budget metadata.
 
     ``metadata={"json_output": True}`` asks the endpoint for a JSON object; an endpoint that
@@ -424,6 +445,10 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
             value = getattr(usage, field, None)
             if type(value) is int and value >= 0:
                 token_usage[field] = token_usage.get(field, 0) + value
+        # Which model this request ran on and how much of its window it filled.
+        observe_model_request(
+            observations, model.deployment, usage, limit=_request_limit(invoke_prompt),
+        )
         revalidate()
         assert_current_request_sources_available()
         if not response or not response.choices:
@@ -600,6 +625,8 @@ class HarnessExecution:
     def __init__(self, record, lease):
         self.record = deepcopy(record)
         self.lease = lease
+        # Which model each request ran on and how large it was, kept apart from the usage totals.
+        self.model_observations = {}
         self.checkpoint_factory = None
         self.context = None
         self.services = None
@@ -861,6 +888,7 @@ class HarnessExecution:
         )
         invoke_prompt = build_harness_invoke_prompt(
             self.answer_model, token_usage=self.prompt_token_usage, revalidate=self._revalidate_context,
+            observations=self.model_observations,
         )
         planner_client = self.research_model.as_planner_client()
         # Guard this run's private interface without replacing its attested client.
@@ -897,6 +925,9 @@ class HarnessExecution:
             model_context={
                 "model_id": self.answer_model.model_id, "endpoint_id": self.answer_model.endpoint_id,
                 "provider": self.answer_model.provider, "model_deployment": self.answer_model.deployment,
+                "scope_type": self.answer_model.model_scope_type,
+                "scope_id": self.answer_model.model_scope_id,
+                "apply_model_persona": self.answer_model.apply_model_persona,
                 "user_id": user_id, "active_group_ids": seeds.get("active_group_ids") or [],
             },
             agent_execution_identity=principal, plan_contract_version=2,
@@ -912,6 +943,7 @@ class HarnessExecution:
             full_message_ids=self.context.context_message_ids or [],
         )
         self.context.prompt_token_usage = self.prompt_token_usage
+        self.context.model_observations = self.model_observations
         if auto_routing:
             def guarded_planner_client(model):
                 client = model.as_planner_client()
@@ -927,6 +959,7 @@ class HarnessExecution:
                     resolve_model=resolve_step_model,
                     invoke_factory=lambda model: build_harness_invoke_prompt(
                         model, token_usage=self.prompt_token_usage, revalidate=self._revalidate_context,
+                        observations=self.model_observations,
                     ),
                     planner_client_factory=guarded_planner_client,
                 )
@@ -1905,6 +1938,12 @@ class HarnessExecution:
         thread = self._regeneration_thread()
         if thread:
             metadata["thread_info"] = thread
+        # Steps can run on different models, so the run's total is also kept per model.
+        usage_rows = summarize_plan_usage_by_model(
+            self.record.get("plan"), current.get("execution_steps") or [], combined_usage, model_metadata,
+        )
+        if usage_rows:
+            metadata["usage_by_model"] = public_usage_by_model(usage_rows)
         documents, web, tools = _partition_citations([*citations, *external_citations])
         document = {
             "id": message_id, "conversation_id": self.record["conversation_id"],
@@ -1971,6 +2010,8 @@ class HarnessExecution:
         if self._bootstrap is not None:
             self._touch_conversation(documents, document)
             self._mirror_to_shared_thread(saved)
+            # Usage reporting counts plans like any other reply, once per run and model.
+            log_plan_token_usage(self.record, usage_rows, status=status, message_id=message_id)
         finalized = self.lease.close(release=True)
         self._released = True
         self._final_record = finalized

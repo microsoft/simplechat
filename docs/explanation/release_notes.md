@@ -2,6 +2,104 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.488)**
+
+#### Bug Fixes
+
+*   **CodeQL Findings in Functional Tests**
+    *   Two group connection API test assertions no longer contain the delete requests they check. The soft-deleted message test's Cosmos double reads `SELECT` clauses in linear time instead of with a pattern that could take seconds on whitespace-heavy input. The V2 inline image proposal test compares URL hosts exactly instead of searching URLs for a host name.
+    *   (Ref: `test_group_endpoint_apis.py`, `test_chat_soft_deleted_message_visibility_fix.py`, `test_v2_inline_image_proposals.py`, `cosmos_response_boundaries.json`, [CodeQL Alert and Contract Check Fix](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/CODEQL_ALERT_AND_CONTRACT_CHECK_FIX.md))
+
+### **(v0.261.487)**
+
+#### Bug Fixes
+
+*   **Document Action Helpers Load Without App Settings**
+    *   The document action helpers no longer load configuration while they load. This removes an import cycle with the settings module that could fail when the helpers were imported first.
+    *   (Ref: `functions_document_actions.py`, `test_app_settings_import_boundaries.py`, [CodeQL Alert and Contract Check Fix](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/CODEQL_ALERT_AND_CONTRACT_CHECK_FIX.md))
+*   **Custom Anthropic Client Initialization**
+    *   The Custom Anthropic client now runs the standard Anthropic client's initialization, so it has the same attributes and version handling, while keeping its own URL mode and pinned transport.
+    *   (Ref: `model_endpoint_clients.py`)
+*   **Pull Request CodeQL Check Findings**
+    *   Two redundant plugin creation log lines that CodeQL reported as logging sensitive data were removed, and seven test assertions no longer contain the calls they check, so those calls also run under optimized Python.
+    *   (Ref: `semantic_kernel_loader.py`, `test_workspace_authoring_backend.py`, `test_workflow_durable_execution.py`)
+
+### **(v0.261.486)**
+
+#### Bug Fixes
+
+*   **Streamed Chats Continue After a Late Action Check**
+    *   When an agent's action became unavailable after the pre-send check, a streamed chat saved the question before pausing for review, and choosing Continue failed with "This submission was used for another request." The stream now pauses before saving the question, as non-streamed chat does, and Continue sends it once.
+    *   (Ref: `route_backend_chats.py`, `test_action_runtime_recovery.py`, [Streamed Chat Action Recovery Continue Fix](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/STREAM_ACTION_RECOVERY_CONTINUE_FIX.md))
+*   **Read-Aloud No Longer Parses Message Text as HTML**
+    *   Read-aloud speaks the message as it appears on the page, or the reply as plain text when the message isn't shown. Text that looks like markup, such as `<div>` in a code sample, is read instead of dropped.
+    *   (Ref: `chat-tts.js`, `test_classic_js_codeql_xss_redos_fixes.py`)
+*   **Safer Message Loading and Action Field Merging**
+    *   Classic chat encodes the conversation ID when it loads messages, and the action configuration modal ignores `__proto__`, `constructor`, and `prototype` keys when it merges additional-field JSON.
+    *   (Ref: `chat-messages.js`, `plugin_modal_stepper.js`, `test_classic_js_codeql_xss_redos_fixes.py`, [CodeQL Alert and Contract Check Fix](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/CODEQL_ALERT_AND_CONTRACT_CHECK_FIX.md))
+
+### **(v0.261.485)**
+
+#### Bug Fixes
+
+*   **CA Bundle Uploads Are Validated in Linear Time**
+    *   A malformed upload made of repeated certificate headers no longer holds a worker for minutes. PEM blocks are scanned once, and the accepted bundle format is unchanged.
+    *   (Ref: `model_endpoint_ca_bundles.py`, `test_model_endpoint_ca_bundles.py`)
+*   **Legacy Foundry Protocol Detection Reads the Host**
+    *   Saved legacy connections are treated as Foundry OpenAI-compatible endpoints only when the host is a `*.services.ai.azure.com` resource, not when a lookalike host, path, or query contains that text.
+    *   (Ref: `functions_model_endpoint_urls.py`, `test_model_endpoint_protocol_inference.py`)
+*   **Classic Message Details Refresh After Saving**
+    *   An expanded metadata panel on a just-sent classic chat message now refreshes when the server confirms the message, as intended.
+    *   (Ref: `chat-streaming.js`, `test_message_metadata_loading_fix.py`)
+*   **Safer Error Responses and Fallback Logs**
+    *   Deleting a personal model connection without governance access returns the same stable message as the other personal connection routes. Cache fallback warnings keep request-derived identifiers on one log line.
+    *   (Ref: `route_backend_models.py`, `app_settings_cache.py`, `test_cosmos_wave1_cache_fallback.py`)
+*   **Pull Request Checks and CodeQL Findings**
+    *   The model catalog workflow lock includes the repository's coordinator agent, the Cosmos contract job has time for its full suite, and the offline test double supports the conditional updates used by stream replay without Redis.
+    *   Branch CodeQL findings were resolved where they reflected real issues, including duplicate dictionary keys, dead code, unused imports, and unexplained exception handling.
+    *   Functional tests whose harnesses predated current runtime seams were updated, including the Custom endpoint, image, MAI, admin endpoint persistence, schema-v2 routing, content screening, image chat route, MCP authorization, inbound MCP shell, and V2 inline image proposal suites.
+    *   (Ref: `refresh-model-catalog.lock.yml`, `cosmos-response-contract-check.yml`, `offline_bootstrap.py`, `cosmos_patch.py`, `app_stubs.py`, [CodeQL Alert and Contract Check Fix](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/CODEQL_ALERT_AND_CONTRACT_CHECK_FIX.md))
+*   **Custom Endpoint Credentials Use Only Their Configured Header**
+    *   Custom and Microsoft MAI connections that send an API key in a named header, such as `api-key` or `Ocp-Apim-Subscription-Key`, no longer also send that key as an `Authorization: Bearer` token, which could forward gateway subscription keys to backend services.
+    *   Custom Anthropic connections that use a bearer token send their `Authorization` header again. They previously sent no credential.
+    *   (Ref: `functions_model_endpoint_auth.py`, `test_custom_model_endpoint_auth.py`, `test_custom_model_endpoint_foundation.py`, `test_microsoft_mai_model_connections.py`)
+*   **Custom Image Connections Initialize Again**
+    *   Image generation and the admin image test no longer fail for every Custom provider connection with "The image connection could not be initialized." Paid image requests are still never retried automatically.
+    *   (Ref: `functions_image_generation.py`, `test_ai_connection_image_runtime.py`, `test_image_generation_sdk_http.py`)
+*   **Legacy Group Connection Tests Use One Active Group**
+    *   A legacy group connection test resolves the active group once, so the saved-connection lookup and request validation always target the same group.
+    *   (Ref: `route_backend_models.py`, `test_model_endpoint_secret_reference_hardening.py`)
+*   **Routing Previews and Saves Keep the Runtime Path Order**
+    *   A routing preview for a connection without a stored path order now shows the same request URL the saved connection calls (model path first), instead of assuming connection path first.
+    *   Saving an existing explicit-routing connection without a stored path order in the classic admin page no longer switches it to connection path first. New connections still start with connection path first.
+    *   (Ref: `route_backend_models.py`, `admin_model_endpoints.js`, `test_model_endpoint_scope_gate_enforcement.py`)
+*   **Chat Table Formatting No Longer Stalls on Crafted Responses**
+    *   Unwrapping markdown tables from code blocks no longer backtracks exponentially, so a response with a few dozen pipe-only lines cannot freeze the chat tab. The same blocks are unwrapped as before.
+    *   (Ref: `chat-messages.js`, `test_classic_js_codeql_xss_redos_fixes.py`)
+*   **Classic Pages Render Untrusted Text as Text**
+    *   Read-aloud strips markup with an inert parser, export conversation IDs are escaped in attributes, inline export button labels are plain text, and Control Center toasts never interpret HTML.
+    *   The Control Center and workspace user searches no longer place search terms or directory names into markup or inline script.
+    *   (Ref: `chat-tts.js`, `chat-export.js`, `chat-messages.js`, `control-center.js`, `control_center.html`, `workspace-manager.js`, `test_classic_js_codeql_xss_redos_fixes.py`, `test_stored_xss_admin_rendering_fix.py`)
+
+### **(v0.261.484)**
+
+#### Bug Fixes
+
+*   **V2 Follow-Up File Paging**
+    *   Users can move past a follow-up question while a file is still uploading or processing. Upload transfers are marked as interrupted and retryable when that question is left, while processing checks continue across page changes and remounts.
+    *   Review remains blocked until every answer is complete, failed uploads are resolved, and the current processing state is ready. Stale upload completions cannot revive a question that was removed, superseded, or discarded.
+    *   (Ref: `ElicitationCard.tsx`, `ComposerEditor.tsx`, `test_v2_chat_context_selection.py`)
+
+### **(v0.261.483)**
+
+#### New Features
+
+*   **Workspace Chat Deep Links**
+    *   Users can share a compact `/l/<reference>` address that prepares a new private chat with the current agent or model, one personal, group, or public workspace, and either the whole workspace or an explicit document selection.
+    *   Model links preserve the selected reasoning effort, creators choose 7, 30, 90, or 365 days or **Never expires**, and links never grant access. Creation, launch resolution, and the first send all recheck the clicker's current permissions.
+    *   Creators can revoke their links, while full Control Center administrators can list and revoke links across the deployment in Classic or V2.
+    *   (Ref: `functions_chat_links.py`, `route_chat_links.py`, `ChatLinkDialog.tsx`, [Create workspace chat links](https://microsoft.github.io/simplechat/guides/create-workspace-chat-links/), [Workspace chat deep links](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/WORKSPACE_CHAT_DEEP_LINKS.md))
+
 ### **(v0.261.481)**
 
 #### User Interface Enhancements
@@ -46,6 +144,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Whole-Workspace Chat Links and Reasoning**
+    *   Workspace chat links can now bind one whole personal, group, or public workspace in addition to explicit document selections.
+    *   Model reasoning effort is stored, shown in link previews, restored in Classic and V2, and checked again on the first send. Agent links continue to use the agent's own configured reasoning.
+    *   (Ref: `functions_chat_links.py`, `chat-links.js`, `Composer.tsx`, [Create workspace chat links](https://microsoft.github.io/simplechat/guides/create-workspace-chat-links/))
+
 *   **Model Catalog Updates Now Ship With Their Publisher Keys**
     *   Admin Settings > Model Catalog no longer warns on every deployment that the publisher verification key is not configured. The production and development publisher public keys are bundled with SimpleChat, so a deployment receives them through an ordinary upgrade; administrators have nothing to install.
     *   When the official catalog is signed with a newer publisher key, or needs a newer application version, **Check for updates** shows **Upgrade SimpleChat to get catalog updates** instead of a generic verification failure. Uploading such a package gives the same explanation, and the installed catalog keeps working meanwhile. Releases without a bundled key can now run the check and are told to upgrade.
@@ -55,6 +158,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.473)**
 
+#### New Features
+
+*   **Workspace Chat Deep Links**
+    *   Users can create compact `/l/<reference>` URLs that prepare a new private chat with one current agent or model, one workspace, and explicitly selected documents.
+    *   Creators choose 7, 30, 90, or 365 days, or **Never expires**; 90 days is the default. Links do not grant access and are reauthorized on creation, resolution, and first send.
+    *   Creators can revoke links from the chat dialog, and full Control Center administrators can list and revoke active links across the deployment in Classic or V2.
+    *   (Ref: `functions_chat_links.py`, `route_chat_links.py`, `ChatLinkDialog.tsx`, [Create workspace chat links](https://microsoft.github.io/simplechat/guides/create-workspace-chat-links/), [Workspace chat deep links](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/WORKSPACE_CHAT_DEEP_LINKS.md))
+
 #### Bug Fixes
 
 *   **Support Log Export Finds Its Own Sources**
@@ -63,6 +174,51 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Saved resource IDs keep working as overrides. A previously defaulted Azure Commercial cloud no longer overrides a US Government deployment.
     *   The Bicep, Terraform and Azure CLI deployers now set `APPLICATIONINSIGHTS_RESOURCE_ID` (deployers version 1.0.40).
     *   (Ref: `support_export_discovery.py`, `support_export_contracts.py`, `support_export_service.py`, `functions_support_exports.py`, `SupportExportPanel.tsx`, `support-exports.js`, `test_admin_support_export_source_detection.py`, `SUPPORT_EXPORT_SOURCE_DETECTION_FIX.md`)
+
+### **(v0.261.472)**
+
+#### New Features
+
+*   **Optional Cosmos Replay-Only Indexing**
+    *   In **Scale → Cosmos Maintenance**, admins can reduce replay write cost for new Cosmos-backed chat streams without batching. The setting defaults off and is inactive with Redis enabled.
+    *   Simple Chat verifies the replay-only exclusion before enabling it. If the app can't apply the change, admins can copy the policy or exclusion entry and verify it after saving in Azure.
+    *   Disabling changes only new streams. Both replay formats remain readable.
+    *   (Ref: [Cosmos Maintenance](https://microsoft.github.io/simplechat/admin/scale/#optimize-cosmos-replay-when-redis-is-off), [Replay-only index exclusion](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/COSMOS_REPLAY_INDEX_EXCLUSION.md))
+
+### **(v0.261.471)**
+
+#### Bug Fixes
+
+*   **One Fewer Settings Read Per Chat Turn**
+    *   The background stream reuses the configuration already loaded for the turn instead of fetching it again. Output screening and live source access checks still apply.
+    *   (Ref: `route_backend_chats.py`, `test_chat_content_streaming.py`, [Streaming replay round trips](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/fixes/STREAM_REPLAY_ROUND_TRIPS_FIX.md))
+
+### **(v0.261.470)**
+
+#### User Interface Enhancements
+
+*   **Message Actions on Touch and No-Hover Browsers**
+    *   V2 message action bars stay visible when the browser does not support hovering, so actions such as unmasking and **More actions** can be reached without a mouse.
+    *   Hover and keyboard focus still reveal actions in other browsers. Menus open only when selected, and action permissions are unchanged.
+    *   (Ref: `MessageList.tsx`, `test_v2_evidence_status.py`, [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/))
+
+### **(v0.261.465)**
+
+#### User Interface Enhancements
+
+*   **Inspectable Model Personas in Chat Pickers**
+    *   Chat model pickers show a compact person icon beside models with active personas.
+    *   Hover/focus provides a short status preview, while click/tap opens the safely rendered persona without changing the selected model. Hidden persona text remains unavailable to ordinary users.
+    *   (Ref: `Dropdown.tsx`, `chat-model-selector.js`, microsoft/simplechat#1929)
+
+### **(v0.261.464)**
+
+#### User Interface Enhancements
+
+*   **Compact Model Persona Editors**
+    *   AI Connections model rows now show only the persona enable control while a persona is disabled, removing the unused Markdown editor and visibility settings from the layout.
+    *   Enabling the persona expands the controls in place; disabling it hides them without clearing the authored draft. The behavior is consistent across V2, classic admin, personal, and group editors.
+    *   (Ref: `ModelConnectionsManager.tsx`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, microsoft/simplechat#1929)
 
 ### **(v0.261.454)**
 
@@ -219,6 +375,67 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Restores the saved custom favicon when an instance starts and reconciles it before serving the favicon, preventing fresh or scaled-out instances from displaying the bundled icon instead in classic and V2 interfaces.
     *   Preserves existing favicon versioning and works with Redis-backed settings or direct Cosmos reads. Changed files are replaced atomically; unchanged icons are not rewritten.
     *   (Ref: `app.py`, `ensure_custom_favicon_file_exists()`, `docs/explanation/fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md`, [#1932](https://github.com/microsoft/simplechat/issues/1932), main fix [#1935](https://github.com/microsoft/simplechat/pull/1935))
+### **(v0.261.438)**
+
+#### Bug Fixes
+
+*   **Readable Native Dropdowns Throughout V2**
+    *   Fixes pale options appearing on white popup backgrounds in dark mode, including the Model Catalog Connections filter and workspace model menus.
+    *   Uses the active theme's colors across V2 native dropdowns while preserving keyboard selection and disabled options.
+    *   (Ref: `theme.css`, `test_v2_admin_model_catalog_workbench.py`, `test_v2_workspace_authoring.py`)
+
+### **(v0.261.436)**
+
+#### User Interface Enhancements
+
+*   **Per-Model Request API in Classic and V2**
+    *   Uses one **Request API** selector for explicit Custom routes, with distinct options for Chat Completions, `/v1/responses`, `/openai/v1/responses`, and Anthropic Messages. Dated Azure Responses is not included.
+    *   Lets V2 edit the gateway path, path order, and URL handling for each model, preview the exact URL without running inference, and test the saved route. Existing legacy routes are not automatically converted.
+    *   (Ref: `model_routing_editor.js`, `CustomConnectionFields.tsx`, `ModelConnectionsManager.tsx`)
+
+*   **Embedding Routing on the Model**
+    *   Moves optional embedding route overrides into each model's settings in AI Connections. Models without overrides keep their saved connection defaults; credentials remain on the connection.
+    *   Embeddings still selects and tests the saved default. It now shows the effective request URL and opens that model in AI Connections for edits. This change does not switch defaults or rebuild vectors.
+    *   (Ref: `functions_embedding_profile.py`, `admin_model_endpoints.js`, `CapabilityModelPicker.tsx`)
+
+#### Bug Fixes
+
+*   **Completed Responses Delivered Once**
+    *   Direct chat now delivers an already-completed Responses reply as one chunk, matching agents rather than simulating a stream. Native Responses text still streams incrementally.
+    *   (Ref: `model_endpoint_clients.py`, `test_responses_model_tool_execution.py`)
+
+### **(v0.261.433)**
+
+#### Bug Fixes
+
+*   **Post-Merge Retry, Responses Editor, And Workflow Model Routing**
+    *   Lets V2 retry a newly completed response immediately without requiring a conversation reload, while preserving the original model, agent, route, and attempt history.
+    *   Preserves a saved Responses model's operation and per-model path order when the AI Connection editor opens and runs Test Connection, removing the false “save changes first” response for unchanged routes.
+    *   Applies exact catalog capabilities to explicit Custom routes so Claude Legacy workflows retain tool calling, and adds verified GPT-6 Luna/Terra token limits with Luna's supported Chat Completions tool reasoning policy.
+    *   Verified Luna and Terra workflows now reach their intended Chat Completions or Responses routes with known token budgets instead of failing before inference.
+    *   (Ref: `chatRetryAttempts.ts`, `chatStore.ts`, `model_routing_editor.js`, `functions_model_capabilities.py`, `model_capabilities.json`, `POST_MERGE_STABILIZATION_FIX.md`)
+
+### **(v0.261.429)**
+
+#### Bug Fixes
+
+*   **Post-Merge Routing, Streaming, Workflow, And Tabular Stabilization**
+    *   Uses one capability-filtered chat model catalog for V1 and V2, preventing explicit embedding-only models from appearing as chat choices.
+    *   Retains V2 partial assistant output and reasoning when Stop is used, including early cancellation and later message reconciliation.
+    *   Gives deterministic model-provider workflow failures durable safe diagnostics while preserving recovery for uncertain external effects and retrying transient HTTP failures.
+    *   Makes CSV tabular tools omit Excel-only selectors, caps invocation retries across the complete request, and deduplicates Responses function calls before execution.
+    *   (Ref: `functions_chat_model_catalog.py`, `chatStore.ts`, `functions_workflow_policy_errors.py`, `tabular_processing_plugin.py`, `model_responses_chat.py`, `POST_MERGE_STABILIZATION_FIX.md`)
+
+### **(v0.261.428)**
+
+#### New Features
+
+*   **Custom Endpoint Routing And Responses Integration**
+    *   Combines explicit per-model Custom endpoint routing, APIM credential/header controls, managed CA bundles, GenAI.mil profiles, and the Development Responses implementation in one connection model.
+    *   Streams Responses text incrementally while keeping complete tool calls, private reasoning continuation, cancellation, usage reporting, and per-operation URL policy.
+    *   Saves global, personal, and group connections per resource; legacy whole-list writes now require a revision and reject stale catalogs instead of overwriting concurrent work.
+    *   Preserves the V2 Terms of Use journey and React capability catalog while retaining the existing human-approved master-data and review boundaries.
+    *   (Ref: `functions_model_endpoint_urls.py`, `model_tool_chat_completion.py`, `route_backend_models.py`, `route_backend_v2.py`, `workspace_model_endpoints.js`, `admin_model_endpoints.js`)
 
 ### **(v0.261.424)**
 

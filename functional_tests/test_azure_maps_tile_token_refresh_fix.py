@@ -2,8 +2,9 @@
 # test_azure_maps_tile_token_refresh_fix.py
 """
 Functional test for the Azure Maps tile token refresh fix.
-Version: 0.241.063
+Version: 0.261.486
 Implemented in: 0.241.063
+Encoded conversation ID in the message loading fetch since: 0.261.486
 
 This test ensures expired Azure Maps tile proxy URLs embedded in stored agent
 citations are reissued automatically during hydration so older chat messages can
@@ -285,7 +286,7 @@ def test_chat_fetches_bypass_stale_cache_after_token_refresh():
         "response.headers['Expires'] = '0'",
     ]
     client_expectations = [
-        'fetch(`/conversation/${conversationId}/messages?ts=${Date.now()}`, {',
+        'fetch(`/conversation/${encodeURIComponent(conversationId)}/messages?ts=${Date.now()}`, {',
         'cache: "no-store"',
         'fetchAgentCitationArtifact(conversationId, artifactId)',
         '`/api/conversation/${encodeURIComponent(conversationId)}/agent-citation/${encodeURIComponent(artifactId)}?ts=${Date.now()}`',

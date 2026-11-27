@@ -1,13 +1,13 @@
 # test_stored_xss_admin_rendering_fix.py
 """
 Functional test for stored XSS admin rendering hardening.
-Version: 0.241.016
+Version: 0.261.485
 Implemented in: 0.241.010
+Toasts render text only (no HTML opt-in) since: 0.261.485
 
 This test ensures Control Center member rendering, public workspace member
 modal rendering, and admin agent rendering keep user-controlled names inert,
-and that Control Center toast messages escape by default unless a caller
-explicitly opts into HTML.
+and that Control Center toast messages are always rendered as text.
 """
 
 import os
@@ -54,7 +54,7 @@ LEGACY_FIX_DOC = os.path.join(
     "docs",
     "explanation",
     "fixes",
-    "v0.241.012",
+    "v0.241.022",
     "STORED_XSS_ADMIN_RENDERING_FIX.md",
 )
 NEW_FIX_DOC = os.path.join(
@@ -62,7 +62,7 @@ NEW_FIX_DOC = os.path.join(
     "docs",
     "explanation",
     "fixes",
-    "v0.241.016",
+    "v0.241.022",
     "CONTROL_CENTER_PUBLIC_WORKSPACE_MEMBERS_XSS_FIX.md",
 )
 
@@ -94,22 +94,23 @@ def test_control_center_member_rows_escape_untrusted_fields():
 
 
 def test_control_center_toasts_escape_by_default():
-    """Verify Control Center toasts require explicit opt-in for HTML."""
-    print("🔍 Testing Control Center toast escaping defaults...")
+    """Verify Control Center toasts render message text and never interpret HTML."""
+    print("🔍 Testing Control Center toast text rendering...")
 
     source = read_file_text(CONTROL_CENTER_JS)
 
-    assert "showToast(message, type = 'info', allowHtml = false)" in source
-    assert "const safeMessage = allowHtml" in source
-    assert "this.escapeHtml(String(message ?? ''))" in source
-    assert "${safeMessage}" in source
+    assert "showToast(message, type = 'info') {" in source
+    assert "toastBody.textContent = String(message ?? '');" in source
+    assert "allowHtml" not in source
+    assert "insertAdjacentHTML('beforeend', toastHtml)" not in source
     assert source.count("showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval") == 0
 
     template_source = read_file_text(CONTROL_CENTER_TEMPLATE)
-    assert template_source.count("'success', true") >= 2
+    assert "'success', true" not in template_source
+    assert template_source.count("Ownership transfer request submitted!\\n\\nStatus: Pending Approval") == 2
     assert "window.controlCenter.showToast(`Successfully added ${displayName} as ${role}`, 'success');" in template_source
 
-    print("✅ Control Center toast escaping defaults passed")
+    print("✅ Control Center toast text rendering passed")
 
 
 def test_admin_agent_table_escapes_agent_fields():
@@ -119,16 +120,12 @@ def test_admin_agent_table_escapes_agent_fields():
     source = read_file_text(ADMIN_AGENTS_JS)
 
     required_snippets = [
-        "function escapeHtml(text) {",
-        "const safeName = escapeHtml(agent.name || '')",
-        "const safeDisplayName = escapeHtml(agent.display_name || '')",
-        "const safeDescription = escapeHtml(agent.description || '')",
-        "<td>${safeName}</td>",
-        "<td>${safeDisplayName}</td>",
-        "<td>${safeDescription}</td>",
+        "nameCell.textContent = agent.name || '';",
+        "displayNameCell.textContent = agent.display_name || '';",
+        "descriptionCell.textContent = agent.description || '';",
     ]
     missing = [snippet for snippet in required_snippets if snippet not in source]
-    assert not missing, f"Missing admin agent escaping snippets: {missing}"
+    assert not missing, f"Missing admin agent text rendering snippets: {missing}"
 
     forbidden_snippets = [
         "<td>${agent.name}</td>",

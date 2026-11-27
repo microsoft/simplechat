@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for group workflows.
-Version: 0.261.178
+Version: 0.261.484
 Implemented in: 0.241.179
 Updated in: 0.241.201
 Member roles defined in the pure workflow policy module: 0.261.178
@@ -14,8 +14,11 @@ runtime wiring, activity deep links, and workspace UI contracts are present.
 import sys
 from pathlib import Path
 
+from test_support.versioning import assert_app_version_at_least
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+IMPLEMENTED_IN_VERSION = "0.241.201"
 
 
 def _read(relative_path):
@@ -41,15 +44,21 @@ def test_group_workflow_feature_contracts():
     workflow_routes = _read("application/single_app/route_backend_workflows.py")
     workflow_runner = _read("application/single_app/functions_workflow_runner.py")
     background_tasks = _read("application/single_app/background_tasks.py")
-    admin_template = _read("application/single_app/templates/admin_settings.html")
+    admin_template = "\n".join((
+        _read("application/single_app/templates/admin/_panes/workflow.html"),
+        _read("application/single_app/templates/admin/_panes/workspace-types.html"),
+    ))
     admin_js = _read("application/single_app/static/js/admin/admin_settings.js")
     workspace_template = _read("application/single_app/templates/workspace.html")
     group_template = _read("application/single_app/templates/group_workspaces.html")
     workspace_workflows_js = _read("application/single_app/static/js/workspace/workspace_workflows.js")
     activity_js = _read("application/single_app/static/js/workflow/workflow-activity.js")
 
+    assert_app_version_at_least(
+        IMPLEMENTED_IN_VERSION,
+        reason="Group workflows require the implementation version or later.",
+    )
     checks = [
-        _assert_contains(config, 'VERSION = "0.241.201"', "version bump"),
         _assert_contains(config, 'cosmos_group_workflows_container_name = "group_workflows"', "group workflow container"),
         _assert_contains(config, 'cosmos_group_workflow_runs_container_name = "group_workflow_runs"', "group workflow runs container"),
         _assert_contains(config, 'cosmos_group_workflow_run_items_container_name = "group_workflow_run_items"', "group workflow run items container"),
@@ -80,8 +89,8 @@ def test_group_workflow_feature_contracts():
         _assert_contains(admin_template, "Require Owner to Manage Group Agents, Actions and Workflows", "owner-only setting rename"),
         _assert_contains(admin_js, "setupGroupWorkflowAssignments", "admin assignment JavaScript"),
         _assert_contains(admin_js, "url.searchParams.set('showAll', 'true')", "admin group discovery API use"),
-        _assert_contains(workspace_template, "Personal Workflows", "personal workflow rename"),
-        _assert_contains(group_template, "Group Workflows", "group workflow tab label"),
+        _assert_contains(workspace_template, "New Personal Workflow", "personal workflow UI label"),
+        _assert_contains(group_template, "New Group Workflow", "group workflow UI label"),
         _assert_contains(group_template, "window.workflowWorkspaceConfig", "group workflow UI config"),
         _assert_contains(group_template, "apiBase: '/api/group/workflows'", "group workflow API base"),
         _assert_contains(group_template, "scope: 'group'", "group workflow UI scope"),

@@ -1,7 +1,7 @@
 # test_workflow_result_routes.py
 """
 Functional tests for scoped workflow task-result page endpoints.
-Version: 0.261.231
+Version: 0.261.430
 Implemented in: 0.261.106
 Results stopped re-checking their sources in: 0.261.231
 
@@ -12,6 +12,7 @@ documents it read are provenance and are never re-checked.
 """
 
 import ast
+import importlib
 import logging
 import sys
 import uuid
@@ -30,6 +31,8 @@ sys.path.insert(0, str(RUNNER.parent))
 # Import the domain error after establishing the worktree module path.
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError
 from functions_analysis_access import AnalysisResultUnavailable
+from functions_workflow_policy_errors import workflow_result_availability
+from test_orchestration_harness_execution import initialized_application  # noqa: F401
 from functions_workflow_results import (
     ANALYSIS_SOURCE_ACCESS_VERSION,
     WORKFLOW_RESULT_CONTRACT_VERSION,
@@ -131,6 +134,7 @@ def result_client():
         "_resolve_group_workflow_request_group": authorize_group,
         "read_workflow_task_result_page": read_page,
         "authorize_workflow_task_result_read": authorize_result,
+        "workflow_result_availability": workflow_result_availability,
     }
     names = {
         "_normalize_identifier", "_workflow_task_result_page_response",
@@ -165,6 +169,72 @@ def test_result_pages_use_stored_reference_and_requested_bounds(result_client, s
     assert response.json["content"] == '{"inventory_id":"fictional-1"}'
     assert reads[0][3] == item["workflow_result"]["result_ref"]
     assert reads[0][4] == {"offset": 12, "limit": 128}
+
+
+@pytest.mark.parametrize("durable", [True, False])
+def test_failed_new_task_has_truthful_machine_readable_unavailability(result_client, durable):
+    client, state, workflow, run, item, reads = result_client
+    run["durable_execution"] = durable
+    item.update(status="failed", error_code="model_provider_request_failed", error="A safe failure.")
+    if not durable:
+        item.pop("error_code")
+    item["workflow_result"] = {}
+    response = client.get("/user/workflow-1/run-1/extract")
+    assert response.status_code == 409
+    assert response.json["code"] == "workflow_result_unavailable"
+    assert response.json["reason"] == "not_committed"
+    assert "Older runs" not in response.json["error"]
+    assert "no output" not in response.json["error"].lower()
+    assert reads == []
+
+
+def test_unverified_candidate_is_not_reported_as_no_output(result_client):
+    client, state, workflow, run, item, reads = result_client
+    run["durable_execution"] = True
+    item.update(status="incomplete", output_preview="A retained candidate.")
+    item["workflow_result"] = {"task_completeness": {"status": "incomplete"}}
+    response = client.get("/user/workflow-1/run-1/extract")
+    assert response.status_code == 409
+    assert response.json["reason"] == "candidate_unverified"
+    assert "candidate" in response.json["error"].lower()
+    assert reads == []
+
+
+@pytest.mark.parametrize("kind", ["execution", "attempt"])
+def test_structured_failure_projection_keeps_only_typed_diagnostics(kind):
+    from functions_workflow_journal import public_workflow_journal_entry
+
+    projected = public_workflow_journal_entry({"sequence": 3, "payload": {
+        "execution_id": "execution-a", "node_id": "node-a", "attempt": 2, "state": "failed",
+        "error": "<img src=x onerror=alert(1)> is inert diagnostic text",
+        "error_code": "model_provider_request_failed", "provider_status": 404,
+        "provider_error_type": "NotFoundError", "request_stage": "request",
+        "effect_certainty": "none", "correlation_reference": "abc12345",
+        "raw_body": "PRIVATE", "provider_headers": {"Authorization": "PRIVATE"},
+        "cause": "PRIVATE", "private_continuation": "PRIVATE",
+    }}, kind)
+    assert projected["provider_status"] == 404
+    assert projected["error"].startswith("<img")
+    assert projected["error_code"] == "model_provider_request_failed"
+    assert projected["result_availability"] == {"available": False, "reason": "not_committed"}
+    assert "PRIVATE" not in str(projected)
+
+
+def test_real_route_module_reports_new_failed_task_without_a_success_artifact(initialized_application):
+    routes = importlib.import_module("route_backend_workflows")
+    app = Flask("real-workflow-failure-result")
+    workflow = {"id": "wf", "user_id": "owner"}
+    run = {"id": "run", "workflow_id": "wf", "durable_execution": True}
+    item = {
+        "workflow_id": "wf", "run_id": "run", "task_id": "task",
+        "status": "failed", "error_code": "model_provider_request_failed", "workflow_result": {},
+    }
+    with app.test_request_context("/result"):
+        response, status = routes._workflow_task_result_page_response(workflow, run, "task", lambda *args: item)
+    assert status == 409
+    assert response.json["code"] == "workflow_result_unavailable"
+    assert response.json["reason"] == "not_committed"
+    assert "Older runs" not in response.json["error"]
 
 
 def test_other_user_cannot_read_workflow_result(result_client):
@@ -254,6 +324,7 @@ def test_legacy_preview_is_not_substituted_for_a_saved_result(result_client):
     response = client.get("/user/workflow-1/run-1/extract")
     assert response.status_code == 409
     assert "content" not in response.json
+    assert response.json["reason"] == "legacy_preview_only"
     assert reads == []
 
 

@@ -2,8 +2,8 @@
 # test_module_call_signatures.py
 """
 Functional test for calls a module makes to its own top-level functions.
-Version: 0.261.483
-Implemented in: 0.261.483
+Version: 0.261.490
+Implemented in: 0.261.490
 
 This test ensures that no application module calls one of its own top-level functions with an
 argument that function does not take. A background spreadsheet export failed on start with a
@@ -124,7 +124,7 @@ def test_the_check_reports_each_kind_of_call_that_cannot_bind():
 
 
 def test_the_background_export_calls_its_batch_window_generators_with_arguments_they_take():
-    """0.261.483: the export module, and the two generators its processor chooses between."""
+    """0.261.490: the export module, and the two generators its processor chooses between."""
     print("Testing the export module's calls to its own functions...")
     checked = set()
     problems = call_problems(EXPORTS.read_text(encoding="utf-8"), checked)

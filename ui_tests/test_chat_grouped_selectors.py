@@ -1,13 +1,13 @@
 # test_chat_grouped_selectors.py
 """
 UI test for grouped chat selectors.
-Version: 0.239.197
+Version: 0.261.465
 Implemented in: 0.239.197
 
 This test ensures that prompt and document selectors render grouped headers,
 keep matching headers visible during search, and that agent/model selectors
 disable out-of-scope options during new conversations before hiding them once
-the conversation scope is locked.
+the conversation scope is locked. Model persona inspection was added in 0.261.465.
 """
 
 import json
@@ -155,7 +155,7 @@ def test_chat_grouped_selectors(playwright):
                     { id: 'group-agent-b', name: 'group_agent_beta', display_name: 'Beta Agent', is_global: false, is_group: true, group_id: 'group-b', group_name: 'Beta' },
                 ];
                 window.chatModelOptions = [
-                    { selection_key: 'global::endpoint-global:gpt-4o', model_id: 'gpt-4o', display_name: 'Global Model', deployment_name: 'gpt-4o-global', endpoint_id: 'endpoint-global', provider: 'aoai', scope_type: 'global', scope_id: null, scope_name: 'Global' },
+                    { selection_key: 'global::endpoint-global:gpt-4o', model_id: 'gpt-4o', display_name: 'Global Model', deployment_name: 'gpt-4o-global', endpoint_id: 'endpoint-global', provider: 'aoai', scope_type: 'global', scope_id: null, scope_name: 'Global', persona_enabled: true, persona_markdown: '## Technical guide\\n\\nPrefer concise answers.' },
                     { selection_key: 'personal:user-1:endpoint-personal:gpt-4.1-mini', model_id: 'gpt-4.1-mini', display_name: 'Personal Model', deployment_name: 'gpt-4.1-mini-personal', endpoint_id: 'endpoint-personal', provider: 'aoai', scope_type: 'personal', scope_id: 'user-1', scope_name: 'Personal' },
                     { selection_key: 'group:group-a:endpoint-alpha:gpt-4.1', model_id: 'gpt-4.1', display_name: 'Alpha Model', deployment_name: 'gpt-4.1-alpha', endpoint_id: 'endpoint-alpha', provider: 'aoai', scope_type: 'group', scope_id: 'group-a', scope_name: 'Alpha' },
                     { selection_key: 'group:group-b:endpoint-beta:gpt-4.1', model_id: 'gpt-4.1', display_name: 'Beta Model', deployment_name: 'gpt-4.1-beta', endpoint_id: 'endpoint-beta', provider: 'aoai', scope_type: 'group', scope_id: 'group-b', scope_name: 'Beta' },
@@ -215,6 +215,30 @@ def test_chat_grouped_selectors(playwright):
         document_labels = _visible_texts(page.locator("#document-dropdown-items .dropdown-item span"))
         assert "Alpha Plan" in document_labels
         assert "[Group: Alpha] Alpha Plan" not in document_labels
+        page.keyboard.press("Escape")
+
+        page.locator("#model-dropdown-button").click()
+        persona = page.locator(
+            "#model-dropdown-items .chat-searchable-select-item",
+            has_text="Global Model",
+        ).locator(".chat-model-persona-indicator")
+        expect(persona).to_be_visible()
+        expect(persona).to_have_attribute("aria-expanded", "false")
+        persona.click()
+        inspector = page.locator(".chat-model-persona-inspector")
+        expect(inspector).to_be_visible()
+        expect(inspector).to_be_in_viewport()
+        expect(inspector).to_contain_text("Technical guide")
+        expect(inspector.locator(".chat-model-persona-inspector-content")).to_be_focused()
+        selected_option = page.locator("#model-select option:checked")
+        expect(selected_option).to_have_attribute(
+            "data-selection-key", "global::endpoint-global:gpt-4o"
+        )
+        inspector.press("Escape")
+        expect(inspector).to_have_count(0)
+        expect(persona).to_be_focused()
+        expect(persona).to_be_in_viewport()
+        expect(page.locator("#model-dropdown-menu")).to_be_visible()
         page.keyboard.press("Escape")
 
         page.get_by_role("button", name="Agents").click()

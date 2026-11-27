@@ -298,6 +298,7 @@ REQUIRES_MODES = ("block", "warn")
 # has no editor for it, so refusing is safe and keeps a malformed or hostile
 # payload from destroying the endpoint configuration.
 NON_PATCHABLE_KEYS = {
+    "enable_cosmos_replay_index_exclusion": "Use Cosmos Maintenance to verify the policy and manage replay indexing.",
     "model_endpoints": (
         "Model endpoints hold credentials that are stripped before they reach "
         "the browser, so they cannot be saved from here."
@@ -406,8 +407,7 @@ WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT = (
 )
 
 # Document action limits, mirrored from DOCUMENT_ACTION_LIMIT_BOUNDS and
-# DEFAULT_DOCUMENT_ACTION_CAPABILITIES in functions_document_actions.py, which
-# cannot be imported here for the same reason. Pinned by
+# DEFAULT_DOCUMENT_ACTION_CAPABILITIES in functions_document_actions.py. Pinned by
 # test_v2_admin_actions_parity.py rather than left to drift.
 DOCUMENT_ACTION_CHAT_MIN_LIMIT = 2
 DOCUMENT_ACTION_CHAT_MAX_LIMIT = 300
@@ -3929,6 +3929,20 @@ ADMIN_SETTINGS_FIELDS = {
                 "Adds a drawer listing a conversation's prompts so users can jump "
                 "back to an earlier turn. Users can turn it off for themselves in "
                 "their profile."
+            ),
+            "default": True,
+        },
+    ],
+    "context-usage-section": [
+        {
+            "key": "enable_context_usage_display",
+            "type": "switch",
+            "label": "Show Context Usage",
+            "help": (
+                "Shows users how full the selected model's context is: a ring "
+                "beside the message box and a Context tab in the conversation "
+                "drawer. Turning this off only hides the display. Usage is still "
+                "recorded with each reply and in the activity logs."
             ),
             "default": True,
         },
@@ -9288,6 +9302,9 @@ ADMIN_SECTION_STATUS = {
 # there is something to edit. They are named here with the reason instead, and
 # the settings GET sends this list so the scan can skip them.
 SUPPRESSED_CAPABILITY_KEYS = {
+    "enable_cosmos_replay_index_exclusion": (
+        "Cosmos Maintenance owns this setting because enablement requires policy verification and reader readiness."
+    ),
     "enable_model_catalog_online_updates": (
         "Owned by the Catalog updates card under Model Catalog, whose \"Allow online "
         "catalog update checks\" switch saves it through the catalog update API with "

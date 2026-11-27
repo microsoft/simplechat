@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Offline functional tests for trusted outbound MCP execution context.
-Version: 0.261.371
+Version: 0.261.485
 Implemented in: 0.261.029
 
 Exercise real normalization, destination/preconfiguration policy, descriptors,
@@ -27,7 +27,7 @@ from itertools import product
 from pathlib import Path
 from unittest.mock import patch
 
-from flask import Flask, session
+from flask import Flask, g, session
 from mcp.types import CallToolResult, TextContent
 
 
@@ -61,12 +61,29 @@ class _InertPlugin:
         return []
 
 
+class _KernelFunction:
+    """Minimal KernelFunctionFromMethod shape: qualified metadata plus a rebindable method."""
+
+    def __init__(self, plugin_name, function_name, method):
+        self.metadata = types.SimpleNamespace(
+            name=function_name, plugin_name=plugin_name,
+            fully_qualified_name=f"{plugin_name}-{function_name}",
+        )
+        self.method = method
+
+    def __call__(self, *args, **kwargs):
+        return self.method(*args, **kwargs)
+
+
 class _KernelPlugin:
     @classmethod
     def from_object(cls, name, functions, description=None):
         plugin = cls()
         plugin.name = name
-        plugin.functions = functions
+        plugin.functions = {
+            function_name: _KernelFunction(name, function_name, function)
+            for function_name, function in functions.items()
+        }
         return plugin
 
 
@@ -144,7 +161,7 @@ class McpAuthorizationContextTests(unittest.TestCase):
             auto_wrap_plugin_functions=_noop,
         )
         self._stub("semantic_kernel", Kernel=_Kernel, __path__=[])
-        self._stub("semantic_kernel.functions", kernel_function=_decorator, __path__=[])
+        self._stub("semantic_kernel.functions", kernel_function=_decorator, KernelPlugin=_KernelPlugin, __path__=[])
         self._stub("semantic_kernel.functions.kernel_plugin", KernelPlugin=_KernelPlugin)
         self._stub("semantic_kernel.connectors", __path__=[])
         self._stub("semantic_kernel_plugins", __path__=[str(APP_DIR / "semantic_kernel_plugins")])
@@ -267,6 +284,10 @@ class McpAuthorizationContextTests(unittest.TestCase):
             "semantic_kernel_plugins.logged_plugin_loader",
             "functions_m365_context", "functions_m365_approvals",
             "functions_m365_execution", "functions_m365_operations",
+            # Pure Graph capability definitions the real M365 operations module imports.
+            "functions_msgraph_operations",
+            # Runtime plugin naming and registration are part of the loader contract under test.
+            "action_runtime_contracts", "action_usage", "action_usage_context", "runtime_usage",
         }
         standard_modules = {"typing", "datetime", "flask", "azure.core.exceptions"}
         paths = [
@@ -293,12 +314,17 @@ class McpAuthorizationContextTests(unittest.TestCase):
                     elif name.name.isupper():
                         value = ()
                     elif name.name[:1].isupper():
-                        value = type(name.name, (_InertPlugin,), {})
+                        # The loaders catch stubbed error types, so those must remain exceptions.
+                        is_error = name.name.endswith(("Error", "Exception", "Required"))
+                        value = type(name.name, (Exception if is_error else _InertPlugin,), {})
                     else:
                         value = _noop
                     setattr(dependency, name.name, value)
 
         self._stub("app_settings_cache", get_settings_cache=_noop)
+        # Chat requests consult one-shot recovery decisions (test_action_runtime_recovery.py);
+        # with none recorded, every assigned action remains permitted.
+        self._stub("functions_action_recovery", apply_action_recovery=lambda manifests: list(manifests))
         keyvault = sys.modules["functions_keyvault"]
         keyvault.SecretReturnType = _SecretReturnType
         keyvault.SQL_PLUGIN_SENSITIVE_AUTH_FIELDS = ()
@@ -789,13 +815,20 @@ class McpAuthorizationContextTests(unittest.TestCase):
         self.assertEqual(self.events, [])
 
     def test_failed_identity_hydration_cannot_fall_back_to_manifest_credentials(self):
-        loader, _ = self._load_loaders()
+        loader, logged = self._load_loaders()
         manifest = self.manifest(identity_id="identity-1")
         manifest["auth"] = {"type": "key", "key": "untrusted-fallback"}
         with patch.object(loader, "hydrate_action_identity_reference", side_effect=RuntimeError("provider-secret")):
             with self.caller():
                 prepared = loader._prepare_plugin_manifests_for_runtime([manifest], {})
-        self.assertEqual(prepared, [])
+        # Only a load-failure placeholder remains so recovery can report the action;
+        # every loader skips it, so the stored credential is never used.
+        self.assertEqual(len(prepared), 1)
+        self.assertIs(prepared[0]["_simplechat_load_failure"], True)
+        kernel = _Kernel()
+        with self.caller():
+            self.assertFalse(logged.LoggedPluginLoader(kernel).load_plugin_from_manifest(prepared[0]))
+        self.assertEqual(kernel.plugins, {})
         self.assertEqual(self.events, [])
 
     def test_credential_hydration_rechecks_settings_floor_and_global_action_id(self):
@@ -825,15 +858,18 @@ class McpAuthorizationContextTests(unittest.TestCase):
         loader, logged = self._load_loaders()
         self.stack.enter_context(self.caller())
         self.settings = {"enable_key_vault_secret_storage": True, "key_vault_name": "offline-vault"}
-        retired = self.manifest("personal", transport="stdio", name="retired", identity_id="retired-identity")
+        retired = self.manifest(
+            "personal", transport="stdio", name="retired", identity_id="retired-identity", id="action-retired",
+        )
         retired["auth"] = {"type": "key", "key": "kv:retired-auth-reference"}
         retired["additionalFields"].update(
             command="retired-command-value", args=["retired-argument-value"],
             env={"TOKEN": "retired-environment-value"},
         )
-        remote = self.manifest(name="remote")
+        # Distinct actions have distinct IDs; runtime names are bound per action origin.
+        remote = self.manifest(name="remote", id="action-remote")
         remote["type"] = "model-context-protocol"
-        fuzzy = self.manifest(name="fuzzy")
+        fuzzy = self.manifest(name="fuzzy", id="action-fuzzy")
         fuzzy["type"] = "mc"
         prepared = loader._prepare_plugin_manifests_for_runtime([retired, remote, fuzzy], self.settings)
         kernel = _Kernel()
@@ -893,9 +929,24 @@ class McpAuthorizationContextTests(unittest.TestCase):
                 "group" if mode == "group" else "personal", transport="stdio", name="retired"
             )
             kernel = _Kernel()
+            contracts = sys.modules["action_runtime_contracts"]
+            retired_key = contracts.action_binding_key(retired)
+
+            def continue_without_retired(manifests, retired_key=retired_key):
+                # Mirrors a claimed "continue" decision recorded for the unavailable retired action.
+                g.action_recovery_excluded_keys = {retired_key}
+                return [
+                    candidate for candidate in manifests
+                    if contracts.action_binding_key(candidate) != retired_key
+                ]
+
             with (
                 self.caller(),
                 patch("builtins.print"),
+                patch.object(
+                    sys.modules["functions_action_recovery"], "apply_action_recovery",
+                    side_effect=continue_without_retired,
+                ),
                 patch.object(loader, "_get_governed_group_plugin_manifests", return_value=[retired]),
                 patch.object(loader, "_get_governed_personal_plugin_manifests", return_value=[retired]),
                 patch.object(loader, "_get_governed_global_plugin_manifests", return_value=[manifest]),

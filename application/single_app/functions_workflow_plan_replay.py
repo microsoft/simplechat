@@ -838,7 +838,8 @@ def normalize_plan_replay_update(existing_workflow, payload):
     sanitized = {key: deepcopy(existing.get(key)) for key in (
         'task_prompt', 'runner_type', 'definition_version', 'durable_execution',
         'document_action', 'analyze', 'file_sync', 'chat_capabilities_enabled',
-        'url_access_enabled', 'model_endpoint_id', 'model_id', 'model_provider',
+        'url_access_enabled', 'model_endpoint_id', 'model_id',
+        'model_scope_type', 'model_scope_id', 'model_provider',
         'reference_inputs', 'error_handling',
     ) if key in existing}
     for key in _PLAN_REPLAY_EDITABLE_KEYS:
