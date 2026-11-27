@@ -35,7 +35,7 @@ def measure_endpoint_performance(base_url, endpoints, num_requests=10):
         for i in range(num_requests):
             start_time = time.perf_counter()
             try:
-                response = requests.get(f"{base_url}{endpoint}", timeout=10, verify=False)
+                response = requests.get(f"{base_url}{endpoint}", timeout=10)
                 end_time = time.perf_counter()
                 
                 if response.status_code in [200, 401, 403]:  # Expected responses
@@ -74,7 +74,7 @@ def test_swagger_generation_performance(base_url):
     for i in range(5):  # Test 5 times to get average
         start_time = time.perf_counter()
         try:
-            response = requests.get(f"{base_url}/swagger.json", timeout=30, verify=False)
+            response = requests.get(f"{base_url}/swagger.json", timeout=30)
             end_time = time.perf_counter()
             
             if response.status_code == 200:
@@ -118,7 +118,7 @@ def test_memory_usage_indicators(base_url):
     
     try:
         # Get route statistics
-        response = requests.get(f"{base_url}/api/swagger/routes", timeout=10, verify=False)
+        response = requests.get(f"{base_url}/api/swagger/routes", timeout=10)
         
         if response.status_code == 200:
             data = response.json()

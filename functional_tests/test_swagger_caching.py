@@ -30,7 +30,7 @@ def test_swagger_caching_performance():
     # Test 1: First request (cache miss)
     print("  📊 Testing cache miss (first request)...")
     start_time = time.perf_counter()
-    response1 = requests.get(f"{base_url}/swagger.json", timeout=10, verify=False)
+    response1 = requests.get(f"{base_url}/swagger.json", timeout=10)
     first_time = (time.perf_counter() - start_time) * 1000
     
     if response1.status_code != 200:
@@ -42,7 +42,7 @@ def test_swagger_caching_performance():
     # Test 2: Second request (cache hit)
     print("  📊 Testing cache hit (second request)...")
     start_time = time.perf_counter()
-    response2 = requests.get(f"{base_url}/swagger.json", timeout=10, verify=False)
+    response2 = requests.get(f"{base_url}/swagger.json", timeout=10)
     second_time = (time.perf_counter() - start_time) * 1000
     
     if response2.status_code != 200:
@@ -76,7 +76,7 @@ def test_cache_headers():
     print("🔍 Testing Cache Headers...")
     
     base_url = "https://127.0.0.1:5000"
-    response = requests.get(f"{base_url}/swagger.json", timeout=10, verify=False)
+    response = requests.get(f"{base_url}/swagger.json", timeout=10)
     
     if response.status_code != 200:
         print(f"❌ Request failed: {response.status_code}")
@@ -114,7 +114,7 @@ def test_rate_limiting():
     def make_request(request_id):
         """Make a single request."""
         try:
-            response = requests.get(f"{base_url}/swagger.json", timeout=10, verify=False)
+            response = requests.get(f"{base_url}/swagger.json", timeout=10)
             return {
                 'id': request_id,
                 'status': response.status_code,
@@ -175,7 +175,7 @@ def test_cache_management():
     
     # Test cache stats endpoint
     print("  📊 Testing cache stats endpoint...")
-    response = requests.get(f"{base_url}/api/swagger/cache", timeout=10, verify=False)
+    response = requests.get(f"{base_url}/api/swagger/cache", timeout=10)
     
     if response.status_code != 200:
         print(f"❌ Cache stats request failed: {response.status_code}")
@@ -191,7 +191,7 @@ def test_cache_management():
     
     # Test cache clear endpoint
     print("  🗑️  Testing cache clear endpoint...")
-    clear_response = requests.delete(f"{base_url}/api/swagger/cache", timeout=10, verify=False)
+    clear_response = requests.delete(f"{base_url}/api/swagger/cache", timeout=10)
     
     if clear_response.status_code != 200:
         print(f"❌ Cache clear request failed: {clear_response.status_code}")
@@ -212,12 +212,12 @@ def test_cache_refresh():
     base_url = "https://127.0.0.1:5000"
     
     # Make normal request
-    response1 = requests.get(f"{base_url}/swagger.json", timeout=10, verify=False)
+    response1 = requests.get(f"{base_url}/swagger.json", timeout=10)
     if response1.status_code != 200:
         return False
     
     # Make forced refresh request
-    response2 = requests.get(f"{base_url}/swagger.json?refresh=true", timeout=10, verify=False)
+    response2 = requests.get(f"{base_url}/swagger.json?refresh=true", timeout=10)
     if response2.status_code != 200:
         print(f"❌ Forced refresh failed: {response2.status_code}")
         return False

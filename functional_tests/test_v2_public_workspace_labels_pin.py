@@ -24,6 +24,7 @@ Two guarantees keep the renameable Public Workspace surface honest:
 import os
 import re
 import sys
+from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -63,7 +64,7 @@ def test_swept_files_have_no_hardcoded_label_in_code():
     print("Testing that every swept file routes the label through the selector...")
     for path in SWEPT_FILES:
         assert os.path.exists(path), f"Swept file is missing: {path}"
-        source = open(path, encoding="utf-8").read()
+        source = Path(path).read_text(encoding="utf-8")
 
         code = strip_comments(source)
         leaked = LABEL_PHRASE.search(code)
@@ -81,7 +82,7 @@ def test_swept_files_have_no_hardcoded_label_in_code():
 
 def _parse_ts_default():
     """Parse DEFAULT_PUBLIC_WORKSPACE_LABELS out of the selector source into a dict."""
-    source = open(SELECTOR, encoding="utf-8").read()
+    source = Path(SELECTOR).read_text(encoding="utf-8")
     match = re.search(
         r"DEFAULT_PUBLIC_WORKSPACE_LABELS[^=]*=\s*\{(?P<body>.*?)\};",
         source,

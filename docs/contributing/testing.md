@@ -103,6 +103,10 @@ in `application/single_app/.env` (or the file named by `SIMPLECHAT_ENV_FILE`),
 exactly as the app itself reads it. Set `SIMPLECHAT_TESTS_OFFLINE=1` to skip them
 even when a deployment is configured.
 
+A few older functional tests send HTTPS requests to a locally running app. They
+always verify its certificate; for a self-signed development certificate, set
+`REQUESTS_CA_BUNDLE` to its file.
+
 When no Cosmos DB account is configured at all, `functional_tests/conftest.py`
 lets the real `config.py` import against an in-memory Cosmos client
 (`test_support/offline_cosmos.py`), so tests that only need settings and
