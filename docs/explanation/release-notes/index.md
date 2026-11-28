@@ -20,6 +20,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.492 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.491 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.488 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.487 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -368,6 +369,16 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.261.492)**
+
+#### New Features
+
+*   **Upload Hundreds of Files at Once in the V2 Workspace**
+    *   The V2 Documents page sent every selected file in one request, so a selection of more than about ten files could fail as a whole. It now sends the selection from the browser as a queue of small requests (up to 5 files or 50 MB each), one after another, so a selection of 250 files or more goes through.
+    *   The progress bar counts files as each request is answered. A file the server refuses does not stop the rest. If a request cannot be confirmed, the queue stops and the summary says how many files were not sent.
+    *   Personal, group and public workspaces all use the queue. The server routes are unchanged.
+    *   (Ref: `documentUploadQueue.ts`, `DocumentExplorer.tsx`, `test_v2_document_upload_queue_logic.mjs`, `V2_WORKSPACE_UPLOAD_QUEUE.md`)
 
 ### **(v0.261.491)**
 

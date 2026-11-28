@@ -2,7 +2,7 @@
 # test_v2_user_agreement_gate.py
 """
 Functional test for the V2 user agreement gate.
-Version: 0.261.448
+Version: 0.261.492
 Implemented in: 0.261.448
 
 An administrator can require a user agreement before files are uploaded
@@ -523,7 +523,7 @@ def test_the_documents_explorer_asks_after_validation_and_before_it_sends():
         "agreementGate.confirm(workspaceAgreementScope(captured.adapter.scope), accepted)",
         "|| !operationTargets('upload')) return;",
         "beginMutation('Uploading files'",
-        "captured.adapter.upload(accepted)",
+        "uploadInBatches(accepted, (batch) => captured.adapter.upload(batch)",
     ], "onUploadFiles")
     # The memoized callback must list the gate among its dependencies, wherever else it grows.
     assert re.search(r"\[[^\[\]]*agreementGate\.confirm[^\[\]]*\],\s*\)", upload), (
