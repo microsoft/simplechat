@@ -23,6 +23,7 @@ import { isScreeningBusy } from '../../lib/contentScreening';
 import { ApiError } from '../../lib/apiClient';
 import type { CollaborationReceipt, DocumentCollaborationAdapter } from '../../lib/documentCollaboration';
 import { documentUploadUnavailable, sharedOperationRefusal } from '../../lib/documentAccessCopy';
+import { uploadInBatches } from '../../lib/documentUploadQueue';
 import { legacyUpdateNeeded } from '../../lib/documentLegacyUpgrade';
 import {
     documentExplorerScopeKey, documentSelectionReason, PERSONAL_DOCUMENT_READER,
@@ -1036,14 +1037,26 @@ function ScopedDocumentExplorer({
             // again afterwards because the answer can take as long as the person needs to read it.
             if (!(await agreementGate.confirm(workspaceAgreementScope(captured.adapter.scope), accepted))
                 || !operationTargets('upload')) return;
-            beginMutation('Uploading files', files.length);
+            const label = 'Uploading files';
+            beginMutation('Uploading files', accepted.length);
             setUploading(true);
             try {
-                const response = accepted.length ? await captured.adapter.upload(accepted)
-                    : { document_ids: [], processed_filenames: [], errors: [] };
+                // A large selection goes as a queue of small requests rather than one request that
+                // has to carry every file, so the selection can be far larger than a request can.
+                const response = await uploadInBatches(accepted, (batch) => captured.adapter.upload(batch), {
+                    shouldContinue: () => mounted.current,
+                    onProgress: ({ completed, total }) => {
+                        if (mounted.current) setTask({ label, completed, total });
+                    },
+                });
                 if (!mounted.current) return;
                 const errors = [...validationErrors, ...response.errors.map((message) => ({ document_id: 'Upload', message }))];
-                if (response.document_ids.length + errors.length < files.length) {
+                if (response.unsent > 0) {
+                    errors.push({
+                        document_id: 'Upload',
+                        message: `${response.unsent} ${response.unsent === 1 ? 'file was' : 'files were'} not sent because the upload stopped early. Refresh, then upload the ones that are missing.`,
+                    });
+                } else if (!response.stopped && response.document_ids.length + errors.length < files.length) {
                     errors.push({ document_id: 'Upload', message: 'The server did not confirm every file. Refresh before retrying.' });
                 }
                 const title = `Accepted ${response.document_ids.length} of ${files.length} files. Processing is queued, not complete.`;
